@@ -33,24 +33,42 @@ Milestone 1 is the first functional vertical slice:
 - GitHub Actions CI with Ruff and pytest.
 - PR #10 merged into `master`; Issue #2 closed.
 
-## In progress
-
 ### Detector + B1
 
 GitHub Issue: #5 — `Implement sensitive-data detector and B1 static sanitizer`
 
 Branch: `feat/m1-b1-detector`
 
-At the 2026-09-06 status check, this branch had **0 commits ahead of `master`**. The work item is prepared but implementation has not started yet.
+- `Detector` (`src/adaptive_disclosure_gateway/detection/`): deterministic
+  regex rules for structured Brazilian identifiers (CPF, CNPJ, e-mail, phone,
+  matched only in their canonical punctuated format) plus a deliberately
+  simple labeled-line detector (`Label: value`) for the controlled HR
+  fixture's `employee_name`, `salary`, `department` and `medical_data`
+  categories. This is not a general NER component and depends on no NER
+  library: a category without a rule is simply not detected.
+- Deterministic overlap resolution (`detection/overlap.py`): longest match
+  wins; equal-length overlaps are broken by a fixed category precedence,
+  then leftmost start, then category name, then value. Total and
+  reproducible regardless of input order.
+- `B1StaticSanitizer` (`src/adaptive_disclosure_gateway/transformations/b1.py`):
+  a fixed, hardcoded category -> action mapping applied to detected spans.
+  It does not import or call `PolicyRepository`, task relevance, or a
+  pseudonym vault (checked by a static-analysis test over the actual
+  imports, not just by convention). Irreversible: `REMOVE` drops the value,
+  `GENERALIZE` substitutes a fixed placeholder, `BLOCK_REQUEST` blocks the
+  whole request; an unmapped category also fails closed to `BLOCK_REQUEST`.
+  `PSEUDONYMIZE` is intentionally unused in B1 since it would require the
+  vault B1 does not have.
+- OpenTelemetry spans on both the detector and B1 carry only categories,
+  counts, a block flag and timing; a dedicated test asserts detected values,
+  raw text and the payload never appear in recorded span attributes.
+- HR fixture covering all five frozen categories
+  (`tests/test_hr_fixture.py`), exercised through both the non-blocking and
+  the `medical_data`-blocking path.
 
-Planned first work:
-
-1. TDD for deterministic spans and offsets;
-2. deterministic overlap resolution;
-3. structured-identifier rules/regex;
-4. controlled simplified-HR fixtures;
-5. B1 static sanitizer independent of contextual policy/task/vault;
-6. metadata-only OpenTelemetry instrumentation.
+Not yet implemented as part of this issue (tracked for later milestone
+work): precision/recall measurement against a ground-truth corpus, and
+CPF/CNPJ check-digit validation (rules are format-only).
 
 ## Not started in Milestone 1
 
