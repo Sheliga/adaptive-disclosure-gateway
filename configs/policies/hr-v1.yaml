@@ -1,0 +1,16 @@
+version: hr-v1
+domain: hr
+rules:
+  employee_name:
+    default: pseudonymize
+  cpf:
+    default: remove
+  medical_data:
+    default: deny
+  salary:
+    default: task_dependent
+    allow_for:
+      - salary_analysis
+      - compensation_review
+  department:
+    default: preserve
