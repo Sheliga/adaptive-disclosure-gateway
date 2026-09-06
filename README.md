@@ -8,6 +8,21 @@ The project investigates a local trust boundary that applies explicit organizati
 
 This repository supports a **candidate master's research proposal** for UTFPR PPGCA 2027. The proposal is still under evaluation and this codebase must not be interpreted as a finished dissertation implementation or as evidence that the proposed method outperforms existing approaches.
 
+## Security model
+
+Organizational policy is authoritative. User prompts, ingested documents and model responses are treated as untrusted data and cannot change policies, roles, permissions, pseudonym scope or vault state.
+
+Policy and authorization resolution are **fail closed**: missing, invalid or ambiguous rules result in `BLOCK_REQUEST` rather than silently permitting disclosure. Task-awareness may only choose among actions already allowed by policy.
+
+Disclosure actions are:
+
+- `PRESERVE` — send the original value;
+- `PSEUDONYMIZE` — send a locally reversible pseudonym;
+- `GENERALIZE` — send a less precise representation;
+- `REMOVE` — omit the value while allowing the request to continue;
+- `BLOCK_REQUEST` — block the entire external request;
+- `TASK_DEPENDENT` — choose the least-disclosing useful action inside an explicit policy-defined action space.
+
 ## Core flow
 
 ```text
@@ -25,7 +40,7 @@ organizational policy gates
         ↓
 task-aware minimization within allowed actions
         ↓
-preserve | pseudonymize | generalize | remove | deny
+preserve | pseudonymize | generalize | remove | block_request
         ↓
 authorized external payload
         ↓
@@ -33,6 +48,12 @@ external LLM
         ↓
 local authorized reconstruction
 ```
+
+## Pseudonym scope authorization
+
+Pseudonym persistence can use `request`, `document`, `session` or `organization` scope. The default is `session`.
+
+Authorization is hierarchical: role defines the maximum scope, an explicit per-user configuration may further define a ceiling, and task/purpose may only narrow the effective scope. A task can never expand the authorization ceiling.
 
 ## Document ingestion
 
@@ -42,19 +63,27 @@ It is not part of the claimed research contribution. Its role is to avoid coupli
 
 The ingestion layer should expose an internal normalized representation so the rest of the pipeline does not depend directly on Docling APIs. Direct text input must remain supported for controlled experiments.
 
-Potential document-oriented use cases include:
-
-- querying contract collections while protecting party identities and confidential terms;
-- analyzing HR documents while suppressing or pseudonymizing employee data;
-- processing accounting/financial reports while controlling disclosure of customers, suppliers, bank data, margins and negotiated values.
-
 ## Initial validation domains
 
 - Human Resources — personal and sensitive employee information.
 - Accounting / Finance — financial, banking and commercial confidentiality.
 - Contracts — identities, commercial terms, obligations, deadlines and semantic relationships between parties.
 
-Contracts are especially relevant because disclosure control must preserve semantic roles and obligations after transformation.
+The first implementation milestone uses a simplified HR slice. Contracts follow after the core flow is stable because they provide the richer semantic validation scenario.
+
+## Milestone 1
+
+The first functional milestone is **B0 + B1 + B2 end-to-end over direct HR text using a deterministic FakeProvider**.
+
+Frozen RH categories:
+
+- `employee_name` → `PSEUDONYMIZE`;
+- `cpf` → `REMOVE`;
+- `medical_data` → `BLOCK_REQUEST`;
+- `salary` → `TASK_DEPENDENT` with policy-defined allowed actions;
+- `department` → `PRESERVE`.
+
+Development follows TDD. The audit trail data model is created from the beginning, while the comparison UI is intentionally postponed until B0–B2 are functional.
 
 ## Experimental treatments
 
@@ -64,7 +93,27 @@ Contracts are especially relevant because disclosure control must preserve seman
 - **B3** — task-aware minimization without strong contextual organizational policy constraints.
 - **B4** — proposed approach: contextual policy constraints + task-aware minimization + reversible pseudonymization + local reconstruction.
 
-Document ingestion must be held constant when comparing B0–B4 so that parser behavior is not confused with the effect of the disclosure strategy.
+All treatments must use compatible request/result contracts so they can run against the same cases.
+
+## Observability and audit
+
+OpenTelemetry is part of the implementation from the first milestone. Development uses OTLP with a local Jaeger backend.
+
+Traces must contain metadata only, never raw documents, reconstructed responses, vault values or other sensitive values. Scientific results remain independent of the observability backend and will be recorded in an experiment-oriented format such as JSONL.
+
+The planned audit model keeps the stages necessary to compare:
+
+```text
+raw input
+→ detected spans
+→ policy decisions
+→ transformed payload
+→ payload delivered to provider
+→ provider response
+→ locally reconstructed response
+```
+
+Full raw/reconstructed values may only be persisted explicitly for controlled synthetic experiments; normal operation should persist metadata, categories, decisions, identifiers/hashes and metrics.
 
 ## Planned metrics
 
@@ -100,6 +149,10 @@ experiments/
 tests/
 docs/
 ```
+
+## Framework independence
+
+The core is initially deterministic Python with small internal interfaces. It must not depend rigidly on LangChain, LangGraph, CrewAI, n8n or another orchestration framework. Adapters can be added later without changing the policy and disclosure contracts.
 
 ## Scope and safety
 
