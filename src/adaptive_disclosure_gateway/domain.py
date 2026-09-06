@@ -13,12 +13,21 @@ class DisclosureAction(StrEnum):
     TASK_DEPENDENT = "task_dependent"
 
 
+class PseudonymScope(StrEnum):
+    REQUEST = "request"
+    DOCUMENT = "document"
+    SESSION = "session"
+    ORGANIZATION = "organization"
+
+
 class GovernanceContext(BaseModel):
     domain: str
     purpose: str
     requester_role: str | None = None
+    requester_id: str | None = None
     provider_class: str = "external_llm"
     policy_version: str
+    requested_pseudonym_scope: PseudonymScope = PseudonymScope.SESSION
 
 
 class SensitiveSpan(BaseModel):
@@ -34,6 +43,8 @@ class PolicyDecision(BaseModel):
     action: DisclosureAction
     reason: str
     task_required: bool | None = None
+    allowed_actions: list[DisclosureAction] = Field(default_factory=list)
+    policy_version: str | None = None
 
 
 class Transformation(BaseModel):
