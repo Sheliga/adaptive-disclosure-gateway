@@ -10,7 +10,7 @@ This repository supports a **candidate master's research proposal** for UTFPR PP
 
 ## Current implementation status
 
-The architecture foundation for Milestone 1 is implemented and merged. The current work item is the deterministic detector + B1 static sanitizer; B2/vault/reconstruction/FakeProvider remain pending before the first end-to-end milestone is complete.
+The architecture foundation for Milestone 1 is implemented and merged, along with the deterministic detector and B1 static sanitizer. B2/vault/reconstruction/FakeProvider remain pending before the first end-to-end milestone is complete.
 
 See [`docs/implementation-status.md`](docs/implementation-status.md) for the live engineering status. Architectural decisions are recorded separately in [`docs/adr/0001-milestone-1-architecture.md`](docs/adr/0001-milestone-1-architecture.md).
 
