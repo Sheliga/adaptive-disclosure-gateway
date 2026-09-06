@@ -8,7 +8,7 @@ rules:
   tax_id:
     default: remove
   bank_account:
-    default: deny
+    default: block_request
   confidential_value:
     default: task_dependent
   obligation:
