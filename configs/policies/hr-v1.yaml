@@ -6,7 +6,7 @@ rules:
   cpf:
     default: remove
   medical_data:
-    default: deny
+    default: block_request
   salary:
     default: task_dependent
     allow_for:
