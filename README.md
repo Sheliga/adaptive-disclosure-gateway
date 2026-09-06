@@ -8,6 +8,12 @@ The project investigates a local trust boundary that applies explicit organizati
 
 This repository supports a **candidate master's research proposal** for UTFPR PPGCA 2027. The proposal is still under evaluation and this codebase must not be interpreted as a finished dissertation implementation or as evidence that the proposed method outperforms existing approaches.
 
+## Current implementation status
+
+The architecture foundation for Milestone 1 is implemented and merged. The current work item is the deterministic detector + B1 static sanitizer; B2/vault/reconstruction/FakeProvider remain pending before the first end-to-end milestone is complete.
+
+See [`docs/implementation-status.md`](docs/implementation-status.md) for the live engineering status. Architectural decisions are recorded separately in [`docs/adr/0001-milestone-1-architecture.md`](docs/adr/0001-milestone-1-architecture.md).
+
 ## Security model
 
 Organizational policy is authoritative. User prompts, ingested documents and model responses are treated as untrusted data and cannot change policies, roles, permissions, pseudonym scope or vault state.
