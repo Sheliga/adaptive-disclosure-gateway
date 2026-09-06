@@ -1,5 +1,11 @@
 version: hr-v1
 domain: hr
+pseudonym_scope:
+  default: session
+  role_max:
+    hr_viewer: request
+    hr_analyst: session
+    hr_admin: organization
 rules:
   employee_name:
     default: pseudonymize
@@ -9,8 +15,17 @@ rules:
     default: block_request
   salary:
     default: task_dependent
-    allow_for:
-      - salary_analysis
-      - compensation_review
+    allowed_actions:
+      - remove
+      - generalize
+    purpose_actions:
+      salary_analysis:
+        - remove
+        - generalize
+        - preserve
+      compensation_review:
+        - remove
+        - generalize
+        - preserve
   department:
     default: preserve
