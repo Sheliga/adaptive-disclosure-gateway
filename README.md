@@ -101,6 +101,8 @@ Development follows TDD. The audit trail data model is created from the beginnin
 
 All treatments must use compatible request/result contracts so they can run against the same cases.
 
+See [`docs/experimental-design.md`](docs/experimental-design.md) for the isolated variable per comparison, what must be held constant, and the mapping from these treatments to the planned metrics below.
+
 ## Observability and audit
 
 OpenTelemetry is part of the implementation from the first milestone. Development uses OTLP with a local Jaeger backend.

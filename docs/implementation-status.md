@@ -87,6 +87,7 @@ Milestone 1 is complete when the same controlled HR case can run through B0, B1 
 ## References
 
 - ADR 0001: `docs/adr/0001-milestone-1-architecture.md`
+- Experimental design (B0–B4): `docs/experimental-design.md`
 - Merged foundation PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/10
 - Completed policy-engine issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/2
 - Current detector/B1 issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/5
