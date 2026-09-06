@@ -10,9 +10,9 @@ This repository supports a **candidate master's research proposal** for UTFPR PP
 
 ## Current implementation status
 
-The architecture foundation for Milestone 1 is implemented and merged, along with the deterministic detector and B1 static sanitizer. B2/vault/reconstruction/FakeProvider remain pending before the first end-to-end milestone is complete.
+The architecture foundation, deterministic detector and B1 static sanitizer are implemented and merged. B1 is now the first completed treatment beyond B0, but Milestone 1 is not complete: malformed `SensitiveSpan` metadata still needs fail-closed hardening before the same transformation boundary is extended into B2, and B2/vault/reconstruction/FakeProvider remain pending.
 
-See [`docs/implementation-status.md`](docs/implementation-status.md) for the live engineering status. Architectural decisions are recorded separately in [`docs/adr/0001-milestone-1-architecture.md`](docs/adr/0001-milestone-1-architecture.md).
+See [`docs/implementation-status.md`](docs/implementation-status.md) for the live engineering status, current blockers and recommended execution order. Architectural decisions are recorded separately in [`docs/adr/0001-milestone-1-architecture.md`](docs/adr/0001-milestone-1-architecture.md).
 
 ## Runtime
 
