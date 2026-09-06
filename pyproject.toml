@@ -7,7 +7,7 @@ name = "adaptive-disclosure-gateway"
 version = "0.1.0"
 description = "Research prototype for policy-constrained disclosure to external LLMs"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.13,<3.14"
 dependencies = [
   "opentelemetry-api>=1.27,<2",
   "opentelemetry-exporter-otlp-proto-grpc>=1.27,<2",
@@ -33,4 +33,4 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py313"

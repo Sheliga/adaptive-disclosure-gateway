@@ -14,6 +14,10 @@ The architecture foundation for Milestone 1 is implemented and merged. The curre
 
 See [`docs/implementation-status.md`](docs/implementation-status.md) for the live engineering status. Architectural decisions are recorded separately in [`docs/adr/0001-milestone-1-architecture.md`](docs/adr/0001-milestone-1-architecture.md).
 
+## Runtime
+
+The canonical development and CI runtime for this prototype is **CPython 3.13.13**. Project metadata intentionally targets the Python 3.13 line (`>=3.13,<3.14`) so local development, CI and experiment reproduction do not silently drift across Python feature versions.
+
 ## Security model
 
 Organizational policy is authoritative. User prompts, ingested documents and model responses are treated as untrusted data and cannot change policies, roles, permissions, pseudonym scope or vault state.
@@ -96,7 +100,7 @@ Development follows TDD. The audit trail data model is created from the beginnin
 - **B0** — direct/full external disclosure.
 - **B1** — static sanitization.
 - **B2** — static reversible pseudonymization.
-- **B3** — task-aware minimization without strong contextual organizational policy constraints.
+- **B3** — task-aware minimization without strong contextual organizational policy constraints, retaining the same reversible pseudonymization/vault/reconstruction mechanism used by B2 so the B2→B3 comparison isolates task-awareness rather than reversibility.
 - **B4** — proposed approach: contextual policy constraints + task-aware minimization + reversible pseudonymization + local reconstruction.
 
 All treatments must use compatible request/result contracts so they can run against the same cases.
