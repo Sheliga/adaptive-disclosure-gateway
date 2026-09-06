@@ -9,7 +9,7 @@ class DisclosureAction(StrEnum):
     PSEUDONYMIZE = "pseudonymize"
     GENERALIZE = "generalize"
     REMOVE = "remove"
-    DENY = "deny"
+    BLOCK_REQUEST = "block_request"
     TASK_DEPENDENT = "task_dependent"
 
 
