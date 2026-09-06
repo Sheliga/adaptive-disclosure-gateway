@@ -11,6 +11,12 @@ This repository supports a **candidate master's research proposal** for UTFPR PP
 ## Core flow
 
 ```text
+PDF / DOCX / XLSX / image / direct text
+        ↓
+optional document ingestion (Docling)
+        ↓
+normalized document structure
+        ↓
 input + governance context + task
         ↓
 local detection/classification
@@ -28,6 +34,20 @@ external LLM
 local authorized reconstruction
 ```
 
+## Document ingestion
+
+Docling is planned as an **infrastructure component** for parsing and normalizing document-oriented inputs such as PDF, DOCX, spreadsheets and images while preserving useful structure such as sections, tables and layout-derived relationships.
+
+It is not part of the claimed research contribution. Its role is to avoid coupling the disclosure-control research to custom PDF/Office parsing and to enable realistic document-oriented validation, especially for contracts.
+
+The ingestion layer should expose an internal normalized representation so the rest of the pipeline does not depend directly on Docling APIs. Direct text input must remain supported for controlled experiments.
+
+Potential document-oriented use cases include:
+
+- querying contract collections while protecting party identities and confidential terms;
+- analyzing HR documents while suppressing or pseudonymizing employee data;
+- processing accounting/financial reports while controlling disclosure of customers, suppliers, bank data, margins and negotiated values.
+
 ## Initial validation domains
 
 - Human Resources — personal and sensitive employee information.
@@ -43,6 +63,8 @@ Contracts are especially relevant because disclosure control must preserve seman
 - **B2** — static reversible pseudonymization.
 - **B3** — task-aware minimization without strong contextual organizational policy constraints.
 - **B4** — proposed approach: contextual policy constraints + task-aware minimization + reversible pseudonymization + local reconstruction.
+
+Document ingestion must be held constant when comparing B0–B4 so that parser behavior is not confused with the effect of the disclosure strategy.
 
 ## Planned metrics
 
@@ -60,6 +82,18 @@ Contracts are especially relevant because disclosure control must preserve seman
 
 ```text
 src/adaptive_disclosure_gateway/
+├── ingestion/
+├── governance/
+├── detection/
+├── policies/
+├── task_analysis/
+├── transformations/
+├── pseudonymization/
+├── vault/
+├── providers/
+├── reconstruction/
+├── audit/
+└── evaluation/
 configs/policies/
 datasets/synthetic/
 experiments/
