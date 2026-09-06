@@ -1,0 +1,24 @@
+version: contracts-v1
+domain: contracts
+rules:
+  party_name:
+    default: pseudonymize
+  representative_name:
+    default: pseudonymize
+  tax_id:
+    default: remove
+  bank_account:
+    default: deny
+  confidential_value:
+    default: task_dependent
+  obligation:
+    default: preserve
+  deadline:
+    default: preserve
+  penalty:
+    default: task_dependent
+  confidential_clause:
+    default: task_dependent
+semantic_constraints:
+  preserve_party_roles: true
+  preserve_obligation_assignment: true
