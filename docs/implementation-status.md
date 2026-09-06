@@ -30,48 +30,63 @@ Milestone 1 is the first functional vertical slice:
 - Simplified HR policy for the first slice.
 - OpenTelemetry SDK + OTLP foundation.
 - Local Jaeger service through Docker Compose.
-- GitHub Actions CI with Ruff and pytest.
+- GitHub Actions CI with Ruff and pytest on CPython 3.13.13.
 - PR #10 merged into `master`; Issue #2 closed.
+- Experimental design B0–B4 formalized in PR #13; Issue #1 closed.
+- Project-scoped Trello MCP configuration versioned in PR #14.
 
 ### Detector + B1
 
 GitHub Issue: #5 — `Implement sensitive-data detector and B1 static sanitizer`
 
-Branch: `feat/m1-b1-detector`
+Merged PR: #15 — `Implement sensitive-data detector and B1 static sanitizer`
 
-- `Detector` (`src/adaptive_disclosure_gateway/detection/`): deterministic
-  regex rules for structured Brazilian identifiers (CPF, CNPJ, e-mail, phone,
-  matched only in their canonical punctuated format) plus a deliberately
-  simple labeled-line detector (`Label: value`) for the controlled HR
-  fixture's `employee_name`, `salary`, `department` and `medical_data`
-  categories. This is not a general NER component and depends on no NER
-  library: a category without a rule is simply not detected.
-- Deterministic overlap resolution (`detection/overlap.py`): longest match
-  wins; equal-length overlaps are broken by a fixed category precedence,
-  then leftmost start, then category name, then value. Total and
-  reproducible regardless of input order.
-- `B1StaticSanitizer` (`src/adaptive_disclosure_gateway/transformations/b1.py`):
-  a fixed, hardcoded category -> action mapping applied to detected spans.
-  It does not import or call `PolicyRepository`, task relevance, or a
-  pseudonym vault (checked by a static-analysis test over the actual
-  imports, not just by convention). Irreversible: `REMOVE` drops the value,
-  `GENERALIZE` substitutes a fixed placeholder, `BLOCK_REQUEST` blocks the
-  whole request; an unmapped category also fails closed to `BLOCK_REQUEST`.
-  `PSEUDONYMIZE` is intentionally unused in B1 since it would require the
-  vault B1 does not have.
-- OpenTelemetry spans on both the detector and B1 carry only categories,
-  counts, a block flag and timing; a dedicated test asserts detected values,
-  raw text and the payload never appear in recorded span attributes.
-- HR fixture covering all five frozen categories
-  (`tests/test_hr_fixture.py`), exercised through both the non-blocking and
-  the `medical_data`-blocking path.
+- `Detector` (`src/adaptive_disclosure_gateway/detection/`): deterministic regex rules for structured Brazilian identifiers (CPF, CNPJ, e-mail, phone, matched only in their canonical punctuated format) plus a deliberately simple labeled-line detector (`Label: value`) for the controlled HR fixture's `employee_name`, `salary`, `department` and `medical_data` categories.
+- The detector is intentionally **not** a general NER component and depends on no NER library.
+- Deterministic overlap resolution: longest match wins; equal-length overlaps are broken by fixed category precedence, then leftmost start, category name and value.
+- `B1StaticSanitizer`: fixed task- and policy-independent category → action mapping, with static-analysis tests preventing dependency on policy, task-awareness or vault code.
+- `REMOVE`, `PRESERVE`, `GENERALIZE` and `BLOCK_REQUEST` paths are covered by tests; an unmapped category blocks rather than silently disclosing.
+- OpenTelemetry detector/B1 spans are metadata-only; tests assert that raw text, detected values and external payloads do not appear in span attributes.
+- Controlled synthetic HR fixture covers all five frozen categories and both allowed and blocking flows.
+- PR #15 CI passed with 39 tests; Issue #5 closed.
 
-Not yet implemented as part of this issue (tracked for later milestone
-work): precision/recall measurement against a ground-truth corpus, and
-CPF/CNPJ check-digit validation (rules are format-only).
+Known limitations retained deliberately at this stage:
 
-## Not started in Milestone 1
+- CPF/CNPJ detection is format-only; check digits are not validated yet.
+- Labeled HR extraction is controlled-fixture parsing, not free-text NER.
+- Precision/recall measurement waits for the ground-truth corpus.
 
+## Immediate follow-ups from B1 review
+
+### Security blocker before B2
+
+Issue #17 — `Fail closed on malformed or missing SensitiveSpan offsets`
+
+Review of the merged B1 implementation found that `SensitiveSpan.start` / `end` are optional in the domain model while the transformation boundary currently normalizes missing offsets to zero. A malformed externally supplied span can therefore reach a nominal `REMOVE` decision while leaving the original value in an allowed payload.
+
+Before extending the transformation boundary into B2/vault work, malformed spans must fail closed. Coverage must include missing, negative, inverted, out-of-range and value/offset-mismatch cases.
+
+### Experimental correctness follow-up
+
+Issue #16 — `Implement semantic GENERALIZE distinct from redaction`
+
+B1 currently implements `GENERALIZE` as a fixed `[REDACTED:<category>]` placeholder. This is safe for disclosure but semantically equivalent to removal, so it cannot yet support a fair utility comparison where generalization is expected to preserve partial information. A category-specific deterministic generalization strategy is required before the experiment runner produces comparative utility numbers.
+
+This does **not** invalidate the completed B1 engineering slice, but it must be corrected before Issue #8 produces scientific measurements.
+
+## Recommended next execution order
+
+1. Issue #17 — harden `SensitiveSpan` validation / fail-closed transformation behavior.
+2. Issue #3 — B2 reversible pseudonym vault and authorized reconstruction.
+3. Issue #12 — deterministic `FakeProvider` through the common provider adapter boundary, as required to complete Milestone 1 end-to-end.
+4. Complete B0/B1/B2 shared HR execution path and structural audit trail.
+5. Issue #16 before utility/metric collection becomes authoritative.
+
+Issue #16 can be implemented before or alongside B2 if convenient, but it is a hard prerequisite for meaningful task-utility results in Issue #8, not for the basic B2 pseudonym round-trip itself.
+
+## Not started / incomplete in Milestone 1
+
+- hardened malformed-span validation (Issue #17);
 - `InMemoryVault` / `SQLiteVault`;
 - B2 reversible pseudonymization;
 - pseudonym property tests with Hypothesis;
@@ -86,7 +101,7 @@ CPF/CNPJ check-digit validation (rules are format-only).
 - B4 proposed policy-governed disclosure approach;
 - Docling ingestion adapter for PDF/DOCX/XLSX/images;
 - richer contract-oriented corpus and semantic-relation tests;
-- external/Ollama provider adapters;
+- real external/Ollama provider adapters;
 - visual audit/comparison UI;
 - experiment runner and full metric collection.
 
@@ -94,6 +109,7 @@ CPF/CNPJ check-digit validation (rules are format-only).
 
 Milestone 1 is complete when the same controlled HR case can run through B0, B1 and B2 and tests demonstrate that:
 
+- malformed/invalid span metadata fails closed rather than leaking values;
 - `REMOVE` content does not appear in the external payload;
 - `BLOCK_REQUEST` stops the entire external request;
 - pseudonyms are stable within the authorized scope;
@@ -106,6 +122,12 @@ Milestone 1 is complete when the same controlled HR case can run through B0, B1 
 
 - ADR 0001: `docs/adr/0001-milestone-1-architecture.md`
 - Experimental design (B0–B4): `docs/experimental-design.md`
-- Merged foundation PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/10
+- Foundation PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/10
+- B0–B4 design PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/13
+- Detector/B1 PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/15
 - Completed policy-engine issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/2
-- Current detector/B1 issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/5
+- Completed detector/B1 issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/5
+- Security hardening follow-up: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/17
+- Semantic generalization follow-up: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/16
+- B2/vault issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/3
+- Provider adapter/FakeProvider issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/12
