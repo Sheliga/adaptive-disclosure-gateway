@@ -7,7 +7,6 @@ from adaptive_disclosure_gateway.domain import (
 )
 from adaptive_disclosure_gateway.policies import PolicyRepository
 
-
 POLICY_DIR = Path(__file__).parents[1] / "configs" / "policies"
 
 
