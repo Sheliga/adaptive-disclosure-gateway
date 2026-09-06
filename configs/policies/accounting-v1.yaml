@@ -1,0 +1,17 @@
+version: accounting-v1
+domain: accounting
+rules:
+  customer_name:
+    default: pseudonymize
+  supplier_name:
+    default: pseudonymize
+  tax_id:
+    default: remove
+  bank_account:
+    default: deny
+  negotiated_price:
+    default: task_dependent
+  company_margin:
+    default: deny
+  product:
+    default: preserve
