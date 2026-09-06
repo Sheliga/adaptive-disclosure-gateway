@@ -13,7 +13,6 @@ from adaptive_disclosure_gateway.domain import (
     PseudonymScope,
 )
 
-
 _SCOPE_RANK = {
     PseudonymScope.REQUEST: 0,
     PseudonymScope.DOCUMENT: 1,
@@ -68,7 +67,7 @@ class PolicyRepository:
         self._load_errors = load_errors or {}
 
     @classmethod
-    def from_directory(cls, directory: str | Path) -> "PolicyRepository":
+    def from_directory(cls, directory: str | Path) -> PolicyRepository:
         policies: dict[str, PolicyDocument] = {}
         errors: dict[str, str] = {}
 
