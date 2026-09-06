@@ -35,7 +35,9 @@ there as Post-Milestone 1.
   least-disclosing action that still supports the task, but this choice is
   not bounded by an explicit, policy-defined action space per category —
   unlike the `TASK_DEPENDENT` action's contract in the security model, which
-  requires such a space.
+  requires such a space. To isolate task-awareness in B2→B3 and policy
+  constraints in B3→B4, B3 retains the same reversible pseudonymization,
+  local vault, and authorized reconstruction capability available in B2.
 - **B4 — proposed approach.** Contextual organizational policy constraints
   (fail-closed policy resolution, an explicit policy-defined allowed-action
   space per category) combined with task-aware minimization *within* that
@@ -53,8 +55,8 @@ uncontrolled confound.
 | --- | --- |
 | B0 → B1 | Presence vs. absence of any local sanitization applied to the payload before it leaves the trust boundary (static sanitization vs. none). |
 | B1 → B2 | Reversibility of the disclosure transformation: irreversible removal/generalization (B1) vs. reversible pseudonymization with a local vault and reconstruction path (B2). The detection stage and the fact that the mapping is static/task-independent do not change. |
-| B2 → B3 | How the disclosure action per category is selected: a fixed, static category→action mapping (B2) vs. a dynamically chosen, task-relevance-driven action (B3). Reversibility of the underlying mechanism is not the variable under test here — only whether task-awareness participates in the choice. |
-| B3 → B4 | Presence vs. absence of an explicit, policy-defined, fail-closed action-space constraint bounding what task-awareness may choose: B3 selects the least-disclosing useful action without such a constraint; B4 performs the same kind of task-aware selection but only within an action space that contextual organizational policy has explicitly authorized. |
+| B2 → B3 | How the disclosure action per category is selected: a fixed, static category→action mapping (B2) vs. a dynamically chosen, task-relevance-driven action (B3). The reversible pseudonymization/vault/reconstruction mechanism is held constant; only whether task-awareness participates in the choice changes. |
+| B3 → B4 | Presence vs. absence of an explicit, policy-defined, fail-closed action-space constraint bounding what task-awareness may choose. B3 and B4 both retain task-awareness plus reversible pseudonymization/vault/reconstruction; the isolated variable is the contextual organizational policy constraint. |
 
 ## Held constant across treatments
 
@@ -97,6 +99,10 @@ and not an incidental difference in setup.
   when a case is scored for metrics such as sensitive information exposure,
   the same detector output must be used to identify what B0 discloses. The
   deterministic detector is not yet implemented (tracked in issue #5).
+- **Reversible mechanism where applicable.** B2, B3 and B4 must use the same
+  pseudonymization, vault and authorized reconstruction implementation for a
+  given experiment. B3 must not disable reconstruction or swap to a different
+  pseudonym mechanism, because that would confound B2→B3 and B3→B4.
 - **Evaluation harness.** Metric computation, scoring and the metadata-only
   audit pipeline described in the README's "Observability and audit" section
   must be shared across treatments so that results are comparable and are
@@ -117,8 +123,17 @@ relative to B0–B3 without an unacceptable loss of task utility.
 | Unnecessary disclosure | B0 → B1; B2 → B3; B3 → B4 | Decreases at each step; B2 → B3 should show a further reduction because task-awareness withholds task-irrelevant content that a static mapping would still disclose; B3 → B4 should not increase it. |
 | Sensitive information exposure | B0 → B1 (primary); B1 → B2; B3 → B4 | Sharp decrease from B0 to B1; remains at or below the B1/B2 level through B3 and B4 — task-awareness and policy constraints must not regress exposure of categories such as `medical_data`. |
 | Task utility / task success | B1 → B2; B2 → B3 (primary); B3 → B4 | Increases from B1 to B2 (reversible pseudonyms preserve more usable structure than irreversible removal) and from B2 to B3 (task-aware selection retains what the task needs); B3 → B4 should hold utility roughly constant despite the added policy constraint. |
-| Reconstruction accuracy | B1 → B2; B2 vs. B4 | Only defined for treatments with a vault (B2, B4). High-fidelity round-trip in both; B4 should not be lower than B2 despite the added policy layer. |
-| Latency | B0 → B1 → B2 → B3 → B4 | Monotonic increase is expected as detection, policy evaluation, task analysis and vault operations are added; supports the hypothesis if the increase stays within a practical bound rather than by decreasing. |
-| CPU and memory usage | B0 → B1 → B2 → B3 → B4 | Same as latency: monotonic non-decrease is expected; supports the hypothesis if overhead stays within a practical bound. |
+| Reconstruction accuracy | B1 → B2; B2 → B3; B3 → B4 | Defined for B2, B3 and B4 because all three retain the same vault/reconstruction mechanism. High-fidelity round-trip should remain stable across B2→B3→B4; policy/task logic must not degrade reconstruction correctness. |
+| Latency | B0 → B1 → B2 → B3 → B4 | Monotonic increase is expected as detection, policy evaluation, task analysis and vault operations are added. No numeric acceptance threshold is fixed yet; the practical bound must be calibrated in the pilot and frozen before the main experiment. |
+| CPU and memory usage | B0 → B1 → B2 → B3 → B4 | Monotonic non-decrease is expected. No numeric acceptance threshold is fixed yet; the practical bound must be calibrated in the pilot and frozen before the main experiment. |
 | Transmitted tokens/data volume | B0 → B1 (primary); B2 → B3; B3 → B4 | Decreases sharply from B0 to B1; B3/B4 should be at or below B1/B2 when task-aware minimization omits fields a static mapping would still transmit. |
 | Estimated external API cost | Same as transmitted tokens/data volume | Decreases together with transmitted volume, B0 through B4. |
+
+## Pilot calibration follow-up
+
+The main experiment must not invent a post-hoc "practical" performance bound.
+During the pilot, observed latency/CPU/memory overhead should be used to define
+an explicit acceptance or interpretation threshold. That threshold, together
+with the measurement procedure, must be frozen before the main experiment is
+run so that performance conclusions are not adjusted after seeing the final
+results.
