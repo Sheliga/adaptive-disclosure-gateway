@@ -8,10 +8,10 @@ rules:
   tax_id:
     default: remove
   bank_account:
-    default: deny
+    default: block_request
   negotiated_price:
     default: task_dependent
   company_margin:
-    default: deny
+    default: block_request
   product:
     default: preserve
