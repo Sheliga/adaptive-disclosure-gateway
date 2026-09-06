@@ -1,0 +1,7 @@
+services:
+  app:
+    image: python:3.12-slim
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+    command: sh -lc "pip install -e .[dev] && pytest"
