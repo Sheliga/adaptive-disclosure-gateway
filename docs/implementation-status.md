@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-09-06 (PR #19 / T14 under validation)
+Last updated: 2026-09-06 (T14 merged; T15 / PR #21 under validation)
 
 This file tracks **what is implemented now**. Architectural decisions belong in ADRs; research-proposal versions remain separate documents.
 
@@ -35,16 +35,16 @@ Milestone 1 is the first functional vertical slice:
 - Experimental design B0–B4 formalized in PR #13; Issue #1 closed.
 - Project-scoped Trello MCP configuration versioned in PR #14.
 
-### Detector + B1
+### Detector + B1 — Static Sanitization
 
 GitHub Issue: #5 — `Implement sensitive-data detector and B1 static sanitizer`
 
 Merged PR: #15 — `Implement sensitive-data detector and B1 static sanitizer`
 
-- `Detector` (`src/adaptive_disclosure_gateway/detection/`): deterministic regex rules for structured Brazilian identifiers (CPF, CNPJ, e-mail, phone, matched only in their canonical punctuated format) plus a deliberately simple labeled-line detector (`Label: value`) for the controlled HR fixture's `employee_name`, `salary`, `department` and `medical_data` categories.
+- `Detector` (`src/adaptive_disclosure_gateway/detection/`): deterministic regex rules for structured Brazilian identifiers (CPF, CNPJ, e-mail, phone, canonical punctuated format) plus a deliberately simple labeled-line detector (`Label: value`) for the controlled HR fixture's `employee_name`, `salary`, `department` and `medical_data` categories.
 - The detector is intentionally **not** a general NER component and depends on no NER library.
 - Deterministic overlap resolution: longest match wins; equal-length overlaps are broken by fixed category precedence, then leftmost start, category name and value.
-- `StaticSanitizer`: fixed task- and policy-independent category → action mapping, with static-analysis tests preventing dependency on policy, task-awareness or vault code.
+- The Static Sanitization treatment uses a fixed task- and policy-independent category → action mapping, with static-analysis tests preventing dependency on policy, task-awareness or vault code.
 - `REMOVE`, `PRESERVE`, `GENERALIZE` and `BLOCK_REQUEST` paths are covered by tests; an unmapped category blocks rather than silently disclosing.
 - OpenTelemetry detector/static-sanitization spans are metadata-only; tests assert that raw text, detected values and external payloads do not appear in span attributes.
 - Controlled synthetic HR fixture covers all five frozen categories and both allowed and blocking flows.
@@ -56,24 +56,41 @@ Known limitations retained deliberately at this stage:
 - Labeled HR extraction is controlled-fixture parsing, not free-text NER.
 - Precision/recall measurement waits for the ground-truth corpus.
 
-## In validation
-
 ### T14 / Issue #17 — fail-closed span offset validation
 
-GitHub PR: #19 — `Fail closed on malformed or missing SensitiveSpan offsets`
+Merged PR: #19 — `Fail closed on malformed or missing SensitiveSpan offsets`
 
-Review of the merged B1 implementation found that `SensitiveSpan.start` / `end` were optional in the domain model while the transformation boundary normalized missing offsets to zero (`span.start or 0`). A malformed span could therefore reach a nominal `REMOVE` decision while the original value remained in an `allowed` external payload. The same coercion in overlap resolution could silently turn malformed metadata into a harmless-looking zero-length `(0, 0)` interval.
+The review of B1 found that malformed `SensitiveSpan` offsets could previously be normalized to zero and reach a nominal removal while the original value remained in an allowed payload. PR #19 fixed that boundary before B2 work.
 
-PR #19 addresses the defect at two layers:
+- `SensitiveSpan.start` / `end` are required `int` fields; normal construction rejects missing, negative, inverted and zero-length offsets.
+- Shared validation in `transformations/span_validation.py` checks source-text bounds and `text[start:end] == span.value` before payload slicing.
+- Invalid spans fail the whole request closed with `status="blocked"` and an empty external payload.
+- `resolve_overlaps` no longer normalizes malformed offsets to `(0, 0)` and fails explicitly without placing `span.value` in the exception.
+- The validator is shared so B2/B3/B4 can reuse the same transformation boundary.
+- Tests cover missing, negative, inverted, zero-length, out-of-bounds, mismatch and model-validation bypass cases.
+- PR #19 merged as commit `0c2ce858cbac9fd6b2a9f107c3f56aad06b8977a`; Issue #17 closed; Trello T14 is completed.
 
-- **Domain model** (`domain.py`): `SensitiveSpan.start` / `end` are required `int` fields, and construction rejects negative, inverted and zero-length offsets.
-- **Transformation boundary** (`transformations/span_validation.py`): shared validation checks `end <= len(text)` and `text[start:end] == span.value` before payload slicing. `StaticSanitizer.sanitize` fails the whole request closed (`status="blocked"`, empty payload) if any supplied span is invalid.
-- `resolve_overlaps` no longer normalizes malformed offsets to zero and now raises an explicit `ValueError` whose message contains category/offset metadata but not `span.value`.
-- The shared validator is deliberately outside `static_sanitization.py` so B2/B3/B4 can reuse the same boundary rather than reimplementing it.
-- Tests cover missing, negative, inverted, zero-length, out-of-bounds and value/offset-mismatch cases, including model-validation bypass through `model_construct`.
-- PR #19 CI is green with 58 tests.
+The security dependency that blocked B2 is therefore resolved.
 
-Independent review found the implementation technically sound. The work remains **in validation**, not completed, until PR #19 is merged and Issue #17 closes. Trello card T14 must remain in `Validação` until that happens.
+## In validation
+
+### T15 / Issue #20 — semantic treatment names
+
+GitHub PR: #21 — `T15: Adopt semantic names for B0-B4 treatments`
+
+The project now uses semantic names for humans while retaining B0–B4 / `b0`–`b4` as frozen experimental identifiers:
+
+- B0 — Direct;
+- B1 — Static Sanitization;
+- B2 — Reversible Pseudonymization;
+- B3 — Task-aware;
+- B4 — Policy-governed.
+
+PR #21 introduces a `Treatment` `StrEnum` with semantic members and frozen values, renames the B1 module/class to `static_sanitization.py` / `StaticSanitizer`, renames the treatment-specific tests, changes OTel namespaces from `b1.*` to `static_sanitization.*`, and keeps `treatment="b1"` as machine-readable experimental data. `CLAUDE.md` records the canonical sequence, TDD expectations and workflow-state rules.
+
+Independent review found no change to the experimental meaning or the B1 isolation/security guarantees. CI on the reviewed head was green and the suite reported 59 passing tests. Review also corrected stale project-state text inherited from master that still described T14 / PR #19 as under validation.
+
+T15 remains in `Validação` until PR #21 is merged and Issue #20 closes.
 
 ## Remaining follow-up from B1 review
 
@@ -85,18 +102,18 @@ This does **not** invalidate the completed B1 engineering slice, but it must be 
 
 ## Recommended next execution order
 
-1. Validate and merge PR #19 / T14; Issue #17 must close before B2 starts.
-2. T06 / Issue #3 — B2 reversible pseudonym vault and authorized reconstruction.
-3. T11 / Issue #12 — deterministic `FakeProvider` through the common provider adapter boundary, as required to complete Milestone 1 end-to-end.
+1. Finish validation and merge T15 / PR #21 so future treatment code starts with the semantic naming convention.
+2. T06 / Issue #3 — B2 — Reversible Pseudonymization: vault, stable pseudonyms and authorized reconstruction.
+3. T11 / Issue #12 — deterministic `FakeProvider` through the common provider adapter boundary.
 4. Complete the shared B0/B1/B2 HR execution path and structural audit trail.
 5. T13 / Issue #16 before utility/metric collection becomes authoritative.
 
-T06 has moved to `Próximas` because its blocker is implemented and under validation, but implementation must not start concurrently with PR #19 on the same `SensitiveSpan`/transformation boundary. T13 can be implemented before or alongside B2 if convenient; it blocks meaningful task-utility measurement, not the basic B2 pseudonym round-trip.
+T06 is technically unblocked by the T14 security fix, but should start after T15 merges to avoid concurrent changes around the renamed transformation module and to use `Treatment.REVERSIBLE_PSEUDONYMIZATION` from the outset. T13 can be implemented before or alongside B2 if convenient; it blocks meaningful task-utility measurement, not the basic B2 pseudonym round-trip.
 
 ## Not started / incomplete in Milestone 1
 
 - `InMemoryVault` / `SQLiteVault`;
-- B2 reversible pseudonymization;
+- B2 — Reversible Pseudonymization;
 - pseudonym property tests with Hypothesis;
 - deterministic `FakeProvider` implementation;
 - authorized local reconstruction;
@@ -115,7 +132,7 @@ T06 has moved to `Próximas` because its blocker is implemented and under valida
 
 ## Milestone 1 exit criteria
 
-Milestone 1 is complete when the same controlled HR case can run through B0, B1 and B2 and tests demonstrate that:
+Milestone 1 is complete when the same controlled HR case can run through B0 — Direct, B1 — Static Sanitization and B2 — Reversible Pseudonymization and tests demonstrate that:
 
 - malformed/invalid span metadata fails closed rather than leaking values;
 - `REMOVE` content does not appear in the external payload;
@@ -129,14 +146,16 @@ Milestone 1 is complete when the same controlled HR case can run through B0, B1 
 ## References
 
 - ADR 0001: `docs/adr/0001-milestone-1-architecture.md`
-- Experimental design (B0–B4): `docs/experimental-design.md`
+- Experimental design: `docs/experimental-design.md`
 - Foundation PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/10
 - B0–B4 design PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/13
 - Detector/B1 PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/15
 - Span offset validation PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/19
-- Completed policy-engine issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/2
-- Completed detector/B1 issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/5
+- Semantic naming PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/21
+- Policy-engine issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/2
+- Detector/B1 issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/5
 - Span offset validation issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/17
+- Semantic naming issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/20
 - Semantic generalization follow-up: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/16
 - B2/vault issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/3
 - Provider adapter/FakeProvider issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/12
