@@ -12,51 +12,73 @@ implemented. Implementation status is tracked separately in
 writing, B0–B2 are the current Milestone 1 work item and B3/B4 are listed
 there as Post-Milestone 1.
 
+## Semantic names (T15)
+
+The B0–B4 codes are frozen experimental identifiers and must never change.
+The table below is the official mapping between each frozen code and the
+semantic name used in this repository's documentation, code and telemetry
+(English), alongside the Portuguese name used in the originating Trello
+card and research conversation. Both columns name the same treatment; only
+the frozen code carries experimental traceability.
+
+| Code | English name (repo) | Portuguese (Trello/conversation) |
+| --- | --- | --- |
+| B0 | Direct | Direto |
+| B1 | Static Sanitization | Sanitização |
+| B2 | Reversible Pseudonymization | Pseudonimização |
+| B3 | Task-aware | Task-aware |
+| B4 | Policy-governed | Governado |
+
+The canonical treatment sequence is **Direct → Static Sanitization →
+Reversible Pseudonymization → Task-aware → Policy-governed**, i.e. B0 → B1 →
+B2 → B3 → B4.
+
 ## Treatment definitions
 
-- **B0 — direct/full external disclosure.** The input is sent to the external
-  provider unmodified: no detection, no policy gate, no transformation.
-  It is the disclosure-control baseline against which every other treatment
-  is measured.
-- **B1 — static sanitization.** Detected sensitive spans are transformed by a
+- **B0 — Direct.** Direct/full external disclosure: the input is sent to the
+  external provider unmodified — no detection, no policy gate, no
+  transformation. It is the disclosure-control baseline against which every
+  other treatment is measured.
+- **B1 — Static Sanitization.** Detected sensitive spans are transformed by a
   fixed, task-independent category→action mapping (for example `REMOVE` or
   `GENERALIZE`) before the request leaves the trust boundary. The mapping
   does not consult task, purpose or contextual organizational policy, and the
   transformation is not reversible.
-- **B2 — static reversible pseudonymization.** Same detection and the same
-  static, task-independent category→action mapping as B1, except that
-  categories eligible for pseudonymization are replaced with a locally
-  reversible pseudonym instead of being irreversibly removed or generalized.
-  The mapping from pseudonym back to original value is kept in a local vault
-  and is never sent externally, which makes authorized local reconstruction
-  of the provider's response possible.
-- **B3 — task-aware minimization without strong contextual organizational
-  policy constraints.** Task relevance is used to choose the
+- **B2 — Reversible Pseudonymization.** Static reversible pseudonymization:
+  the same detection and the same static, task-independent category→action
+  mapping as B1, except that categories eligible for pseudonymization are
+  replaced with a locally reversible pseudonym instead of being irreversibly
+  removed or generalized. The mapping from pseudonym back to original value
+  is kept in a local vault and is never sent externally, which makes
+  authorized local reconstruction of the provider's response possible.
+- **B3 — Task-aware.** Task-aware minimization without strong contextual
+  organizational policy constraints: task relevance is used to choose the
   least-disclosing action that still supports the task, but this choice is
   not bounded by an explicit, policy-defined action space per category —
   unlike the `TASK_DEPENDENT` action's contract in the security model, which
   requires such a space. To isolate task-awareness in B2→B3 and policy
   constraints in B3→B4, B3 retains the same reversible pseudonymization,
   local vault, and authorized reconstruction capability available in B2.
-- **B4 — proposed approach.** Contextual organizational policy constraints
-  (fail-closed policy resolution, an explicit policy-defined allowed-action
-  space per category) combined with task-aware minimization *within* that
-  allowed space, reversible pseudonymization, and local reconstruction.
-  Task-awareness may only choose among actions the policy already allows; it
-  can never expand what policy permits.
+- **B4 — Policy-governed.** Proposed approach: contextual organizational
+  policy constraints (fail-closed policy resolution, an explicit
+  policy-defined allowed-action space per category) combined with task-aware
+  minimization *within* that allowed space, reversible pseudonymization, and
+  local reconstruction. Task-awareness may only choose among actions the
+  policy already allows; it can never expand what policy permits.
 
 ## Pairwise comparisons
 
-Each step in B0→B1→B2→B3→B4 is designed to isolate exactly one variable so a
-measured difference can be attributed to that variable rather than to an
-uncontrolled confound.
+Each step in B0→B1→B2→B3→B4 (Direct → Static Sanitization → Reversible
+Pseudonymization → Task-aware → Policy-governed) is designed to isolate
+exactly one variable so a measured difference can be attributed to that
+variable rather than to an uncontrolled confound.
 
 | Comparison | Variable isolated |
 | --- | --- |
-| B0 → B1 | Presence vs. absence of any local sanitization applied to the payload before it leaves the trust boundary (static sanitization vs. none). |
-| B1 → B2 | Reversibility of the disclosure transformation: irreversible removal/generalization (B1) vs. reversible pseudonymization with a local vault and reconstruction path (B2). The detection stage and the fact that the mapping is static/task-independent do not change. |
-| B2 → B3 | How the disclosure action per category is selected: a fixed, static category→action mapping (B2) vs. a dynamically chosen, task-relevance-driven action (B3). The reversible pseudonymization/vault/reconstruction mechanism is held constant; only whether task-awareness participates in the choice changes. |
-| B3 → B4 | Presence vs. absence of an explicit, policy-defined, fail-closed action-space constraint bounding what task-awareness may choose. B3 and B4 both retain task-awareness plus reversible pseudonymization/vault/reconstruction; the isolated variable is the contextual organizational policy constraint. |
+| B0 — Direct → B1 — Static Sanitization | Presence vs. absence of any local sanitization applied to the payload before it leaves the trust boundary (static sanitization vs. none). |
+| B1 — Static Sanitization → B2 — Reversible Pseudonymization | Reversibility of the disclosure transformation: irreversible removal/generalization (B1) vs. reversible pseudonymization with a local vault and reconstruction path (B2). The detection stage and the fact that the mapping is static/task-independent do not change. |
+| B2 — Reversible Pseudonymization → B3 — Task-aware | How the disclosure action per category is selected: a fixed, static category→action mapping (B2) vs. a dynamically chosen, task-relevance-driven action (B3). The reversible pseudonymization/vault/reconstruction mechanism is held constant; only whether task-awareness participates in the choice changes. |
+| B3 — Task-aware → B4 — Policy-governed | Presence vs. absence of an explicit, policy-defined, fail-closed action-space constraint bounding what task-awareness may choose. B3 and B4 both retain task-awareness plus reversible pseudonymization/vault/reconstruction; the isolated variable is the contextual organizational policy constraint. |
 
 ## Held constant across treatments
 
