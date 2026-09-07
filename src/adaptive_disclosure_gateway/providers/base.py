@@ -77,19 +77,35 @@ class ProviderError(Exception):
 
     ``provider_invoked`` records the one fact only ``invoke_provider``
     itself knows for certain: whether ``provider.generate`` was actually
-    submitted before this failure happened. It defaults to ``True`` because
-    every failure site in ``invoke_provider`` *except* the provider_class
-    pre-flight check happens after ``executor.submit(provider.generate,
-    request)`` has already run. A caller (``pipeline.run_disclosure_case``)
-    must read this attribute to decide what an audit record's
-    ``ProviderStage.called`` should say -- never infer it by checking
-    ``isinstance(exc, ProviderClassMismatchError)``, which would silently
-    stop being correct the moment a future pre-flight check is added to
-    ``invoke_provider`` before the ``generate`` call without also being
-    special-cased at every call site.
+    submitted before this failure happened. It defaults to ``False``. A
+    caller (``pipeline.run_disclosure_case``) must read this attribute to
+    decide what an audit record's ``ProviderStage.called`` should say --
+    never infer it by checking ``isinstance(exc, ProviderClassMismatchError)``,
+    which would silently stop being correct the moment a future pre-flight
+    check is added to ``invoke_provider`` before the ``generate`` call
+    without also being special-cased at every call site.
+
+    Why ``False`` and not ``True``: today, every failure site in
+    ``invoke_provider`` *except* the provider_class pre-flight check happens
+    after ``executor.submit(provider.generate, request)`` has already run --
+    which might suggest defaulting to ``True`` as the common case. But this
+    is an audit trail, and the two possible mistakes are not equally bad.
+    If a future pre-flight check is added to ``invoke_provider`` before the
+    ``generate`` call (a second validation alongside the provider_class one)
+    and its ``raise ProviderError(...)`` forgets to pass
+    ``provider_invoked=False`` explicitly, a default of ``True`` would make
+    the audit record *assert* a provider call that never happened --
+    unfalsifiable from the record alone, since nothing about it looks wrong.
+    A default of ``False`` instead makes the same mistake merely *omit* a
+    call that did happen, an understatement that is at least cross-checkable
+    against telemetry (a provider call the audit says never happened but a
+    trace shows did). An audit trail must never claim more than it knows, so
+    every failure site in ``invoke_provider`` that genuinely runs after
+    ``executor.submit`` must pass ``provider_invoked=True`` explicitly --
+    the safe default carries the burden, not the common case.
     """
 
-    def __init__(self, *args: object, provider_invoked: bool = True) -> None:
+    def __init__(self, *args: object, provider_invoked: bool = False) -> None:
         super().__init__(*args)
         self.provider_invoked = provider_invoked
 
@@ -101,8 +117,13 @@ class ProviderTimeoutError(ProviderError):
     contract, which applies identically here: never retried, never
     degraded to direct disclosure. A timeout can only happen after
     ``provider.generate`` was actually submitted (the deadline is enforced
-    while awaiting its result), so ``provider_invoked`` is ``True`` here,
-    exactly like the base class default.
+    while awaiting its result), so ``provider_invoked`` is ``True`` for
+    every ``ProviderTimeoutError`` ``invoke_provider`` raises -- but, unlike
+    ``ProviderClassMismatchError``, this class does not force that value
+    unconditionally in its own ``__init__``; ``invoke_provider`` passes
+    ``provider_invoked=True`` explicitly at its one raise site for this
+    exception, since that is the only call site that knows the submit
+    actually happened.
     """
 
 
@@ -217,18 +238,31 @@ def invoke_provider(
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     try:
         future = executor.submit(provider.generate, request)
+        # From this point on, provider.generate has genuinely been
+        # submitted -- every exception raised below is set (or forced)
+        # provider_invoked=True explicitly. ProviderError now defaults to
+        # provider_invoked=False (see its docstring), so relying on that
+        # default here would silently mis-audit every one of these failures
+        # as "never called".
         try:
             return future.result(timeout=timeout)
         except concurrent.futures.TimeoutError:
-            raise ProviderTimeoutError("provider call exceeded its timeout") from None
-        except ProviderError:
+            raise ProviderTimeoutError(
+                "provider call exceeded its timeout", provider_invoked=True
+            ) from None
+        except ProviderError as exc:
+            # provider.generate itself raised a ProviderError (or subclass)
+            # directly -- this only happens after submit() ran, so the
+            # attribute is corrected here rather than trusted from however
+            # the provider constructed it.
+            exc.provider_invoked = True
             raise
         except Exception:  # noqa: BLE001 -- a provider is arbitrary third-party
             # code; any exception it raises (network error, malformed
             # response, anything) must fail this call closed, not propagate
             # unrecognized and risk being mishandled by a caller expecting
             # only ProviderError.
-            raise ProviderError("provider call failed") from None
+            raise ProviderError("provider call failed", provider_invoked=True) from None
     finally:
         # wait=False: never block the caller waiting for a hung provider
         # call to finish just to tidy up the executor -- the failed/expired

@@ -164,6 +164,26 @@ def test_provider_class_mismatch_error_carries_provider_invoked_false():
     assert excinfo.value.provider_invoked is False
 
 
+def test_a_bare_provider_error_defaults_to_provider_invoked_false_so_a_future_preflight_check_cannot_silently_claim_a_call():
+    # This pins the *defaulting policy* of ProviderError itself, not any
+    # particular call site in invoke_provider. Construct it exactly the way
+    # a future pre-flight check would -- e.g. a second validation added to
+    # invoke_provider before executor.submit(provider.generate, request),
+    # the way ProviderClassMismatchError's existing check already works --
+    # with no explicit provider_invoked kwarg at all.
+    #
+    # If the default were True, that future check would silently produce an
+    # audit record asserting a provider call that never happened -- an
+    # unfalsifiable claim, not cross-checkable against telemetry. Defaulting
+    # to False means the same mistake only omits a call that did happen, an
+    # error that is at least cross-checkable. An audit trail must never
+    # claim more than it knows, so the safe default is False; call sites
+    # that genuinely run after submit() must opt in explicitly.
+    error = ProviderError("hypothetical future pre-flight validation failure")
+
+    assert error.provider_invoked is False
+
+
 # --- invoke_provider: fail closed on error/timeout, no retry ---------------
 
 
@@ -187,6 +207,25 @@ def test_provider_error_from_inside_generate_carries_provider_invoked_true():
     # from "reached it and it failed" gets the right answer from the
     # exception itself.
     stub = _CountingStubProvider(provider_class="fake", error=RuntimeError("boom"))
+    request = ProviderRequest(payload="p", task="t")
+
+    with pytest.raises(ProviderError) as excinfo:
+        invoke_provider(stub, request, expected_provider_class="fake")
+
+    assert excinfo.value.provider_invoked is True
+
+
+def test_provider_error_raised_directly_by_generate_is_corrected_to_provider_invoked_true():
+    # A provider implementation may itself raise ProviderError (or a
+    # subclass) rather than some other exception invoke_provider has to
+    # translate. That still only happens after executor.submit(generate)
+    # ran, so invoke_provider must correct provider_invoked to True on the
+    # way out -- it must not simply trust whatever the provider constructed
+    # it with (which, with ProviderError's default now False, would
+    # otherwise silently under-report a call that did happen).
+    stub = _CountingStubProvider(
+        provider_class="fake", error=ProviderError("provider-raised failure")
+    )
     request = ProviderRequest(payload="p", task="t")
 
     with pytest.raises(ProviderError) as excinfo:
