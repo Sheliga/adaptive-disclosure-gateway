@@ -11,6 +11,7 @@ from adaptive_disclosure_gateway.policies import PolicyRepository
 from adaptive_disclosure_gateway.transformations import ReversiblePseudonymizer, StaticSanitizer
 from adaptive_disclosure_gateway.transformations.direct_disclosure import DirectDiscloser
 from adaptive_disclosure_gateway.vault import InMemoryVault
+from tests import telemetry_assertions
 
 POLICY_DIR = Path(__file__).parents[1] / "configs" / "policies"
 
@@ -23,18 +24,11 @@ SECRET_TEXT = (
 # telemetry either -- not just through the external payload.
 UNPARSEABLE_SALARY_TEXT = "Salary: to be negotiated later\n"
 
-
-def _assert_span_attributes_never_leak(spans, *forbidden_values: str) -> None:
-    assert spans, "expected at least one recorded span"
-    for span in spans:
-        for key, value in span.attributes.items():
-            serialized = str(value)
-            for forbidden in forbidden_values:
-                if not forbidden:
-                    continue
-                assert forbidden not in serialized, (
-                    f"span attribute {key}={serialized!r} leaked forbidden value {forbidden!r}"
-                )
+# The substring-leak scan itself now lives in tests/telemetry_assertions.py
+# (hardened to skip numeric/boolean attributes -- see that module's
+# docstring): aliased here under the previous private name so every call
+# site below is unchanged.
+_assert_span_attributes_never_leak = telemetry_assertions.assert_span_attributes_never_leak
 
 
 def test_b0_span_attributes_never_contain_the_raw_text_even_though_it_is_the_payload(
