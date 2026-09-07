@@ -210,3 +210,88 @@ def test_task_aware_discloser_may_import_task_analysis_unlike_b2():
         "transformations/task_aware.py is expected to import task_analysis -- "
         "if this fails, B3 is not actually task-aware"
     )
+
+
+# --- Shared B2/B3 path (PR #33 review round): decision_application.py -----
+#
+# After the B2/B3 "apply" machinery was extracted into
+# ``transformations/decision_application.py`` (see that module's own
+# docstring), the *actual* PolicyRepository calls B2 and B3 make happen
+# there, not in ``reversible_pseudonymization.py``/``task_aware.py``
+# themselves (those two now only pass their own ``self._policies`` through
+# as a keyword argument). The two tests above only ever inspected
+# ``task_aware.py``'s own source, so a new, wider ``PolicyRepository``
+# entrypoint introduced into the *shared* module would pass both of them
+# silently. This section closes that gap with a proper allowlist (not a
+# blocklist): any call to a method on something that looks like a
+# PolicyRepository, anywhere in the shared module or in either treatment
+# that uses it, must be one of the two legitimate entrypoints -- no matter
+# what that method happens to be named. A brand-new
+# ``PolicyRepository.some_new_contextual_api()`` would be caught here even
+# though it was never in this file's own denylist, because it is simply
+# absent from the allowlist.
+
+_SHARED_POLICY_ALLOWLIST = {"resolve_pseudonym_scope", "is_reconstruction_authorized"}
+_SHARED_POLICY_PATHS = (
+    SRC_ROOT / "transformations" / "decision_application.py",
+    SRC_ROOT / "transformations" / "task_aware.py",
+    SRC_ROOT / "transformations" / "reversible_pseudonymization.py",
+)
+
+
+_POLICY_RECEIVER_NAMES = {"policy_repository", "policyrepository"}
+_POLICY_RECEIVER_ATTRS = {"policy_repository", "_policies", "policies"}
+
+
+def _is_policy_like_receiver(value: ast.expr) -> bool:
+    """True if ``value`` -- the object a method is being called on -- is
+    shaped like this codebase's ``PolicyRepository``: a bare name such as
+    ``policy_repository`` or the class name itself, or an attribute such as
+    ``self._policies``. Matched by exact identifier, not by substring, so an
+    unrelated local like ``policy_decisions`` (a ``list[PolicyDecision]``,
+    whose own ``.append(...)`` calls would otherwise false-positive on any
+    "contains polic" check) is never mistaken for the repository itself.
+    """
+    if isinstance(value, ast.Name):
+        return value.id.lower() in _POLICY_RECEIVER_NAMES
+    if isinstance(value, ast.Attribute):
+        return value.attr.lower() in _POLICY_RECEIVER_ATTRS
+    return False
+
+
+def _policy_like_method_calls(path: Path) -> set[tuple[str, int]]:
+    """Every ``(method_name, line_number)`` called on an expression that
+    looks like a ``PolicyRepository`` (see ``_is_policy_like_receiver``).
+    This is a receiver-shape check, not a name-of-method check, precisely so
+    a method name this file has never seen before is still caught if it is
+    called on that receiver.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    calls: set[tuple[str, int]] = set()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+            continue
+        if _is_policy_like_receiver(node.func.value):
+            calls.add((node.func.attr, node.lineno))
+    return calls
+
+
+def test_shared_and_b2_b3_modules_use_policy_repository_only_for_scope_and_reconstruction():
+    """Allowlist (never blocklist) check across the shared decision-
+    application module and both treatments that call into it:
+    ``decision_application.py`` must never call ``PolicyRepository.decide()``
+    (the category -> action entrypoint), and the *only* two policy methods
+    ever called across all three files are ``resolve_pseudonym_scope`` and
+    ``is_reconstruction_authorized``.
+    """
+    violations: list[str] = []
+    for path in _SHARED_POLICY_PATHS:
+        assert path.exists(), f"expected {path} to exist"
+        for method, lineno in sorted(_policy_like_method_calls(path)):
+            if method not in _SHARED_POLICY_ALLOWLIST:
+                violations.append(
+                    f"{path.relative_to(SRC_ROOT.parents[1])}:{lineno} calls "
+                    f"PolicyRepository method {method!r}, which is outside the shared "
+                    f"B2/B3 allowlist {sorted(_SHARED_POLICY_ALLOWLIST)}"
+                )
+    assert not violations, "\n".join(violations)
