@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-09-07 (T06 / PR #22 under validation; T17 / Issue #24 and the T13 / Issue #16 fail-closed-GENERALIZE blocker are now resolved on PR #22; T16 / Issue #23 remains the only open item before T06 / Issue #3 can close)
+Last updated: 2026-09-07 (T16 / Issue #23 implemented on branch `feat/t16-pseudonym-scope-lifecycles`, in validation; with it, T06 / Issue #3 is complete apart from anything else still listed below as not started)
 
 This file tracks **what is implemented now**. Architectural decisions belong in ADRs; research-proposal versions remain separate documents.
 
@@ -48,12 +48,12 @@ PR #22 implements the core B2 mechanism:
 - multi-entity round-trip coverage;
 - metadata-only OTel instrumentation.
 
-The core is useful and reviewable, but **T06 / Issue #3 must remain open after PR #22**. Independent review found two missing parts of the B2 boundary:
+Independent review found two missing parts of the B2 boundary, both now resolved:
 
-1. **T16 / Issue #23 — real pseudonym-scope lifecycles (still open).** REQUEST, DOCUMENT and SESSION currently derive their partition key from requester identity/role because `GovernanceContext` has no `request_id`, `document_id` or `session_id`. The scope label is isolated, but its intended lifetime is not enforced. Missing identifiers for the resolved scope must fail closed rather than falling back to requester identity.
-2. **T17 / Issue #24 — guessing-resistant pseudonyms (resolved on this PR).** `InMemoryVault` no longer derives the pseudonym from the original value or from any public/predictable context at all: `pseudonymize()` generates an opaque random token (via a CSPRNG `token_factory`, `secrets.token_hex(16)` by default — 128 bits) and stores the mapping; there is nothing left to invert offline. Stability within a partition still comes from the forward-map lookup, not from the generator being deterministic. The `token_factory` is injectable so experiments can use a deterministic generator; the production default is explicitly *not* required to be reproducible across independent vault instances (`tests/test_vault.py` pins both directions). Collision handling is unchanged in shape and still verified against a degenerate (constant-output) token factory. The `PSEUDO-{category}-` prefix is kept for audit readability only — with a random token the category no longer helps an attacker guess anything.
+1. **T16 / Issue #23 — real pseudonym-scope lifecycles (implemented on `feat/t16-pseudonym-scope-lifecycles`, pending review/merge).** `GovernanceContext` now carries optional `request_id`, `document_id` and `session_id`. `_scope_key` (`transformations/reversible_pseudonymization.py`) keys REQUEST on `request_id`, DOCUMENT on `document_id`, SESSION on `session_id`, and ORGANIZATION on the domain alone, unchanged — with no fallback to requester identity/role for the first three. When the resolved scope's required identifier is absent, `sanitize()` fails closed (`status="blocked"`, empty payload) and `reconstruct()` returns the response unchanged, rather than resolving some other partition. `PolicyRepository.resolve_pseudonym_scope`'s fail-closed default for an unresolvable policy (REQUEST) is kept as-is, with a comment recording that it now compounds with the new requirement (an unresolvable policy plus a missing `request_id` blocks), covered by a dedicated test. `configs/policies/hr-v1.yaml`'s `hr_viewer` REQUEST ceiling is pinned to actually change cross-request linkability (different pseudonyms across two requests), contrasted with a SESSION-permitted role staying stable across the same two requests.
+2. **T17 / Issue #24 — guessing-resistant pseudonyms (resolved on PR #22).** `InMemoryVault` no longer derives the pseudonym from the original value or from any public/predictable context at all: `pseudonymize()` generates an opaque random token (via a CSPRNG `token_factory`, `secrets.token_hex(16)` by default — 128 bits) and stores the mapping; there is nothing left to invert offline. Stability within a partition still comes from the forward-map lookup, not from the generator being deterministic. The `token_factory` is injectable so experiments can use a deterministic generator; the production default is explicitly *not* required to be reproducible across independent vault instances (`tests/test_vault.py` pins both directions). Collision handling is unchanged in shape and still verified against a degenerate (constant-output) token factory. The `PSEUDO-{category}-` prefix is kept for audit readability only — with a random token the category no longer helps an attacker guess anything.
 
-T06 is complete only after T16 is resolved and merged.
+With T16 implemented, **T06 / Issue #3 is complete apart from anything else still listed in this file as not started** (see "Not started / incomplete in Milestone 1" below) — it remains open only pending T16's own review/merge.
 
 ### T13 / Issue #16 — semantic GENERALIZE
 
@@ -81,8 +81,8 @@ Recommended execution order:
 
 1. ~~Fix the T13 configured-but-unparseable `GENERALIZE` fail-closed/non-leaking path on PR #22 and rerun full CI.~~ Done on PR #22.
 2. ~~T17 / Issue #24 — replace public deterministic digest pseudonyms with opaque/keyed pseudonyms while keeping deterministic test configuration available.~~ Done on PR #22 (opaque random tokens).
-3. Merge PR #22 now that both review blockers are resolved. It closes Issue #16 / T13 and Issue #24 / T17, but **must not close Issue #3 / T06**.
-4. T16 / Issue #23 — add real REQUEST / DOCUMENT / SESSION lifecycle identifiers and fail closed when the resolved scope lacks its required identifier.
+3. ~~Merge PR #22 now that both review blockers are resolved. It closes Issue #16 / T13 and Issue #24 / T17, but must not close Issue #3 / T06.~~ Done.
+4. ~~T16 / Issue #23 — add real REQUEST / DOCUMENT / SESSION lifecycle identifiers and fail closed when the resolved scope lacks its required identifier.~~ Implemented on `feat/t16-pseudonym-scope-lifecycles`, pending review/merge.
 5. Complete T06 / Issue #3 after T16 is merged.
 6. T11 / Issue #12 — common provider boundary + deterministic `FakeProvider`.
 7. Complete the shared B0 — Direct / B1 — Static Sanitization / B2 — Reversible Pseudonymization HR end-to-end flow and structural audit trail.
@@ -91,7 +91,6 @@ Recommended execution order:
 
 ## Not started / incomplete in Milestone 1
 
-- real REQUEST / DOCUMENT / SESSION lifecycle semantics (T16 / Issue #23);
 - `SQLiteVault` or another persistent/shared vault backend;
 - a detection rule emitting `birth_date` (its `GENERALIZATION_STRATEGIES` entry exists but is currently unreachable);
 - pseudonym property tests with Hypothesis;
@@ -118,7 +117,7 @@ Milestone 1 is complete when the same controlled HR case can run through B0 — 
 - malformed/invalid span metadata fails closed rather than leaking values;
 - `REMOVE` content does not appear in the external payload;
 - `BLOCK_REQUEST` stops the entire external request;
-- pseudonyms are stable for the **real authorized lifecycle** of the resolved scope;
+- pseudonyms are stable for the **real authorized lifecycle** of the resolved scope (resolved: T16 / Issue #23, real `request_id`/`document_id`/`session_id` identifiers with fail-closed enforcement when the resolved scope's identifier is missing);
 - external pseudonyms are not guessable from a public unkeyed digest construction (resolved: opaque random tokens, Issue #24 / T17);
 - vault originals and secrets never reach the provider or telemetry;
 - the response round-trip reconstructs authorized pseudonyms correctly;
@@ -126,7 +125,7 @@ Milestone 1 is complete when the same controlled HR case can run through B0 — 
 - the common deterministic `FakeProvider` path works for B0/B1/B2;
 - CI is green.
 
-PR #22 implements a substantial part of these criteria, but **Milestone 1 is not complete on the branch or on master** while T16, `FakeProvider` and the end-to-end/audit path remain pending.
+PR #22 plus T16 (this branch) implement a substantial part of these criteria, but **Milestone 1 is not complete on the branch or on master** while `FakeProvider` and the end-to-end/audit path remain pending.
 
 ## References
 

@@ -67,7 +67,11 @@ def test_b2_span_attributes_never_contain_detected_values_payload_or_pseudonym_m
         text=SECRET_TEXT,
         task="summarize",
         context=GovernanceContext(
-            domain="hr", purpose="team_summary", requester_id="u1", policy_version="hr-v1"
+            domain="hr",
+            purpose="team_summary",
+            requester_id="u1",
+            policy_version="hr-v1",
+            session_id="s1",
         ),
     )
     spans = Detector().detect(SECRET_TEXT)
@@ -142,7 +146,11 @@ def test_b2_reconstruct_span_attributes_never_contain_original_values(recorded_s
         text=SECRET_TEXT,
         task="summarize",
         context=GovernanceContext(
-            domain="hr", purpose="team_summary", requester_id="u1", policy_version="hr-v1"
+            domain="hr",
+            purpose="team_summary",
+            requester_id="u1",
+            policy_version="hr-v1",
+            session_id="s1",
         ),
     )
     spans = Detector().detect(SECRET_TEXT)
