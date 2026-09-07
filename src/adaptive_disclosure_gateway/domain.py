@@ -54,6 +54,33 @@ class SensitiveSpan(BaseModel):
         return self
 
 
+def span_offsets_are_structurally_valid(span: SensitiveSpan) -> bool:
+    """True if ``span.start``/``span.end`` are structurally valid without
+    reference to any source text: both are ``int`` instances, ``start >= 0``,
+    and ``end > start``.
+
+    This is the text-independent half of offset validation -- it cannot check
+    whether ``end`` falls within a particular text or whether the slice it
+    names matches ``span.value``, because it has no text to check against.
+    ``SensitiveSpan``'s own validator already enforces this for normal
+    construction, but ``SensitiveSpan.model_construct`` bypasses Pydantic
+    validation entirely, so a span reaching here may still have missing or
+    invalid offsets (e.g. ``start=None, end=None``).
+
+    Both ``transformations/span_validation.py`` (which adds the text-relative
+    checks) and ``detection/overlap.py`` (which must fail closed before
+    sorting spans by offset) need exactly this check. It lives here, on
+    ``domain``, rather than in either package, so that ``detection`` does not
+    have to import from ``transformations`` to reuse it.
+    """
+    start, end = span.start, span.end
+    if not isinstance(start, int) or not isinstance(end, int):
+        return False
+    if start < 0:
+        return False
+    return end > start
+
+
 class PolicyDecision(BaseModel):
     category: str
     action: DisclosureAction
