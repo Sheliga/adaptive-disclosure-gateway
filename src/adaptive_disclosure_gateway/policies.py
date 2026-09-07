@@ -132,6 +132,21 @@ class PolicyRepository:
             policy_version=policy.version,
         )
 
+    def is_reconstruction_authorized(self, context: GovernanceContext) -> bool:
+        """True only if ``context`` resolves to a known policy version whose
+        domain matches -- the same fail-closed condition ``decide()`` and
+        ``resolve_pseudonym_scope()`` already apply to every other decision.
+
+        Reconstruction reveals original values locally (see
+        ``ReversiblePseudonymizer.reconstruct``), so a policy that cannot be
+        resolved must block it rather than falling back to some default
+        authorization.
+        """
+        policy = self._policies.get(context.policy_version)
+        if policy is None:
+            return False
+        return policy.domain == context.domain
+
     def resolve_pseudonym_scope(self, context: GovernanceContext) -> PseudonymScope:
         policy = self._policies.get(context.policy_version)
         if policy is None or policy.domain != context.domain:

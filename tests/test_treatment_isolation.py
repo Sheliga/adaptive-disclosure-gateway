@@ -1,18 +1,41 @@
-"""Pins the architectural isolation acceptance criterion for issue #5:
+"""Pins the per-treatment architectural isolation acceptance criteria for
+issues #5 and #3.
 
-The B1 -- Static Sanitization treatment and the detector must not depend on
-PolicyRepository, task relevance, or the pseudonym vault. This is checked at
-the import-graph level (static analysis of the actual source) rather than by
-trusting docstrings, so a future change that wires the static sanitizer to
-the policy engine or a vault fails the suite instead of silently regressing
-the isolation guarantee.
+This is checked at the import-graph level (static analysis of the actual
+source) rather than by trusting docstrings, so a change that wires a
+treatment to something its isolation contract forbids fails the suite
+instead of silently regressing the guarantee.
+
+The rule is NOT the same for every treatment:
+
+- Detection and Static Sanitization (B1) must depend on none of policy,
+  vault or task-awareness at all -- the strict, original rule from issue #5.
+- Reversible Pseudonymization (B2) is *narrowly* allowed to import the
+  policy engine and the vault (see
+  ``test_reversible_pseudonymizer_*`` below for exactly how narrow), because
+  issue #3 requires B2 to resolve pseudonym scope and to authorize
+  reconstruction through ``PolicyRepository``, and to store/retrieve
+  pseudonyms through a ``Vault``. It must still never import task-relevance
+  or task-analysis code: docs/experimental-design.md's B2->B3 comparison
+  isolates task-awareness as the *only* variable B3 adds over B2, so if B2
+  could consult task relevance that isolation would already be broken
+  before B3 exists.
 """
 
 import ast
 from pathlib import Path
 
 SRC_ROOT = Path(__file__).parents[1] / "src" / "adaptive_disclosure_gateway"
-FORBIDDEN_SUBSTRINGS = ("polic", "vault", "task_relevance", "task_analysis")
+
+# Full isolation: detection and B1 may depend on none of these.
+B1_FORBIDDEN_SUBSTRINGS = ("polic", "vault", "task_relevance", "task_analysis")
+
+# B2's allowance is narrow: it may import policy/vault (for scope
+# resolution, reconstruction authorization, and pseudonym storage only --
+# see the module-level docstring in reversible_pseudonymization.py and the
+# static-mapping test below), but task-awareness stays forbidden exactly
+# like B1.
+B2_FORBIDDEN_SUBSTRINGS = ("task_relevance", "task_analysis")
 
 
 def _imported_modules(path: Path) -> set[str]:
@@ -26,11 +49,11 @@ def _imported_modules(path: Path) -> set[str]:
     return modules
 
 
-def _assert_no_forbidden_imports(path: Path) -> None:
+def _assert_no_forbidden_imports(path: Path, forbidden_substrings: tuple[str, ...]) -> None:
     modules = _imported_modules(path)
     for module in modules:
         lowered = module.lower()
-        for forbidden in FORBIDDEN_SUBSTRINGS:
+        for forbidden in forbidden_substrings:
             assert forbidden not in lowered, f"{path} imports forbidden module {module!r}"
 
 
@@ -39,10 +62,54 @@ def test_detection_package_has_no_policy_or_vault_dependency():
     paths = list(detection_dir.glob("*.py"))
     assert paths, "detection package should exist with source files"
     for path in paths:
-        _assert_no_forbidden_imports(path)
+        _assert_no_forbidden_imports(path, B1_FORBIDDEN_SUBSTRINGS)
 
 
 def test_static_sanitizer_has_no_policy_or_vault_dependency():
     static_sanitization_path = SRC_ROOT / "transformations" / "static_sanitization.py"
     assert static_sanitization_path.exists()
-    _assert_no_forbidden_imports(static_sanitization_path)
+    _assert_no_forbidden_imports(static_sanitization_path, B1_FORBIDDEN_SUBSTRINGS)
+
+
+def test_reversible_pseudonymizer_has_no_task_awareness_dependency():
+    reversible_pseudonymization_path = (
+        SRC_ROOT / "transformations" / "reversible_pseudonymization.py"
+    )
+    assert reversible_pseudonymization_path.exists()
+    _assert_no_forbidden_imports(reversible_pseudonymization_path, B2_FORBIDDEN_SUBSTRINGS)
+
+
+def test_reversible_pseudonymizer_category_action_mapping_is_static_not_policy_derived():
+    """B2 may import PolicyRepository, but only to resolve pseudonym scope
+    and to authorize reconstruction -- never to choose the action for a
+    category, which must stay the same static, task-independent mapping B1
+    uses (docs/experimental-design.md's B1->B2 comparison holds this
+    constant; only reversibility changes). Calling
+    ``PolicyRepository.decide()`` -- the per-category action-selection
+    entrypoint -- would break that, so its absence from B2's source is the
+    actual invariant this pins, not just "policy is importable."
+    """
+    reversible_pseudonymization_path = (
+        SRC_ROOT / "transformations" / "reversible_pseudonymization.py"
+    )
+    tree = ast.parse(
+        reversible_pseudonymization_path.read_text(encoding="utf-8"),
+        filename=str(reversible_pseudonymization_path),
+    )
+    decide_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "decide"
+    ]
+    assert not decide_calls, (
+        "reversible_pseudonymization.py must never call PolicyRepository.decide() -- "
+        "the category -> action mapping stays static, exactly like B1"
+    )
+
+    from adaptive_disclosure_gateway.transformations import reversible_pseudonymization as b2
+
+    assert isinstance(b2.ACTIONS, dict) and b2.ACTIONS, (
+        "ACTIONS must be a static, non-empty mapping"
+    )
