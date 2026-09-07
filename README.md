@@ -10,7 +10,7 @@ This repository supports a **candidate master's research proposal** for UTFPR PP
 
 ## Current implementation status
 
-The architecture foundation, deterministic detector, B1 — Static Sanitization (`StaticSanitizer`) and the fail-closed `SensitiveSpan` hardening from PR #19 are implemented and merged. B2 — Reversible Pseudonymization, the local vault, authorized reconstruction and `FakeProvider` remain pending. The security blocker from Issue #17 is closed, so B2 is technically unblocked; the current T15 naming refactor should merge first so B2 starts on the semantic module/class conventions established here.
+The architecture foundation, deterministic detector, **B1 — Static Sanitization** (`StaticSanitizer`), fail-closed `SensitiveSpan` hardening and the T15 semantic naming refactor are implemented and merged. PR #22 implements the core of **B2 — Reversible Pseudonymization** plus semantic `GENERALIZE` and is currently under validation. B2 is not yet complete: T16 / Issue #23 must give REQUEST, DOCUMENT and SESSION real lifecycle semantics, and T17 / Issue #24 must harden pseudonym generation against offline guessing. PR #22 also has a review blocker in the configured-but-unparseable `GENERALIZE` path, which must fail closed without placing the raw value in errors or telemetry. `FakeProvider` and the end-to-end Milestone 1 flow remain pending.
 
 See [`docs/implementation-status.md`](docs/implementation-status.md) for the live engineering status, current blockers and recommended execution order. Architectural decisions are recorded separately in [`docs/adr/0001-milestone-1-architecture.md`](docs/adr/0001-milestone-1-architecture.md).
 
@@ -64,6 +64,8 @@ local authorized reconstruction
 Pseudonym persistence can use `request`, `document`, `session` or `organization` scope. The default is `session`.
 
 Authorization is hierarchical: role defines the maximum scope, an explicit per-user configuration may further define a ceiling, and task/purpose may only narrow the effective scope. A task can never expand the authorization ceiling.
+
+The scope labels and policy ceilings are already modeled, but the concrete REQUEST / DOCUMENT / SESSION lifecycle identifiers are tracked as T16 / Issue #23 and must be implemented before scope/linkability claims are evaluated.
 
 ## Document ingestion
 
