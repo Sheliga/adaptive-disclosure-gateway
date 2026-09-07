@@ -1,230 +1,222 @@
 # Implementation status
 
-Last updated: 2026-09-07 — PR #27 merged into `master` at `28fe292cf1e7cb1dfccb999c3f04aed1016f5d8e`. The post-merge `master` CI run completed successfully. **Milestone 1 is complete.**
+Last updated: 2026-09-07 — post-Milestone 1 planning synchronization after the research-decision review. **Milestone 1 remains complete on `master`.**
 
-This file tracks **what is implemented now**. Architectural decisions belong in ADRs; experimental definitions belong in `docs/experimental-design.md`; historical PR/Issue descriptions are not rewritten merely to reflect newer terminology.
+This file tracks the current engineering/research state and execution order. Architectural decisions belong in ADRs; experimental definitions belong in `docs/experimental-design.md`; historical PR/Issue descriptions remain in GitHub.
 
 ## Current phase
 
-The project has moved from **building the first functional vertical slice** to **implementing the research treatments and experimental evaluation**.
+The project has moved from building the first functional vertical slice to preparing and implementing the adaptive research treatments and their evaluation.
 
-Milestone 1 established the common execution and security boundary for:
+Milestone 1 established the common execution/security boundary for:
 
-- direct HR text input;
+- direct controlled HR text;
 - B0 — Direct;
 - B1 — Static Sanitization;
 - B2 — Reversible Pseudonymization;
 - deterministic `FakeProvider`;
-- local vault and authorized reconstruction;
+- local vault + authorized reconstruction;
+- REQUEST / DOCUMENT / SESSION / ORGANIZATION pseudonym lifecycles;
+- opaque guessing-resistant pseudonyms;
+- shared provider boundary;
+- shared B0/B1/B2 pipeline;
 - metadata-only structural audit by default;
-- end-to-end execution through one shared pipeline.
+- OpenTelemetry metadata-only observability;
+- fail-closed/no-leak security invariants across payload, task/prompt, provider request, errors, logs, telemetry, audit and derived identifiers.
 
-The next research-facing work is B3 — Task-aware, B4 — Policy-governed, the controlled corpus/ground truth, and the experiment runner/metrics.
+PR #27 completed Milestone 1 and was merged at `28fe292cf1e7cb1dfccb999c3f04aed1016f5d8e`; post-merge CI passed.
 
-## Milestone 1 — completed on master
+## Planning decisions frozen after Milestone 1
 
-### Foundation and experimental contracts
+The research-decision review fixed the immediate experimental direction:
 
-- Milestone 1 architecture frozen in ADR 0001.
-- Canonical treatment sequence frozen as **B0 — Direct → B1 — Static Sanitization → B2 — Reversible Pseudonymization → B3 — Task-aware → B4 — Policy-governed**.
-- `b0`–`b4` remain frozen experimental identifiers; semantic names are used in human-facing text and code names.
-- `DisclosureAction`: `PRESERVE`, `PSEUDONYMIZE`, `GENERALIZE`, `REMOVE`, `BLOCK_REQUEST`, `TASK_DEPENDENT`.
-- `GovernanceContext`, versioned YAML policy engine, policy precedence and fail-closed resolution.
-- Role/user pseudonym-scope ceilings.
-- OpenTelemetry + OTLP foundation with local Jaeger.
-- GitHub Actions CI on CPython 3.13.13.
+- HR is the pilot domain;
+- the pilot corpus is approximately 12–20 controlled cases;
+- Contracts is the second priority domain after the first B0–B4 HR pilot;
+- Accounting/Finance is optional/third-domain scope if schedule permits;
+- every experimental case must carry explicit ground truth;
+- task necessity uses `REQUIRED` / `NOT_REQUIRED` as the primary oracle; `HELPFUL` may exist only as auxiliary annotation initially;
+- B3 starts with a deterministic, replaceable task analyzer;
+- B3 uses a generic fixed action space per category/type, independent of contextual organizational policy;
+- B4 adds explicit contextual policy constraints using `domain`, `purpose`, `requester_role`, `provider_class` and `policy_version` in the primary matrix;
+- requester-specific overrides remain supported but outside the initial primary matrix;
+- ground truth is used for scoring only and must never be privileged treatment input;
+- impossible-under-policy tasks must produce explicit block/non-executable outcomes rather than silently widening permission;
+- utility/overhead interpretation thresholds are calibrated from the pilot and frozen before the main experiment, not chosen post hoc;
+- `FakeProvider` remains the deterministic development provider, while at least one real provider/model is required before authoritative utility/token/cost claims;
+- Docling enters only after the first controlled B0–B4 HR pilot;
+- a simplified Next.js UI is allowed to start now from synthetic fixtures, but remains non-blocking and must not define scientific metrics/contracts;
+- the Python project will expose CLI, HTTP API and MCP as thin adapters over the same application/core boundary.
 
-### B0 — Direct
+## Current engineering gate
 
-T18 / Issue #25, merged in PR #27.
+### T09 / Issue #4 — controlled HR minicorpus and ground truth
 
-- `DirectDiscloser` exposes `Treatment.DIRECT`.
-- The external payload is exactly `request.text`.
-- Detection, policy, vault and task-awareness do not participate in B0's transformation.
-- B0 remains intentionally unsafe as the experimental control.
-- Shared scoring/detection performed around B0 by the experiment pipeline must not be attributed to B0's own treatment latency.
+**Immediate next research task.**
 
-### B1 — Static Sanitization
+Before T07/B3 starts, version and freeze:
 
-T05 / Issue #5 plus security/generalization follow-ups T14 / Issue #17 and T13 / Issue #16.
+- the case schema;
+- approximately 12–20 HR pilot cases;
+- expected sensitive spans/categories;
+- governance context + policy version;
+- acceptable action(s) per information unit;
+- `REQUIRED` / `NOT_REQUIRED` task-necessity labels;
+- expected answer or objectively verifiable property;
+- expected `BLOCK_REQUEST` behavior;
+- pseudonym/reconstruction expectations when applicable.
 
-- Deterministic local detector for the controlled HR slice.
-- Static category-to-action behavior independent of task-awareness.
-- Shared fail-closed `SensitiveSpan` validation rejects malformed, missing, out-of-range or text-mismatching offsets before slicing.
-- Semantic `GENERALIZE` strategies are shared by B1/B2; unconfigured or configured-but-unparseable values fail closed.
-- Error messages and telemetry are pinned against sensitive-value leakage.
+Minimum HR task families:
 
-### B2 — Reversible Pseudonymization
+1. authorized salary analysis;
+2. team summary/description without salary necessity;
+3. department aggregation without individual identity;
+4. medical/prohibited-data case that must block.
 
-T06 / Issue #3, with T17 / Issue #24 and T16 / Issue #23; core merged in PR #22 and completed by PR #27.
-
-- `Vault` abstraction and `InMemoryVault`.
-- `ReversiblePseudonymizer` with local-only mappings and authorized reconstruction.
-- Opaque CSPRNG pseudonyms rather than public deterministic digests of originals.
-- Collision handling and multi-entity round trip.
-- Real pseudonym-scope lifecycle semantics:
-  - REQUEST → `request_id`;
-  - DOCUMENT → `document_id`;
-  - SESSION → `session_id`;
-  - ORGANIZATION → organization/domain partition as defined by policy.
-- Missing identifiers required by the resolved scope fail closed; there is no fallback to requester identity/role.
-- B2 remains task-independent so B2→B3 can isolate task-awareness.
-
-### External-provider boundary
-
-T11 / Issue #12, merged in PR #27.
-
-- Shared `Provider` protocol with `ProviderRequest` / `ProviderResponse`.
-- Provider-facing request surface is intentionally narrow: payload + task only.
-- Deterministic offline `FakeProvider` for controlled B0/B1/B2 comparisons.
-- `provider_class` mismatch is rejected before `provider.generate()` is submitted.
-- Errors/timeouts fail closed: no retry and no fallback to B0 — Direct.
-- `ProviderError.provider_invoked` records whether `generate()` was actually submitted, so audit state does not claim a provider call that never occurred.
-- Sensitive content detected only in `request.task` blocks B1/B2 before the provider boundary; B0 is deliberately exempt as the unsafe control.
-- Provider metadata includes model id, snapshot, decoding configuration and transmitted-byte measurement.
-
-Implementation note for future real providers: the current thread-based wrapper bounds caller wait but cannot terminate a Python worker thread already executing. Real network adapters must also use native transport/client timeout or cancellation.
-
-### Shared end-to-end pipeline and audit
-
-T19 / Issue #26, merged in PR #27.
-
-`pipeline.run_disclosure_case(...)` is the shared execution path for B0/B1/B2:
-
-```text
-input + GovernanceContext + task
-→ detect
-→ treatment.sanitize(...)
-→ provider boundary when allowed
-→ local reconstruction when supported
-→ structural AuditRecord
-```
-
-The call site does not branch on a specific treatment enum member. Reconstruction and the unsafe-control exemption are capability-based contracts.
-
-`audit.AuditRecord` covers detection, decisions, transformation, provider and reconstruction stages. By default it carries metadata only and never raw input, external payload, provider response, reconstructed response or vault content.
-
-Security properties pinned by tests include:
-
-- `REMOVE` originals are absent from what the provider actually receives;
-- `BLOCK_REQUEST` prevents the provider call entirely;
-- task/prompt is part of the egress surface and cannot bypass B1/B2 disclosure control;
-- vault originals/mappings do not reach provider fields or OTel attributes;
-- authorized B2 responses reconstruct locally;
-- default audit correlation hashes use locally keyed HMAC-SHA256 rather than public unkeyed SHA-256;
-- the audit key is never serialized;
-- provider errors/timeouts still produce metadata-only audit outcomes;
-- provider exception messages are not stored in the audit;
-- `decoding_config` is recorded per successful provider response;
-- `audit.provider.called` distinguishes a pre-flight mismatch from a provider call that was actually submitted.
-
-The PR #27 suite reached **170 tests**, and the post-merge CI on `master` completed successfully.
-
-## Milestone 1 exit criteria
-
-All functional exit criteria are met on `master`:
-
-- malformed/invalid span metadata fails closed — **met**;
-- `REMOVE` content does not reach the external provider — **met**;
-- `BLOCK_REQUEST` stops the external request — **met**;
-- pseudonyms respect the real authorized lifecycle of their resolved scope — **met**;
-- external pseudonyms are not based on a publicly guessable digest — **met**;
-- vault originals/secrets do not reach provider or telemetry — **met**;
-- authorized response reconstruction works end to end — **met**;
-- audit is metadata-only by default and avoids public guessing-oracle hashes — **met**;
-- deterministic `FakeProvider` works through the shared B0/B1/B2 path — **met**;
-- provider failures remain fail-closed and auditable — **met**;
-- CI on merged `master` is green — **met**.
+**Exit gate:** schema + cases + annotations are versioned/frozen. Only then is T07/B3 released for implementation.
 
 ## Next research implementation
 
 ### T07 / Issue #6 — B3 — Task-aware
 
-Not started.
+Status: **blocked only by T09 Phase A**.
 
-B3 must introduce task-awareness while retaining B2's reversible pseudonymization/vault/reconstruction mechanism. The B2→B3 comparison must isolate the addition of task relevance rather than accidentally changing reversibility or provider behavior.
+B3 introduces deterministic task-awareness while retaining B2 pseudonymization, vault, reconstruction and provider behavior. Its generic action space must be independent of `domain`, `purpose`, `requester_role`, `provider_class` and contextual `policy_version`, so B2→B3 isolates task-awareness.
+
+T01 line/advisor selection does not block B3.
 
 ### T08 / Issue #7 — B4 — Policy-governed
 
-Not started.
+Status: **depends on B3 + shared T09 ground truth**.
 
-B4 is the principal proposed treatment: task-aware minimization operates only inside the action space allowed by explicit contextual organizational policy. The reversible mechanism remains the same as B3 so B3→B4 isolates the policy-governance constraint.
-
-### T09 / Issue #4 — controlled corpus and ground truth
-
-Not started.
-
-Build synthetic/public-derived cases with explicit ground truth for sensitivity, applicable policy, permitted transformations, task necessity and expected answer. HR is the initial slice; Finance and Contracts provide broader validation, with Contracts important for semantic relationships between parties/obligations.
-
-This work can progress in parallel with B3/B4 implementation, but the ground truth must be frozen before authoritative experiment results are produced.
+B4 keeps the same task analyzer/reversible mechanism and adds explicit contextual policy constraints. Policy resolves the allowed action space first; task-awareness can only minimize within that space. B3→B4 must isolate the effect of explicit policy governance.
 
 ### T10 / Issue #8 — experiment runner and metrics
 
-Not started.
+Status: not started.
 
-The prerequisite engineering boundary is now complete. Authoritative runs still depend on B3, B4 and the controlled corpus.
+Authoritative pilot/result dependencies:
 
-Planned metrics include policy violations, unnecessary disclosure/exposure, utility/task success, reconstruction accuracy, latency, CPU/memory, transmitted data/tokens and estimated external API cost.
+- T09 frozen ground truth;
+- T07/B3;
+- T08/B4;
+- T22 real provider before authoritative utility/token/cost claims.
 
-Measurement rules already fixed by review:
+Metrics include:
 
-- detector/scoring overhead executed around B0 must not be attributed to B0 treatment latency;
+- policy violations;
+- unnecessary/sensitive disclosure;
+- detector precision/recall/F1;
+- task utility/success;
+- reconstruction accuracy;
+- latency;
+- CPU/memory;
+- transmitted data/tokens;
+- estimated external API cost.
+
+Measurement rules:
+
+- detector/scoring overhead around B0 is not B0 treatment latency;
 - record timings by stage;
-- prompt/task scaffolding held constant across treatments should be separated from the disclosure-controlled payload in volume/cost metrics, while total transmission can be recorded separately when useful.
+- separate disclosure-controlled payload volume from task/prompt scaffolding and optionally record total request volume separately;
+- correctly blocked impossible-under-policy cases are reported separately from normal task-utility failures;
+- pilot observations are used to freeze interpretation thresholds before the main experiment;
+- corpus version, policy version, model id/snapshot, decoding config, prompt scaffolding and run configuration must be recorded.
 
 ### T12 / Issue #9 — Docling ingestion
 
-Not started and not required for the controlled text-first experiment slice.
+Status: deferred until after the first B0–B4 HR pilot.
 
-Docling remains infrastructure rather than a claimed research contribution. It should preserve useful document structure while exposing a normalized internal representation independent of Docling APIs.
+Direct text remains the canonical controlled path. Contracts are the first document-oriented expansion; Finance remains optional if schedule permits. Docling is infrastructure, not a claimed research contribution.
+
+## New non-blocking integration/product tasks
+
+### T20 / Issue #28 — CLI + HTTP API + MCP adapters
+
+Expose the Python core through three thin adapters over one shared application/use-case boundary.
+
+Rules:
+
+- no duplicate policy/task/pseudonym/reconstruction/scoring logic in adapters;
+- safe/default responses do not expose vault contents, secrets, raw sensitive audit data or private policy state;
+- CLI is for local/dev/controlled execution;
+- HTTP API is for UI and external integrations;
+- MCP exposes tools/resources over the same application contract.
+
+This does **not** block T09/T07/T08.
+
+### T21 / Issue #29 — simplified Next.js UI
+
+Start now as a parallel UI track using versioned synthetic fixtures/mock JSON.
+
+The initial UI may display safe run/audit metadata, treatment, decisions, provider state, reconstruction summary and timing/volume fields. It must not define scientific metrics or treatment semantics independently of the Python core.
+
+Later, replace fixtures with the T20 HTTP API. No research-core task depends on the UI.
+
+### T22 / Issue #30 — real provider adapter
+
+Implement at least one real provider behind the existing `Provider` protocol before authoritative experiment claims about utility/tokens/API cost.
+
+Requirements include native transport/client timeout or cancellation, reproducibility metadata, frozen comparable configuration across B0–B4, and preservation of the existing fail-closed/no-leak boundary.
+
+This does **not** block T09/T07/T08, but it is required before the authoritative real-provider phase of T10.
+
+## Academic track
 
 ### T01 — PPGCA line/advisor reevaluation
 
-Independent of implementation. This remains research/program planning rather than a software dependency.
+T01 runs in parallel and is **not an engineering gate**.
+
+Current provisional candidates:
+
+- Daniel Fernando Pigatto;
+- Michel Albonico;
+- Luiz Celso Gomes Júnior.
+
+T01 must be resolved before the final submission framing/line/advisor is frozen, but implementation may continue independently.
+
+## Execution order
+
+### Critical research path
+
+1. **T09 / Issue #4 — freeze HR pilot corpus + ground truth.**
+2. **T07 / Issue #6 — implement B3.**
+3. **T08 / Issue #7 — implement B4.**
+4. **T10 / Issue #8 — run the controlled B0–B4 pilot and stabilize metrics/output.**
+5. Freeze utility/overhead interpretation thresholds from the pilot.
+6. **T12 / Issue #9 — add Docling + Contracts as second-domain validation.**
+7. **T22 / Issue #30 — ensure a real provider is available before authoritative real-provider utility/token/cost claims.**
+8. Execute the main experiment.
+
+### Parallel tracks
+
+- **T01** — line/advisor selection for the academic submission;
+- **T21 / Issue #29** — simplified Next.js UI from synthetic fixtures;
+- **T20 / Issue #28** — CLI/API/MCP adapters when useful for integration; T20 becomes the backend integration point for T21 later.
+
+Parallel tracks must not become reverse dependencies of the research core.
 
 ## Deferred / non-blocking engineering
 
-These items are intentionally outside Milestone 1 and do not invalidate its completion:
+Still deferred unless the experiment creates a concrete need:
 
-- `SQLiteVault` or another persistent/shared vault backend;
-- a detector rule emitting `birth_date` (the generalization strategy exists but is currently unreachable);
-- Hypothesis-based pseudonym property tests;
-- real external/Ollama provider adapters with native transport timeout/cancellation;
-- visual audit/comparison UI;
-- document ingestion via Docling.
-
-They should be promoted into explicit tickets when they become necessary for the experiment or proposal, rather than being treated as hidden Milestone 1 debt.
-
-## Recommended execution order
-
-1. T07 / Issue #6 — B3 — Task-aware.
-2. T08 / Issue #7 — B4 — Policy-governed.
-3. T09 / Issue #4 — finalize controlled corpus/ground truth (can progress in parallel with 1–2).
-4. T10 / Issue #8 — experiment runner and authoritative metrics.
-5. T12 / Issue #9 — Docling when document-oriented validation becomes useful.
-
-T01 can proceed independently of this engineering order.
+- `SQLiteVault` or other persistent/shared vault backend;
+- detector rule emitting `birth_date`;
+- additional Hypothesis-based pseudonym property tests;
+- second real provider for robustness;
+- multi-turn disclosure-history study;
+- full visual audit/comparison product UI beyond the simplified T21 surface.
 
 ## References
 
-- ADR 0001: `docs/adr/0001-milestone-1-architecture.md`
 - Experimental design: `docs/experimental-design.md`
-- Foundation PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/10
-- B0–B4 design PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/13
-- Detector/B1 PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/15
-- Span offset validation PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/19
-- Semantic naming PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/21
-- B2 core + semantic GENERALIZE PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/22
-- Milestone 1 completion PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/27
-- B2: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/3
-- B3: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/6
-- B4: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/7
-- Controlled corpus: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/4
-- Experiment runner: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/8
-- Docling ingestion: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/9
-- Provider boundary: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/12
-- Semantic GENERALIZE: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/16
-- Pseudonym lifecycles: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/23
-- Pseudonym guessing resistance: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/24
-- B0 — Direct: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/25
-- End-to-end path + audit: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/26
+- ADR 0001: `docs/adr/0001-milestone-1-architecture.md`
+- T09 corpus/ground truth: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/4
+- T07 B3: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/6
+- T08 B4: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/7
+- T10 runner: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/8
+- T12 Docling: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/9
+- T20 CLI/API/MCP: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/28
+- T21 Next.js UI: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/29
+- T22 real provider: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/30
+- Milestone 1 PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/27
