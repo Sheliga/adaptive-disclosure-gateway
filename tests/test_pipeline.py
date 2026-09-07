@@ -482,3 +482,60 @@ def test_provider_timeout_fails_closed_with_a_metadata_only_audit_record_instead
     dumped = execution.audit.model_dump_json()
     assert "Ana Souza" not in dumped
     assert HR_FIXTURE_NO_MEDICAL not in dumped
+
+
+# --- Defect: a provider_class mismatch is detected before invoke_provider
+# ever calls generate (see providers/base.py's invoke_provider), so the
+# audit record must not claim the provider was "called" for a request that
+# never reached generate at all -----------------------------------------
+
+
+@dataclass
+class NeverActuallyInvokedProvider:
+    """Declares a ``provider_class`` that never matches what the pipeline
+    expects (``request.context.provider_class``, "fake" by default in these
+    tests), so ``invoke_provider`` must raise ``ProviderClassMismatchError``
+    before ever calling ``generate`` -- see ``invoke_provider``'s own
+    docstring. Counts ``generate`` invocations so the test proves generate
+    was never reached, rather than trusting the pipeline's own bookkeeping.
+    """
+
+    provider_class: str = "wrong-provider-class"
+    generate_calls: int = 0
+
+    def generate(self, request: ProviderRequest) -> ProviderResponse:
+        self.generate_calls += 1
+        return ProviderResponse(
+            text="unreachable",
+            model_id="unreachable-model",
+            model_snapshot="unreachable-snapshot",
+            decoding_config={},
+            transmitted_bytes=0,
+        )
+
+
+def test_provider_class_mismatch_never_calls_generate_and_audit_does_not_claim_it_was_called():
+    request = _request(HR_FIXTURE_NO_MEDICAL)  # context.provider_class defaults to "fake"
+    provider = NeverActuallyInvokedProvider()
+
+    execution = run_disclosure_case(StaticSanitizer(), request, provider)
+
+    assert provider.generate_calls == 0, (
+        "generate must never be invoked when the provider's declared "
+        "provider_class does not match what the pipeline expected"
+    )
+    assert execution.provider_response is None
+    assert execution.reconstructed_text is None
+    assert execution.audit.provider.called is False, (
+        "ProviderStage.called documents that a provider was actually "
+        "invoked -- generate was never reached here, so this must be False"
+    )
+    assert execution.audit.provider.failed is True
+    assert execution.audit.provider.failure_kind == "ProviderClassMismatchError"
+
+    dumped = execution.audit.model_dump_json()
+    assert "Ana Souza" not in dumped
+    assert "123.456.789-09" not in dumped
+    assert "8500" not in dumped
+    assert "Engineering" not in dumped
+    assert HR_FIXTURE_NO_MEDICAL not in dumped

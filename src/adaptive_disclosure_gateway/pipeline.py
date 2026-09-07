@@ -240,7 +240,6 @@ def run_disclosure_case(
 
         if result.status == "allowed":
             provider_request = ProviderRequest(payload=result.external_payload, task=request.task)
-            provider_attempted = True
             provider_class_used = provider.provider_class
             try:
                 provider_response = invoke_provider(
@@ -252,16 +251,29 @@ def run_disclosure_case(
             except ProviderError as exc:
                 # Fail closed, observably: a provider error or timeout must
                 # not crash this call with no audit record at all. Record
-                # that the provider was attempted and failed, by failure
-                # *kind* only (the exception's class name) -- never its
-                # message, which a third-party provider client could have
-                # populated with request content (invoke_provider's own
-                # docstring already breaks that chain with `from None`; this
-                # call site must not resurface it either). No fallback to
-                # B0 -- Direct: provider_response/reconstructed_text simply
-                # stay None/unset.
+                # that the provider failed, by failure *kind* only (the
+                # exception's class name) -- never its message, which a
+                # third-party provider client could have populated with
+                # request content (invoke_provider's own docstring already
+                # breaks that chain with `from None`; this call site must
+                # not resurface it either). No fallback to B0 -- Direct:
+                # provider_response/reconstructed_text simply stay
+                # None/unset.
+                #
+                # Whether the audit should say the provider was "called" is
+                # read from the exception itself (``provider_invoked``) --
+                # the one fact only ``invoke_provider`` knows for certain,
+                # since it is the only code that knows whether
+                # ``provider.generate`` was actually submitted before this
+                # failure happened. This deliberately does not special-case
+                # ``ProviderClassMismatchError`` by isinstance: any future
+                # pre-flight check invoke_provider grows before the
+                # ``generate`` call carries the same attribute automatically,
+                # without this call site needing to change.
+                provider_attempted = exc.provider_invoked
                 provider_failure_kind = type(exc).__name__
             else:
+                provider_attempted = True
                 if isinstance(treatment, ReconstructingTreatment):
                     reconstructed_text = treatment.reconstruct(
                         provider_response.text, result, request.context

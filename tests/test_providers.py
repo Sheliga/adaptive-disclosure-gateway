@@ -150,6 +150,20 @@ def test_invoke_provider_blocks_on_provider_class_mismatch_without_calling_gener
     assert stub.received == []
 
 
+def test_provider_class_mismatch_error_carries_provider_invoked_false():
+    # provider_invoked is the fact only invoke_provider itself knows: a
+    # mismatch is detected and raised before executor.submit(generate) ever
+    # runs, so a caller reading this attribute (rather than special-casing
+    # ProviderClassMismatchError by isinstance) must see False here.
+    stub = _CountingStubProvider(provider_class="fake", response=_stub_response())
+    request = ProviderRequest(payload="p", task="t")
+
+    with pytest.raises(ProviderClassMismatchError) as excinfo:
+        invoke_provider(stub, request, expected_provider_class="external_llm")
+
+    assert excinfo.value.provider_invoked is False
+
+
 # --- invoke_provider: fail closed on error/timeout, no retry ---------------
 
 
@@ -164,6 +178,21 @@ def test_invoke_provider_fails_closed_and_never_retries_when_provider_raises():
     # trigger a retry that re-sends a payload the treatment did not
     # authorize a second time.
     assert len(stub.received) == 1
+
+
+def test_provider_error_from_inside_generate_carries_provider_invoked_true():
+    # Unlike a provider_class mismatch, this failure happens only after
+    # executor.submit(generate) actually ran -- provider_invoked must
+    # reflect that, so a caller distinguishing "never reached the provider"
+    # from "reached it and it failed" gets the right answer from the
+    # exception itself.
+    stub = _CountingStubProvider(provider_class="fake", error=RuntimeError("boom"))
+    request = ProviderRequest(payload="p", task="t")
+
+    with pytest.raises(ProviderError) as excinfo:
+        invoke_provider(stub, request, expected_provider_class="fake")
+
+    assert excinfo.value.provider_invoked is True
 
 
 def test_invoke_provider_fails_closed_on_timeout_and_returns_before_the_call_finishes():
@@ -183,6 +212,21 @@ def test_invoke_provider_fails_closed_on_timeout_and_returns_before_the_call_fin
     # elapses.
     assert elapsed < 0.5
     assert len(stub.received) == 1
+
+
+def test_provider_timeout_error_carries_provider_invoked_true():
+    # A timeout can only happen after executor.submit(generate) was called
+    # (the future is awaited with a deadline) -- provider_invoked must be
+    # True here too, exactly like a generic in-flight ProviderError.
+    stub = _CountingStubProvider(
+        provider_class="fake", delay_seconds=1.0, response=_stub_response()
+    )
+    request = ProviderRequest(payload="p", task="t")
+
+    with pytest.raises(ProviderTimeoutError) as excinfo:
+        invoke_provider(stub, request, expected_provider_class="fake", timeout=0.05)
+
+    assert excinfo.value.provider_invoked is True
 
 
 def test_provider_timeout_error_is_a_provider_error_so_callers_can_fail_closed_uniformly():

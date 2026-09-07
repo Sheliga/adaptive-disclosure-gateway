@@ -74,7 +74,24 @@ class ProviderError(Exception):
     base class specifically so that a caller handling providers generically
     can write one ``except ProviderError`` and fail closed uniformly,
     without special-casing timeouts.
+
+    ``provider_invoked`` records the one fact only ``invoke_provider``
+    itself knows for certain: whether ``provider.generate`` was actually
+    submitted before this failure happened. It defaults to ``True`` because
+    every failure site in ``invoke_provider`` *except* the provider_class
+    pre-flight check happens after ``executor.submit(provider.generate,
+    request)`` has already run. A caller (``pipeline.run_disclosure_case``)
+    must read this attribute to decide what an audit record's
+    ``ProviderStage.called`` should say -- never infer it by checking
+    ``isinstance(exc, ProviderClassMismatchError)``, which would silently
+    stop being correct the moment a future pre-flight check is added to
+    ``invoke_provider`` before the ``generate`` call without also being
+    special-cased at every call site.
     """
+
+    def __init__(self, *args: object, provider_invoked: bool = True) -> None:
+        super().__init__(*args)
+        self.provider_invoked = provider_invoked
 
 
 class ProviderTimeoutError(ProviderError):
@@ -82,7 +99,10 @@ class ProviderTimeoutError(ProviderError):
 
     Subclasses ``ProviderError`` -- see its docstring for the fail-closed
     contract, which applies identically here: never retried, never
-    degraded to direct disclosure.
+    degraded to direct disclosure. A timeout can only happen after
+    ``provider.generate`` was actually submitted (the deadline is enforced
+    while awaiting its result), so ``provider_invoked`` is ``True`` here,
+    exactly like the base class default.
     """
 
 
@@ -97,8 +117,16 @@ class ProviderClassMismatchError(ProviderError):
     ignored by trusting whichever of the two labels the caller already had
     on hand, and not silently repaired by overwriting one with the other.
     ``invoke_provider`` checks this before ever calling ``provider.generate``,
-    so a mismatched provider is never actually invoked.
+    so a mismatched provider is never actually invoked -- ``provider_invoked``
+    is therefore always ``False`` for this exception, unconditionally
+    (there is deliberately no way to construct one with it set ``True``):
+    every raise site for this specific exception is, by construction, the
+    provider_class pre-flight check that runs before
+    ``executor.submit(provider.generate, request)``.
     """
+
+    def __init__(self, *args: object) -> None:
+        super().__init__(*args, provider_invoked=False)
 
 
 @runtime_checkable
