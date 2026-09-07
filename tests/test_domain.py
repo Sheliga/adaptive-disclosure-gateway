@@ -5,6 +5,7 @@ from adaptive_disclosure_gateway.domain import (
     DisclosureAction,
     GovernanceContext,
     PseudonymScope,
+    SensitiveSpan,
 )
 
 
@@ -42,3 +43,34 @@ def test_pseudonym_scope_rejects_unknown_values():
             policy_version="hr-v1",
             requested_pseudonym_scope="forever",
         )
+
+
+# Issue #17: SensitiveSpan.start/end used to be optional, which let a span
+# reach the transformation boundary with missing offsets that were then
+# silently coerced to 0 -- producing an "allowed" payload that still
+# contained the original sensitive value under a nominal REMOVE decision.
+# These pin that offsets are now required and structurally validated at
+# construction time, so such a span cannot be built at all. Checks that
+# depend on the source text (in-bounds `end`, value/offset match) cannot
+# live here -- the model has no access to the text -- and are covered at the
+# transformation boundary instead (tests/test_b1_sanitizer.py).
+
+
+def test_sensitive_span_rejects_missing_offsets():
+    with pytest.raises(ValidationError):
+        SensitiveSpan(category="cpf", value="123.456.789-09")
+
+
+def test_sensitive_span_rejects_negative_start():
+    with pytest.raises(ValidationError):
+        SensitiveSpan(category="cpf", value="123.456.789-09", start=-1, end=10)
+
+
+def test_sensitive_span_rejects_inverted_offsets():
+    with pytest.raises(ValidationError):
+        SensitiveSpan(category="cpf", value="123.456.789-09", start=10, end=5)
+
+
+def test_sensitive_span_rejects_zero_length_span():
+    with pytest.raises(ValidationError):
+        SensitiveSpan(category="cpf", value="123.456.789-09", start=5, end=5)
