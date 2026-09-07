@@ -8,6 +8,7 @@ from adaptive_disclosure_gateway.domain import (
     PolicyDecision,
     SensitiveSpan,
     Transformation,
+    Treatment,
 )
 from adaptive_disclosure_gateway.observability import get_tracer
 from adaptive_disclosure_gateway.transformations.span_validation import spans_are_valid
@@ -50,6 +51,8 @@ class B1StaticSanitizer:
     ``request.task`` and ``request.context`` are intentionally never read:
     B1's output depends only on ``request.text`` and the supplied spans.
     """
+
+    treatment = Treatment.STATIC_SANITIZATION
 
     def sanitize(self, request: DisclosureRequest, spans: list[SensitiveSpan]) -> DisclosureResult:
         tracer = get_tracer()
