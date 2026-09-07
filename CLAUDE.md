@@ -22,7 +22,7 @@ Treat this sequence as canonical in all reasoning, comparisons and prose. Compar
 
 Concretely:
 
-- `Treatment` (`src/adaptive_disclosure_gateway/domain.py`) is the `StrEnum` whose members carry the semantic name (`DIRECT`, `STATIC_SANITIZATION`, `REVERSIBLE_PSEUDONYMIZATION`, `TASK_AWARE`, `POLICY_GOVERNED`) and whose values are the frozen codes (`"b0"`–`"b4").
+- `Treatment` (`src/adaptive_disclosure_gateway/domain.py`) is the `StrEnum` whose members carry the semantic name (`DIRECT`, `STATIC_SANITIZATION`, `REVERSIBLE_PSEUDONYMIZATION`, `TASK_AWARE`, `POLICY_GOVERNED`) and whose values are the frozen codes (`"b0"`–`"b4"`).
 - Module and class names for each treatment are semantic, not coded: `transformations/static_sanitization.py` / `StaticSanitizer` is the pattern to follow for B2–B4 (for example `reversible_pseudonymization.py` / `ReversiblePseudonymizer`).
 - A treatment class exposes which treatment it implements through a `treatment` class attribute (for example `treatment = Treatment.STATIC_SANITIZATION`).
 - OpenTelemetry spans/attributes are namespaced by the semantic name (for example `static_sanitization.sanitize`, `static_sanitization.span_count`) plus a `treatment` attribute carrying the frozen code as data (for example `"b1"`).
