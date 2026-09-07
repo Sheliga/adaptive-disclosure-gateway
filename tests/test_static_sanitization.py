@@ -41,8 +41,26 @@ def test_generalize_action_replaces_salary_without_leaking_original_value():
     assert "8500" not in result.external_payload
     transformation = next(t for t in result.transformations if t.category == "salary")
     assert transformation.action is DisclosureAction.GENERALIZE
-    assert transformation.transformed is not None
-    assert "8500" not in transformation.transformed
+    # Issue #16: GENERALIZE must be a real band, not a fixed placeholder --
+    # this is what makes it distinguishable from REMOVE's `transformed=None`.
+    assert transformation.transformed == "R$ 5000-10000"
+
+
+def test_unconfigured_generalize_category_fails_closed_instead_of_disclosing(monkeypatch):
+    # If a future edit routes a new category through GENERALIZE without also
+    # registering a strategy for it in generalization.py, the request must
+    # block, not silently emit the original value (issue #16).
+    import adaptive_disclosure_gateway.transformations.static_sanitization as static_sanitization_module
+
+    monkeypatch.setitem(static_sanitization_module.ACTIONS, "bonus", DisclosureAction.GENERALIZE)
+    text = "Bonus: R$ 500.00 was paid.\n"
+    request = _request(text)
+    spans = [SensitiveSpan(category="bonus", value="R$ 500.00", start=7, end=16)]
+
+    result = StaticSanitizer().sanitize(request, spans)
+
+    assert result.status == "blocked"
+    assert "500" not in result.external_payload
 
 
 def test_preserve_action_keeps_department_value_in_payload():

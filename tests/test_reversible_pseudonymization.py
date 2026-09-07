@@ -76,6 +76,20 @@ def test_unmapped_category_fails_closed_instead_of_leaking():
     assert "value here" not in result.external_payload
 
 
+def test_unconfigured_generalize_category_fails_closed_instead_of_disclosing(monkeypatch):
+    import adaptive_disclosure_gateway.transformations.reversible_pseudonymization as b2_module
+
+    monkeypatch.setitem(b2_module.ACTIONS, "bonus", DisclosureAction.GENERALIZE)
+    text = "Bonus: R$ 500.00 was paid.\n"
+    request = _request(text)
+    spans = [SensitiveSpan(category="bonus", value="R$ 500.00", start=7, end=16)]
+
+    result = _pseudonymizer().sanitize(request, spans)
+
+    assert result.status == "blocked"
+    assert "500" not in result.external_payload
+
+
 def test_span_with_missing_offsets_bypassing_model_is_blocked_not_leaked():
     text = "CPF: 123.456.789-09 recorded."
     request = _request(text)

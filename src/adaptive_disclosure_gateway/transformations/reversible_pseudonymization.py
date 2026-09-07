@@ -19,6 +19,8 @@ from adaptive_disclosure_gateway.policies import PolicyRepository
 from adaptive_disclosure_gateway.transformations.span_validation import spans_are_valid
 from adaptive_disclosure_gateway.vault import Vault
 
+from . import generalization
+
 # Reversible Pseudonymization (B2): the *same* static, task- and
 # policy-independent category -> action mapping as Static Sanitization (B1)
 # -- see docs/experimental-design.md's B1->B2 comparison, which isolates
@@ -43,11 +45,17 @@ ACTIONS: dict[str, DisclosureAction] = {
     "medical_data": DisclosureAction.BLOCK_REQUEST,
 }
 
-# TODO(T13 / issue #16): replace with the semantic generalization registry.
-# Kept identical to B1's current placeholder for this commit so B2 lands
-# without depending on unmerged T13 work; both treatments switch to real
-# generalization together in the next commit.
-_GENERALIZED_PLACEHOLDER = "[REDACTED:{category}]"
+
+def _resolve_action(category: str) -> DisclosureAction:
+    """Look up ``category``'s static action, downgrading GENERALIZE to
+    BLOCK_REQUEST if no generalization strategy is configured for it
+    (issue #16: fail closed rather than silently disclosing the original
+    value). Resolved before any text slicing happens.
+    """
+    action = ACTIONS.get(category, DisclosureAction.BLOCK_REQUEST)
+    if action is DisclosureAction.GENERALIZE and not generalization.is_configured(category):
+        return DisclosureAction.BLOCK_REQUEST
+    return action
 
 
 def _scope_key(scope: PseudonymScope, context: GovernanceContext) -> str:
@@ -109,9 +117,7 @@ class ReversiblePseudonymizer:
                 return self._invalid_span_result(spans)
 
             ordered = resolve_overlaps(spans)
-            actions = [
-                ACTIONS.get(span.category, DisclosureAction.BLOCK_REQUEST) for span in ordered
-            ]
+            actions = [_resolve_action(span.category) for span in ordered]
             blocked = DisclosureAction.BLOCK_REQUEST in actions
 
             # Metadata only: categories, counts, a block flag and timing --
@@ -259,7 +265,7 @@ class ReversiblePseudonymizer:
             if action is DisclosureAction.REMOVE:
                 transformed = None
             elif action is DisclosureAction.GENERALIZE:
-                transformed = _GENERALIZED_PLACEHOLDER.format(category=span.category)
+                transformed = generalization.generalize(span.category, span.value)
             elif action is DisclosureAction.PSEUDONYMIZE:
                 transformed = self._vault.pseudonymize(scope, scope_key, span.category, span.value)
                 any_pseudonymized = True

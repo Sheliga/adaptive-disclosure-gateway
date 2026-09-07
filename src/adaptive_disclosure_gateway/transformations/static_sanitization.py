@@ -13,6 +13,8 @@ from adaptive_disclosure_gateway.domain import (
 from adaptive_disclosure_gateway.observability import get_tracer
 from adaptive_disclosure_gateway.transformations.span_validation import spans_are_valid
 
+from . import generalization
+
 # Static Sanitization (B1) baseline: a fixed, task- and policy-independent
 # category -> action mapping. It does not consult PolicyRepository, task
 # relevance, or the pseudonym vault -- that independence is what separates
@@ -30,7 +32,18 @@ ACTIONS: dict[str, DisclosureAction] = {
     "medical_data": DisclosureAction.BLOCK_REQUEST,
 }
 
-_GENERALIZED_PLACEHOLDER = "[REDACTED:{category}]"
+
+def _resolve_action(category: str) -> DisclosureAction:
+    """Look up ``category``'s static action, downgrading GENERALIZE to
+    BLOCK_REQUEST if no generalization strategy is configured for it
+    (issue #16: fail closed rather than silently falling back to disclosing
+    the original value). Resolved before any text slicing happens, so a
+    misconfigured category never partially discloses anything.
+    """
+    action = ACTIONS.get(category, DisclosureAction.BLOCK_REQUEST)
+    if action is DisclosureAction.GENERALIZE and not generalization.is_configured(category):
+        return DisclosureAction.BLOCK_REQUEST
+    return action
 
 
 class StaticSanitizer:
@@ -42,11 +55,13 @@ class StaticSanitizer:
     caller passing raw, unresolved spans cannot corrupt payload slicing.
 
     Irreversible by construction: REMOVE drops the value, GENERALIZE replaces
-    it with a fixed category placeholder, BLOCK_REQUEST blocks the whole
-    request rather than partially disclosing it. A category outside
-    ``ACTIONS`` fails closed (BLOCK_REQUEST) instead of risking a silent
-    leak -- mirroring the project's fail-closed policy stance, but decided
-    entirely locally, without calling the policy engine.
+    it with a coarsened band/period from ``transformations.generalization``
+    (issue #16), BLOCK_REQUEST blocks the whole request rather than
+    partially disclosing it. A category outside ``ACTIONS`` -- or mapped to
+    GENERALIZE with no registered generalization strategy -- fails closed
+    (BLOCK_REQUEST) instead of risking a silent leak -- mirroring the
+    project's fail-closed policy stance, but decided entirely locally,
+    without calling the policy engine.
 
     ``request.task`` and ``request.context`` are intentionally never read:
     This treatment's output depends only on ``request.text`` and the supplied spans.
@@ -75,9 +90,7 @@ class StaticSanitizer:
                 return self._invalid_span_result(spans)
 
             ordered = resolve_overlaps(spans)
-            actions = [
-                ACTIONS.get(span.category, DisclosureAction.BLOCK_REQUEST) for span in ordered
-            ]
+            actions = [_resolve_action(span.category) for span in ordered]
             blocked = DisclosureAction.BLOCK_REQUEST in actions
 
             # Metadata only: categories, counts and a block flag -- never the
@@ -165,7 +178,7 @@ class StaticSanitizer:
             if action is DisclosureAction.REMOVE:
                 transformed = None
             elif action is DisclosureAction.GENERALIZE:
-                transformed = _GENERALIZED_PLACEHOLDER.format(category=span.category)
+                transformed = generalization.generalize(span.category, span.value)
             else:  # PRESERVE
                 transformed = span.value
 
