@@ -15,6 +15,7 @@ claims it produced.
 from __future__ import annotations
 
 import ast
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -106,6 +107,14 @@ def _request(text: str, **context_overrides) -> DisclosureRequest:
     return DisclosureRequest(
         text=text,
         task="summarize personnel record",
+        context=_context(**context_overrides),
+    )
+
+
+def _request_with_task(text: str, task: str, **context_overrides) -> DisclosureRequest:
+    return DisclosureRequest(
+        text=text,
+        task=task,
         context=_context(**context_overrides),
     )
 
@@ -348,3 +357,128 @@ def test_b2_response_round_trip_reconstructs_authorized_pseudonyms_through_the_f
 
     assert execution.audit.reconstruction.attempted is True
     assert execution.audit.reconstruction.changed_from_provider_response is True
+
+
+# --- Defect 1: a sensitive value present only in request.task must never
+# reach the provider for B1/B2, and B0 -- Direct is exempt by design --------
+
+# Deliberately reuses the HR fixture's employee name and CPF, but embeds them
+# ONLY in the task, never in the text: detection/every treatment only ever
+# inspects request.text, so before the fix these values sailed straight
+# through to the provider in the task field, for both B1 and B2.
+SENSITIVE_TASK = "Please prepare a summary.\nEmployee: Ana Souza\nCPF: 123.456.789-09\n"
+INNOCUOUS_TEXT = "Please summarize the attached quarterly report.\n"
+
+
+@pytest.mark.parametrize("treatment_factory", [StaticSanitizer, lambda: _b2()])
+def test_sensitive_value_present_only_in_task_causes_b1_and_b2_to_fail_closed_and_never_reach_the_provider(
+    treatment_factory,
+):
+    request = _request_with_task(INNOCUOUS_TEXT, SENSITIVE_TASK, session_id="s1")
+    provider = RecordingProvider()
+
+    execution = run_disclosure_case(treatment_factory(), request, provider)
+
+    assert provider.received == [], "provider must never see a task-only sensitive value"
+    assert execution.disclosure_result.status == "blocked"
+    assert execution.provider_response is None
+    assert execution.reconstructed_text is None
+    assert execution.audit.provider.called is False
+    assert any(
+        "task" in decision.reason.lower() for decision in execution.disclosure_result.decisions
+    ), "the block reason must record that the task was why this request failed closed"
+
+
+def test_b0_direct_still_sends_a_sensitive_task_to_the_provider_unchanged_as_the_unsafe_control():
+    """Regression pin: B0 -- Direct is the intentionally unsafe control every
+    other treatment is measured against (see direct_disclosure.py's module
+    docstring). It must keep sending request.task (and request.text)
+    completely raw -- including the exact sensitive content that makes B1/B2
+    fail closed in the test above -- or every B0->B1/B2 comparison would be
+    silently biased in B0's favor. This must stay green forever: if a future
+    change makes B0 start inspecting/blocking on task content, this is the
+    test that should catch it.
+    """
+    request = _request_with_task(INNOCUOUS_TEXT, SENSITIVE_TASK, session_id="s1")
+    provider = RecordingProvider()
+
+    execution = run_disclosure_case(DirectDiscloser(), request, provider)
+
+    assert execution.disclosure_result.status == "allowed"
+    assert len(provider.received) == 1
+    assert provider.received[0].task == SENSITIVE_TASK
+    assert "Ana Souza" in provider.received[0].task
+    assert "123.456.789-09" in provider.received[0].task
+
+
+# --- Defect 3: a provider error or timeout must still fail closed with a
+# metadata-only audit record, not an unhandled exception and no audit at
+# all ---------------------------------------------------------------------
+
+
+@dataclass
+class AlwaysFailingProvider:
+    """A stub whose ``generate`` always raises. The message deliberately
+    echoes something that looks like request content (the way a real HTTP
+    client can quote the request body it failed to send) so a test can
+    confirm that text never resurfaces in the audit record.
+    """
+
+    provider_class: str = "fake"
+
+    def generate(self, request: ProviderRequest) -> ProviderResponse:
+        raise RuntimeError(f"boom: could not deliver payload of {len(request.payload)} chars")
+
+
+@dataclass
+class AlwaysTimingOutProvider:
+    provider_class: str = "fake"
+
+    def generate(self, request: ProviderRequest) -> ProviderResponse:
+        time.sleep(1.0)
+        return ProviderResponse(
+            text="unreachable",
+            model_id="unreachable-model",
+            model_snapshot="unreachable-snapshot",
+            decoding_config={},
+            transmitted_bytes=0,
+        )
+
+
+def test_provider_error_fails_closed_with_a_metadata_only_audit_record_instead_of_an_unhandled_exception():
+    request = _request(HR_FIXTURE_NO_MEDICAL)
+    provider = AlwaysFailingProvider()
+
+    execution = run_disclosure_case(StaticSanitizer(), request, provider)
+
+    assert execution.provider_response is None
+    assert execution.reconstructed_text is None
+    assert execution.audit.provider.called is True
+    assert execution.audit.provider.failed is True
+    assert execution.audit.provider.failure_kind == "ProviderError"
+
+    dumped = execution.audit.model_dump_json()
+    assert "boom" not in dumped
+    assert "Ana Souza" not in dumped
+    assert "123.456.789-09" not in dumped
+    assert HR_FIXTURE_NO_MEDICAL not in dumped
+
+
+def test_provider_timeout_fails_closed_with_a_metadata_only_audit_record_instead_of_an_unhandled_exception():
+    request = _request(HR_FIXTURE_NO_MEDICAL)
+    provider = AlwaysTimingOutProvider()
+
+    started = time.perf_counter()
+    execution = run_disclosure_case(StaticSanitizer(), request, provider, timeout=0.05)
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 0.5, "the timeout must actually be enforced, not just eventually return"
+    assert execution.provider_response is None
+    assert execution.reconstructed_text is None
+    assert execution.audit.provider.called is True
+    assert execution.audit.provider.failed is True
+    assert execution.audit.provider.failure_kind == "ProviderTimeoutError"
+
+    dumped = execution.audit.model_dump_json()
+    assert "Ana Souza" not in dumped
+    assert HR_FIXTURE_NO_MEDICAL not in dumped

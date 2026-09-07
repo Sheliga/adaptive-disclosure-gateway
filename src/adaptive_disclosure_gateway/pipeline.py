@@ -47,9 +47,11 @@ from typing import Protocol, runtime_checkable
 from adaptive_disclosure_gateway.audit import AuditRecord, build_audit_record
 from adaptive_disclosure_gateway.detection import Detector
 from adaptive_disclosure_gateway.domain import (
+    DisclosureAction,
     DisclosureRequest,
     DisclosureResult,
     GovernanceContext,
+    PolicyDecision,
     SensitiveSpan,
     Treatment,
 )
@@ -57,6 +59,7 @@ from adaptive_disclosure_gateway.observability import elapsed_ms_since, get_trac
 from adaptive_disclosure_gateway.providers import (
     DEFAULT_TIMEOUT_SECONDS,
     Provider,
+    ProviderError,
     ProviderRequest,
     ProviderResponse,
     invoke_provider,
@@ -91,6 +94,34 @@ class ReconstructingTreatment(Protocol):
     ) -> str: ...
 
 
+@runtime_checkable
+class UnsafeControlTreatment(Protocol):
+    """Capability marker for a treatment that is an intentionally unsafe raw
+    disclosure control -- today only the B0 -- Direct baseline (see
+    ``transformations/direct_disclosure.py``'s module docstring for why
+    "improving" it would bias every comparison against it).
+
+    This is the exemption from the task-inspection fail-closed check below:
+    every other treatment's ``sanitize`` contract only ever inspects
+    ``request.text`` (see the module docstring's identifier-contract note),
+    so a sensitive value that exists *only* in ``request.task`` used to
+    reach the provider untouched. The fix runs the same ``Detector`` over
+    ``request.task`` and fails the whole request closed if it detects
+    anything -- but the unsafe control baseline must keep sending
+    ``request.task`` completely raw, exactly like it does ``request.text``,
+    or it would stop being a valid experimental control.
+
+    Checked with ``isinstance``, exactly like ``ReconstructingTreatment``
+    above: a capability check on the treatment object, never a branch keyed
+    to a specific ``Treatment`` enum member (see
+    ``tests/test_pipeline.py::test_pipeline_call_site_never_branches_on_which_treatment_is_running``,
+    and the regression pin at
+    ``tests/test_pipeline.py::test_b0_direct_still_sends_a_sensitive_task_to_the_provider_unchanged_as_the_unsafe_control``).
+    """
+
+    unsafe_control_baseline: bool
+
+
 @dataclass(frozen=True)
 class ExecutionResult:
     """Everything one run of one case through one treatment produced.
@@ -107,6 +138,51 @@ class ExecutionResult:
     provider_response: ProviderResponse | None
     reconstructed_text: str | None
     audit: AuditRecord
+
+
+def _blocked_for_sensitive_task(task_spans: list[SensitiveSpan]) -> DisclosureResult:
+    """Fail-closed result for a request whose ``task`` -- not its ``text`` --
+    carries sensitive content.
+
+    Every treatment's ``sanitize(request, spans)`` contract only ever
+    inspects ``request.text``: ``spans`` are always spans detected over
+    ``request.text``, never over ``request.task``. So a sensitive value that
+    exists *only* in the task previously sailed straight through to
+    ``ProviderRequest.task`` untouched, for every treatment that reaches
+    ``invoke_provider`` (B1, B2 -- see ``UnsafeControlTreatment`` above for
+    why B0 is deliberately exempt).
+
+    Blocking, not silently sanitizing the task, is the deliberate choice
+    here: a task carrying sensitive data is a governance violation (the
+    caller built a prompt out of data that should have gone through
+    disclosure control, not scaffolding held constant across treatments per
+    docs/experimental-design.md), and blocking is the defensible fail-closed
+    reading -- the same posture this codebase already takes for a malformed
+    span or an unresolvable pseudonym scope, rather than silently rewriting
+    a field this pipeline was never asked to transform.
+    """
+    categories = sorted({span.category for span in task_spans})
+    decisions = [
+        PolicyDecision(
+            category=category,
+            action=DisclosureAction.BLOCK_REQUEST,
+            reason=(
+                "request.task contains detected sensitive content in this "
+                "category; the shared pipeline fails the whole request "
+                "closed rather than silently sanitizing the task -- only "
+                "request.text goes through a treatment's own sanitize() "
+                "detection/action mapping"
+            ),
+            allowed_actions=[DisclosureAction.BLOCK_REQUEST],
+        )
+        for category in categories
+    ]
+    return DisclosureResult(
+        external_payload="",
+        decisions=decisions,
+        transformations=[],
+        status="blocked",
+    )
 
 
 def run_disclosure_case(
@@ -146,29 +222,56 @@ def run_disclosure_case(
         spans = active_detector.detect(request.text)
         result = treatment.sanitize(request, spans)
 
+        # A sensitive value can exist only in request.task, which no
+        # treatment's sanitize() ever inspects. Run the same Detector over
+        # it and fail the whole request closed if it finds anything -- but
+        # never for the unsafe control baseline, which must keep sending
+        # request.task completely raw (see UnsafeControlTreatment above).
+        if result.status == "allowed" and not isinstance(treatment, UnsafeControlTreatment):
+            task_spans = active_detector.detect(request.task)
+            if task_spans:
+                result = _blocked_for_sensitive_task(task_spans)
+
         provider_response: ProviderResponse | None = None
         reconstructed_text: str | None = None
         provider_class_used: str | None = None
+        provider_attempted = False
+        provider_failure_kind: str | None = None
 
         if result.status == "allowed":
             provider_request = ProviderRequest(payload=result.external_payload, task=request.task)
-            provider_response = invoke_provider(
-                provider,
-                provider_request,
-                expected_provider_class=request.context.provider_class,
-                timeout=timeout,
-            )
+            provider_attempted = True
             provider_class_used = provider.provider_class
-
-            if isinstance(treatment, ReconstructingTreatment):
-                reconstructed_text = treatment.reconstruct(
-                    provider_response.text, result, request.context
+            try:
+                provider_response = invoke_provider(
+                    provider,
+                    provider_request,
+                    expected_provider_class=request.context.provider_class,
+                    timeout=timeout,
                 )
+            except ProviderError as exc:
+                # Fail closed, observably: a provider error or timeout must
+                # not crash this call with no audit record at all. Record
+                # that the provider was attempted and failed, by failure
+                # *kind* only (the exception's class name) -- never its
+                # message, which a third-party provider client could have
+                # populated with request content (invoke_provider's own
+                # docstring already breaks that chain with `from None`; this
+                # call site must not resurface it either). No fallback to
+                # B0 -- Direct: provider_response/reconstructed_text simply
+                # stay None/unset.
+                provider_failure_kind = type(exc).__name__
+            else:
+                if isinstance(treatment, ReconstructingTreatment):
+                    reconstructed_text = treatment.reconstruct(
+                        provider_response.text, result, request.context
+                    )
 
         # Metadata only -- never the payload, the raw text, or any
         # reconstructed content.
         otel_span.set_attribute("pipeline.status", result.status)
-        otel_span.set_attribute("pipeline.provider_called", provider_response is not None)
+        otel_span.set_attribute("pipeline.provider_called", provider_attempted)
+        otel_span.set_attribute("pipeline.provider_failed", provider_failure_kind is not None)
         otel_span.set_attribute("pipeline.reconstruction_attempted", reconstructed_text is not None)
         otel_span.set_attribute("pipeline.duration_ms", elapsed_ms_since(started))
 
@@ -180,6 +283,8 @@ def run_disclosure_case(
             provider_response=provider_response,
             provider_class=provider_class_used,
             reconstructed_text=reconstructed_text,
+            provider_attempted=provider_attempted,
+            provider_failure_kind=provider_failure_kind,
             capture_raw_values_for_controlled_experiment=(
                 capture_raw_values_for_controlled_experiment
             ),

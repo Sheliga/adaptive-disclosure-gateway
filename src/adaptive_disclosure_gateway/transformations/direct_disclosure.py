@@ -50,6 +50,15 @@ class DirectDiscloser:
 
     treatment = Treatment.DIRECT
 
+    # Capability marker consumed by pipeline.py's UnsafeControlTreatment
+    # protocol (checked via isinstance, never by comparing treatment.treatment
+    # to Treatment.DIRECT -- see tests/test_pipeline.py's structural pins):
+    # exempts B0 alone from the shared pipeline's fail-closed check for
+    # sensitive content in request.task. True only here -- B1/B2 (and any
+    # future non-control treatment) must not carry this attribute, so they
+    # stay subject to that check by default.
+    unsafe_control_baseline = True
+
     def sanitize(self, request: DisclosureRequest, spans: list[SensitiveSpan]) -> DisclosureResult:
         del spans  # never read: B0's payload depends only on request.text
         tracer = get_tracer()
