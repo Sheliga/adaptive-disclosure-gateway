@@ -224,3 +224,91 @@ def test_employees_team_positive_control_still_marks_department_relevant():
     task = "Provide a one-sentence description of this employee's team for an internal directory entry."
     relevance = _relevance(task)
     assert relevance["department"] is not TaskRelevance.NOT_RELEVANT
+
+
+# --- Negative control: an exactness cue belonging to one category must not
+# escalate a *different* category's relevance (PR #33 second review round).
+#
+# The historical defect: ``found_exact`` searched EXACT_VALUE_INDICATORS
+# terms across the *entire* positive text, so a cue that plainly modifies
+# one category's mention (e.g. "the exact CPF") also escalated any other,
+# unrelated category mentioned anywhere else in the task (e.g. "salary" in
+# the next sentence) to RELEVANT_WITH_EXACT_VALUE -- silently increasing
+# disclosure for a category the task never asked to have exactly. Evidence
+# that increases disclosure must be bound to the category it actually
+# modifies (CLAUDE.md's no-leak invariant read together with this
+# analyzer's own default-to-least-revealing rule).
+
+
+def test_exact_cue_for_employee_name_does_not_escalate_salary_in_a_later_sentence():
+    task = "Use the exact employee name in the greeting. Summarize the salary band."
+    relevance = _relevance(task)
+
+    assert relevance["employee_name"] is TaskRelevance.RELEVANT_WITH_EXACT_VALUE
+    assert relevance["salary"] is TaskRelevance.RELEVANT_WITHOUT_EXACT_VALUE
+
+
+def test_exactly_cue_for_department_does_not_escalate_salary_in_a_later_sentence():
+    task = "Return the department exactly. Provide the salary range."
+    relevance = _relevance(task)
+
+    assert relevance["salary"] is TaskRelevance.RELEVANT_WITHOUT_EXACT_VALUE
+
+
+def test_exact_cue_for_cpf_does_not_escalate_salary_in_a_later_sentence():
+    task = "Report the exact CPF. Summarize the salary."
+    relevance = _relevance(task)
+
+    assert relevance["cpf"] is TaskRelevance.RELEVANT_WITH_EXACT_VALUE
+    assert relevance["salary"] is TaskRelevance.RELEVANT_WITHOUT_EXACT_VALUE
+
+
+# --- Positive control: the binding fix above must not blind the analyzer to
+# genuine same-clause exactness evidence for salary, including forms where
+# the cue and the category term are not perfectly adjacent. -----------------
+
+
+def test_exact_salary_binds_within_the_same_clause():
+    relevance = _relevance("Return the exact salary.")
+    assert relevance["salary"] is TaskRelevance.RELEVANT_WITH_EXACT_VALUE
+
+
+def test_salary_exactly_binds_within_the_same_clause():
+    relevance = _relevance("Report the salary exactly.")
+    assert relevance["salary"] is TaskRelevance.RELEVANT_WITH_EXACT_VALUE
+
+
+def test_precise_salary_binds_within_the_same_clause():
+    relevance = _relevance("Provide the precise salary for this record.")
+    assert relevance["salary"] is TaskRelevance.RELEVANT_WITH_EXACT_VALUE
+
+
+def test_salary_value_precisely_binds_with_one_word_between_cue_and_category():
+    relevance = _relevance("State the salary value precisely.")
+    assert relevance["salary"] is TaskRelevance.RELEVANT_WITH_EXACT_VALUE
+
+
+def test_specific_salary_figure_binds_when_the_category_term_sits_inside_the_wrapper():
+    # "specific" ... "figure" wraps around "salary" itself -- the indicator
+    # term sits *inside* the exactness expression rather than next to a
+    # single contiguous cue phrase. See deterministic.py's
+    # ``_wrapper_bound_categories``.
+    relevance = _relevance("Report the specific salary figure for this employee.")
+    assert relevance["salary"] is TaskRelevance.RELEVANT_WITH_EXACT_VALUE
+
+
+# --- Ambiguity: a wrapper cue enclosing more than one category's mention in
+# the same clause must not escalate either of them (mandatory per the
+# review round: prefer least disclosure whenever binding is unsafe). -------
+
+
+def test_wrapper_cue_enclosing_two_categories_escalates_neither():
+    # "specific ... figure" wraps *both* "salary" and "CPF" here -- there is
+    # only one "figure" being asked for, and no deterministic way to tell
+    # which of the two co-mentioned categories it refers to. The safe
+    # reading is RELEVANT_WITHOUT_EXACT_VALUE for both, never a guess.
+    task = "Report the specific salary and CPF figure for this employee."
+    relevance = _relevance(task)
+
+    assert relevance["salary"] is TaskRelevance.RELEVANT_WITHOUT_EXACT_VALUE
+    assert relevance["cpf"] is TaskRelevance.RELEVANT_WITHOUT_EXACT_VALUE

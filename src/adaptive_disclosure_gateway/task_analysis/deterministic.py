@@ -50,6 +50,20 @@ against the corpus's expected actions to make a specific case converge
 (CLAUDE.md's corpus-freeze rule) -- see ``scripts/report_b3_corpus_divergence.py``
 for the current, expected divergence this produces against
 ``corpus/hr/v1``.
+
+Exact-value evidence must also be bound to the category it actually
+modifies (PR #33 second review round): an earlier version of this module
+searched ``EXACT_VALUE_INDICATORS`` across the task's *entire* positive
+text, so an exactness cue that plainly belonged to one category's mention
+(e.g. "the exact CPF") also escalated any other, unrelated category
+mentioned anywhere else in the task (e.g. "salary" in a later sentence) to
+``RELEVANT_WITH_EXACT_VALUE`` -- a false positive strictly worse than the
+false negatives this docstring already discusses, because it silently
+increases disclosure for a category the task never asked to have exactly.
+``_exact_value_bound_categories`` below closes this by scoping both of its
+binding mechanisms (a simple cue and a two-sided "wrapper" cue) to a single
+clause (``_split_into_clauses``) rather than the whole task -- see that
+function's docstring for the exact rule and its documented limitations.
 """
 
 from __future__ import annotations
@@ -144,6 +158,20 @@ EXACT_VALUE_INDICATORS: tuple[str, ...] = (
     "individual value",
 )
 
+# Two-sided "wrapper" cues: a prefix word and a suffix word that, together,
+# express exactness by SURROUNDING a category's own indicator mention --
+# needed for phrasings like "specific salary figure", where the category
+# term sits grammatically *inside* the exactness expression ("specific ...
+# figure") rather than next to a single contiguous cue phrase from
+# EXACT_VALUE_INDICATORS above. Recognized only within one clause (see
+# _split_into_clauses below), with the prefix strictly before the suffix
+# and no more than _WRAPPER_MAX_SPAN tokens between them -- kept small and
+# fixed so this stays a narrow, local pattern, not a search over the whole
+# task text. See _wrapper_bound_categories's docstring for what happens
+# when a wrapper occurrence encloses more than one category's mention.
+_EXACT_VALUE_WRAPPERS: tuple[tuple[str, str], ...] = (("specific", "figure"),)
+_WRAPPER_MAX_SPAN = 4
+
 # --- Negation ----------------------------------------------------------
 #
 # Two recognized negation shapes, because the same cue word can put the
@@ -192,30 +220,156 @@ _PREFIX_PATTERN = re.compile(
 )
 
 
-def _split_positive_and_negated(task: str) -> tuple[str, str]:
-    """Split ``task`` into its non-negated and negated text, sentence by
+def _split_into_clauses(task: str) -> list[tuple[str, bool]]:
+    """Split ``task`` into ``(fragment, is_positive)`` clauses, sentence by
     sentence. See the module-level comment above for the two negation
     shapes this distinguishes.
+
+    This is also the binding unit ``_exact_value_bound_categories`` below
+    uses: an exactness cue and a category mention only bind each other when
+    they fall in the same element of this list -- however close together
+    they may be on the page, two different elements (e.g. two different
+    sentences) never bind.
     """
-    positive_parts: list[str] = []
-    negated_parts: list[str] = []
+    clauses: list[tuple[str, bool]] = []
     for sentence in _SENTENCE_SPLIT_PATTERN.split(task.strip()):
         if not sentence:
             continue
         if _WHOLE_SENTENCE_PATTERN.search(sentence):
-            negated_parts.append(sentence)
+            clauses.append((sentence, False))
             continue
         prefix_match = _PREFIX_PATTERN.search(sentence)
         if prefix_match:
-            positive_parts.append(sentence[: prefix_match.start()])
-            negated_parts.append(sentence[prefix_match.start() :])
+            clauses.append((sentence[: prefix_match.start()], True))
+            clauses.append((sentence[prefix_match.start() :], False))
             continue
-        positive_parts.append(sentence)
+        clauses.append((sentence, True))
+    return clauses
+
+
+def _split_positive_and_negated(task: str) -> tuple[str, str]:
+    """Split ``task`` into its non-negated and negated text. See
+    ``_split_into_clauses`` for the underlying per-clause split this
+    concatenates.
+    """
+    clauses = _split_into_clauses(task)
+    positive_parts = [text for text, is_positive in clauses if is_positive]
+    negated_parts = [text for text, is_positive in clauses if not is_positive]
     return " ".join(positive_parts), " ".join(negated_parts)
 
 
 def _contains(term: str, text: str) -> bool:
     return re.search(rf"\b{re.escape(term)}\b", text, re.IGNORECASE) is not None
+
+
+_WORD_PATTERN = re.compile(r"[a-z']+")
+
+
+def _tokenize(text: str) -> list[str]:
+    return _WORD_PATTERN.findall(text.lower())
+
+
+def _phrase_positions(tokens: list[str], phrase: str) -> list[tuple[int, int]]:
+    """Every inclusive ``(start, end)`` token-index span where ``phrase``'s
+    own words appear contiguously in ``tokens``.
+    """
+    words = phrase.split()
+    span = len(words)
+    return [
+        (i, i + span - 1) for i in range(len(tokens) - span + 1) if tokens[i : i + span] == words
+    ]
+
+
+def _wrapper_bound_categories(clause: str, categories: Collection[str]) -> set[str]:
+    """Categories whose own indicator mention in ``clause`` is enclosed by
+    one of ``_EXACT_VALUE_WRAPPERS`` (e.g. "specific salary figure" encloses
+    "salary" between "specific" and "figure").
+
+    If a single wrapper occurrence encloses more than one category's
+    mention (e.g. "specific salary and CPF figure" encloses both "salary"
+    and "cpf"), it is genuinely ambiguous which one the wrapper's exactness
+    applies to -- there is only one "figure" being asked for and no
+    deterministic way to tell which co-mentioned category it refers to.
+    Per this module's default-to-least-revealing rule, that occurrence
+    binds neither category, rather than guessing or binding both.
+    """
+    tokens = _tokenize(clause)
+    bound: set[str] = set()
+    for prefix, suffix in _EXACT_VALUE_WRAPPERS:
+        prefix_positions = [i for i, token in enumerate(tokens) if token == prefix]
+        suffix_positions = [i for i, token in enumerate(tokens) if token == suffix]
+        for p in prefix_positions:
+            candidate_suffixes = [s for s in suffix_positions if p < s <= p + _WRAPPER_MAX_SPAN]
+            if not candidate_suffixes:
+                continue
+            s = min(candidate_suffixes)
+            enclosed = {
+                category
+                for category, indicators in CATEGORY_INDICATORS.items()
+                if category in categories
+                for term in indicators
+                for start, end in _phrase_positions(tokens, term)
+                if p < start and end < s
+            }
+            if len(enclosed) == 1:
+                bound |= enclosed
+            # len(enclosed) > 1: ambiguous via this wrapper occurrence --
+            # deliberately bound to neither category, not a guess.
+    return bound
+
+
+def _exact_value_bound_categories(task: str, categories: Collection[str]) -> set[str]:
+    """Categories for which ``task``'s positive text carries narrow,
+    explicit evidence, deterministically scoped to a single clause (see
+    ``_split_into_clauses``), that the exact original value is needed.
+
+    Two clause-local binding mechanisms:
+
+    - simple cue: an ``EXACT_VALUE_INDICATORS`` term anywhere in a clause
+      binds every category that same clause also positively mentions. This
+      replaces the defect this function was introduced to close (T07/#6,
+      PR #33 second review round): the previous implementation searched
+      the cue across the task's *entire* positive text, so a cue that
+      plainly modified one category's mention (e.g. "the exact CPF") also
+      escalated an unrelated category mentioned in a different sentence
+      (e.g. "salary"). Scoping the search to one clause is enough to close
+      that gap: every mandatory negative-control case in the review round
+      is a cue and the unrelated category in two different sentences.
+
+      Known, accepted limitation: within a single clause, this mechanism
+      does not further attribute a trailing cue to the specific category it
+      grammatically modifies when the clause positively mentions more than
+      one category (e.g. "salary matches ... policy exactly" also
+      incidentally "binds" the co-mentioned "department"). This residual
+      imprecision is accepted rather than chased with clause-internal
+      heuristics because it is inert in the pilot's current action spaces:
+      see ``transformations/task_aware.py``'s ``TASK_AWARE_ACTION_SPACES``
+      docstring -- only ``salary`` has a third action tier where
+      RELEVANT_WITH_EXACT_VALUE and RELEVANT_WITHOUT_EXACT_VALUE resolve to
+      a *different* action, so this collateral binding can only ever change
+      a resolved action when ``salary`` itself is the category being
+      (correctly) bound in that same clause;
+    - wrapper cue: see ``_wrapper_bound_categories`` above, for phrasings
+      where the category term sits grammatically inside the exactness
+      expression itself (e.g. "specific salary figure").
+
+    Operates on positive clauses only -- the existing negated/positive
+    split (``_split_into_clauses``) runs first and is unchanged; a clause
+    this function never sees never contributes exact-value evidence,
+    exactly as before.
+    """
+    bound: set[str] = set()
+    for clause, is_positive in _split_into_clauses(task):
+        if not is_positive:
+            continue
+        has_simple_cue = any(_contains(term, clause) for term in EXACT_VALUE_INDICATORS)
+        if has_simple_cue:
+            for category in categories:
+                indicators = CATEGORY_INDICATORS.get(category)
+                if indicators and any(_contains(term, clause) for term in indicators):
+                    bound.add(category)
+        bound |= _wrapper_bound_categories(clause, categories)
+    return bound
 
 
 class DeterministicTaskAnalyzer:
@@ -236,12 +390,16 @@ class DeterministicTaskAnalyzer:
     3. If an indicator term appears only in the negated text ->
        ``NOT_RELEVANT`` (explicit negation).
     4. If an indicator term appears only in the non-negated text -> relevant;
-       ``RELEVANT_WITH_EXACT_VALUE`` only if an ``EXACT_VALUE_INDICATORS``
-       term *also* appears in the non-negated text (narrow, explicit
-       evidence that the exact value -- not a reduced representation -- is
-       needed); otherwise ``RELEVANT_WITHOUT_EXACT_VALUE``. This is a
+       ``RELEVANT_WITH_EXACT_VALUE`` only if that category is one of
+       ``_exact_value_bound_categories(task, categories)`` -- narrow,
+       explicit evidence, bound to *this* category specifically within a
+       single clause, that the exact value (not a reduced representation)
+       is needed; otherwise ``RELEVANT_WITHOUT_EXACT_VALUE``. This is a
        default-to-least-revealing rule (PR #33 review round): absence of
-       evidence for the exact value never escalates to it.
+       evidence for the exact value never escalates to it, and evidence
+       bound to a *different* category never escalates this one either
+       (PR #33 second review round -- see ``_exact_value_bound_categories``'s
+       docstring for the binding rule and its documented limitations).
     5. If an indicator term appears in *both* -> the signal is genuinely
        conflicting (e.g. the task both names and disclaims the same
        category in different sentences) -> ``AMBIGUOUS`` rather than
@@ -274,6 +432,7 @@ class DeterministicTaskAnalyzer:
 
     def analyze(self, task: str, categories: Collection[str]) -> TaskAnalysis:
         positive_text, negated_text = _split_positive_and_negated(task)
+        exact_bound_categories = _exact_value_bound_categories(task, categories)
         relevance: dict[str, TaskRelevance] = {}
 
         for category in categories:
@@ -288,11 +447,13 @@ class DeterministicTaskAnalyzer:
             if found_positive and found_negated:
                 relevance[category] = TaskRelevance.AMBIGUOUS
             elif found_positive:
-                # Default to the least-revealing relevant level: only narrow,
-                # explicit evidence (EXACT_VALUE_INDICATORS) upgrades this to
-                # RELEVANT_WITH_EXACT_VALUE. Absence of that evidence never
+                # Default to the least-revealing relevant level: only
+                # narrow, explicit evidence *bound to this category*
+                # (_exact_value_bound_categories) upgrades this to
+                # RELEVANT_WITH_EXACT_VALUE. Absence of that evidence -- or
+                # evidence bound to a different category instead -- never
                 # escalates to the more revealing representation.
-                found_exact = any(_contains(term, positive_text) for term in EXACT_VALUE_INDICATORS)
+                found_exact = category in exact_bound_categories
                 relevance[category] = (
                     TaskRelevance.RELEVANT_WITH_EXACT_VALUE
                     if found_exact

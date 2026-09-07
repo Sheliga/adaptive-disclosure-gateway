@@ -486,6 +486,74 @@ def test_employees_team_positive_control_still_selects_preserve_for_department()
     assert _actions_by_category(result)["department"] is DisclosureAction.PRESERVE
 
 
+# --- Negative control: an exactness cue bound to one category must not
+# escalate a *different* category's resolved action (PR #33 second review
+# round). Asserted here at the action level -- not just the analyzer's
+# relevance label -- because the action is what determines real exposure in
+# the external payload: the historical defect drove salary all the way to
+# PRESERVE for tasks that never asked for salary's exact value at all.
+
+
+def test_exact_employee_name_cue_never_escalates_salary_to_preserve():
+    task = "Use the exact employee name in the greeting. Summarize the salary band."
+    result = _discloser().sanitize(_request(TEXT, task), Detector().detect(TEXT))
+
+    assert _actions_by_category(result)["salary"] is DisclosureAction.GENERALIZE
+    assert "8500" not in result.external_payload
+
+
+def test_department_exactly_cue_never_escalates_salary_to_preserve():
+    task = "Return the department exactly. Provide the salary range."
+    result = _discloser().sanitize(_request(TEXT, task), Detector().detect(TEXT))
+
+    assert _actions_by_category(result)["salary"] is DisclosureAction.GENERALIZE
+    assert "8500" not in result.external_payload
+
+
+def test_exact_cpf_cue_never_escalates_salary_to_preserve():
+    task = "Report the exact CPF. Summarize the salary."
+    result = _discloser().sanitize(_request(TEXT, task), Detector().detect(TEXT))
+
+    assert _actions_by_category(result)["salary"] is DisclosureAction.GENERALIZE
+    assert "8500" not in result.external_payload
+
+
+# --- Positive controls: the binding fix must still recognize genuine
+# same-clause exactness evidence for salary, including non-adjacent and
+# wrapper forms. --------------------------------------------------------
+
+
+def test_salary_value_precisely_still_selects_preserve_for_salary():
+    task = "State the salary value precisely."
+    result = _discloser().sanitize(_request(TEXT, task), Detector().detect(TEXT))
+
+    assert _actions_by_category(result)["salary"] is DisclosureAction.PRESERVE
+    assert "8500" in result.external_payload
+
+
+def test_specific_salary_figure_still_selects_preserve_for_salary():
+    task = "Report the specific salary figure for this employee."
+    result = _discloser().sanitize(_request(TEXT, task), Detector().detect(TEXT))
+
+    assert _actions_by_category(result)["salary"] is DisclosureAction.PRESERVE
+    assert "8500" in result.external_payload
+
+
+# --- Ambiguity: a wrapper cue enclosing two categories in the same clause
+# must escalate neither to preserve. -------------------------------------
+
+
+def test_wrapper_cue_enclosing_salary_and_cpf_never_escalates_either_to_preserve():
+    task = "Report the specific salary and CPF figure for this employee."
+    result = _discloser().sanitize(_request(TEXT, task), Detector().detect(TEXT))
+    actions = _actions_by_category(result)
+
+    assert actions["salary"] is DisclosureAction.GENERALIZE
+    assert actions["cpf"] is DisclosureAction.PSEUDONYMIZE
+    assert "8500" not in result.external_payload
+    assert "123.456.789-09" not in result.external_payload
+
+
 def test_medical_data_still_blocks_unconditionally_regardless_of_relevance():
     for relevance in TaskRelevance:
         text = TEXT + "Medical notes: Reports chronic migraine and requested leave.\n"
