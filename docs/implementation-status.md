@@ -52,28 +52,51 @@ The research-decision review fixed the immediate experimental direction:
 
 ### T09 / Issue #4 — controlled HR minicorpus and ground truth
 
-**Immediate next research task.**
+**Phase A is implemented and in an open PR; the gate is not yet released.**
 
-Before T07/B3 starts, version and freeze:
+`corpus/hr/v1/` (schema `SCHEMA.md`, freeze/versioning rule `README.md`, 12
+case files under `cases/`) and `src/adaptive_disclosure_gateway/corpus/`
+(`CorpusCaseInput`, `CaseOracle`, `ExpectedSpan`, `ReconstructionExpectation`,
+`TaskNecessity`, `TaskFamily`, the fail-closed YAML loader) are on branch
+`feat/t09-hr-corpus-ground-truth`, covering:
 
-- the case schema;
-- approximately 12–20 HR pilot cases;
-- expected sensitive spans/categories;
-- governance context + policy version;
-- acceptable action(s) per information unit;
-- `REQUIRED` / `NOT_REQUIRED` task-necessity labels;
-- expected answer or objectively verifiable property;
-- expected `BLOCK_REQUEST` behavior;
-- pseudonym/reconstruction expectations when applicable.
+- the case schema, structurally separating `input` (what a treatment may
+  see) from `oracle` (scoring only — `CorpusCaseInput` is the only type
+  with a method that builds a `DisclosureRequest`; `CaseOracle` has no path
+  into the pipeline, pinned by an AST-based isolation test alongside
+  `tests/test_treatment_isolation.py`'s treatment-isolation checks);
+- 12 HR pilot cases (3 per required task family — near the approved range's
+  lower bound);
+- expected sensitive spans/categories, each with offsets validated against
+  their own case's text by reusing `transformations/span_validation.py`;
+- governance context + `policy_version` (all cases use `hr-v1`);
+- acceptable action set per information unit (`expected_actions`);
+- `REQUIRED` / `NOT_REQUIRED` task-necessity labels as the sole primary
+  oracle, with `HELPFUL` representable only via a separate, auxiliary
+  `ExpectedSpan.helpful` flag never mixed into the primary label;
+- expected answer / objectively verifiable property, required exactly when
+  a case does not expect `BLOCK_REQUEST` and forbidden when it does;
+- expected `BLOCK_REQUEST` behavior, including a case whose only
+  task-required information unit is the one hr-v1 unconditionally forbids
+  (`hr_medical_block_002`) — a worked example of the "correctly blocked,
+  impossible under policy" outcome docs/experimental-design.md's metrics
+  distinguish from an ordinary utility failure;
+- pseudonym/reconstruction expectations where applicable.
 
-Minimum HR task families:
+Minimum HR task families, all present:
 
-1. authorized salary analysis;
-2. team summary/description without salary necessity;
-3. department aggregation without individual identity;
-4. medical/prohibited-data case that must block.
+1. authorized salary analysis (`authorized_salary_analysis`);
+2. team summary/description without salary necessity
+   (`team_summary_without_salary`);
+3. department aggregation without individual identity
+   (`department_aggregation_without_identity`);
+4. medical/prohibited-data case that must block
+   (`medical_or_prohibited_block`).
 
-**Exit gate:** schema + cases + annotations are versioned/frozen. Only then is T07/B3 released for implementation.
+**Exit gate:** schema + cases + annotations are versioned/frozen *on
+`master`*. Implementing this in an open PR is necessary but not sufficient
+— T07/B3 is released for implementation only once this PR merges, not
+before.
 
 ## Next research implementation
 
