@@ -91,3 +91,27 @@ def test_unknown_role_does_not_gain_scope():
     )
 
     assert resolved is PseudonymScope.SESSION
+
+
+def test_reconstruction_is_authorized_for_a_valid_matching_policy():
+    repository = PolicyRepository.from_directory(POLICY_DIR)
+
+    assert repository.is_reconstruction_authorized(_context()) is True
+
+
+def test_reconstruction_is_blocked_when_policy_version_is_missing():
+    repository = PolicyRepository.from_directory(POLICY_DIR)
+
+    assert (
+        repository.is_reconstruction_authorized(_context(policy_version="does-not-exist")) is False
+    )
+
+
+def test_reconstruction_is_blocked_on_domain_mismatch():
+    repository = PolicyRepository.from_directory(POLICY_DIR)
+
+    resolved = repository.is_reconstruction_authorized(
+        _context(domain="contracts", policy_version="hr-v1")
+    )
+
+    assert resolved is False

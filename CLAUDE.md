@@ -26,8 +26,31 @@ Concretely:
 - Module and class names for each treatment are semantic, not coded: `transformations/static_sanitization.py` / `StaticSanitizer` is the pattern to follow for B2–B4 (for example `reversible_pseudonymization.py` / `ReversiblePseudonymizer`).
 - A treatment class exposes which treatment it implements through a `treatment` class attribute (for example `treatment = Treatment.STATIC_SANITIZATION`).
 - OpenTelemetry spans/attributes are namespaced by the semantic name (for example `static_sanitization.sanitize`, `static_sanitization.span_count`) plus a `treatment` attribute carrying the frozen code as data (for example `"b1"`).
-- In prose, never use a bare `B0`–`B4` where the semantic name fits. First occurrence in a document: `B2 — Reversible Pseudonymization`. Later occurrences in the same document may use the short code.
-- Do not rewrite titles/descriptions of already-closed GitHub Issues or PRs just to modernize naming; preserve historical traceability.
+- In prose, never use a bare `B0`–`B4` where the semantic name fits. First occurrence in a document or active work item: `B2 — Reversible Pseudonymization`. Later occurrences may use the short code.
+- **Active Trello cards and open GitHub Issues are living planning artifacts. Keep their treatment names, file paths and acceptance criteria synchronized with the current repository before implementation starts.** If an open Issue still says `b1.py` after the code moved to `static_sanitization.py`, or says only `B3` where the canonical name is available, update the active Issue/card first.
+- **Closed GitHub Issues and merged PRs are historical artifacts. Do not rewrite their titles/descriptions merely to modernize naming.** Refer to them from current docs/cards using the current semantic name and note that the linked historical title may use the older wording.
+
+## No-leak invariant
+
+A sensitive value (an original, a pseudonym, a payload, detected/request text, secret/key
+material) must never escape through a side channel -- not just be absent from the external
+payload. This includes exception messages (and anything chained onto them via `__cause__`/
+`__context__`), OTel span attributes, and log lines. Concretely:
+
+- when raising, name the category, count, offset or type involved -- never interpolate the
+  value itself into the message;
+- when an underlying exception's own message might carry the value (e.g. a stdlib parser
+  echoing its input), break the chain at the raise site (`raise ... from None`) rather than
+  relying on the wrapping message being clean;
+- when setting a span attribute, use metadata only (categories, counts, flags, timing), never
+  the value, the payload or a pseudonym/original mapping.
+
+This is enforced across `src/` by an AST-based test
+(`tests/test_no_sensitive_value_in_raises.py`) that fails a build if a `raise` interpolates an
+identifier that plausibly holds sensitive data (`value`, `text`, `payload`, `original`,
+`pseudonym`, `secret`, `mapping`, including attribute accesses like `span.value`). If a
+legitimate `raise` trips it, reword the message -- do not weaken the test. Telemetry itself is
+separately pinned per-treatment in `tests/test_telemetry_privacy.py`.
 
 ## TDD
 
@@ -64,7 +87,8 @@ Expected flow:
 - move it to `Validação` when the implementation is in an open PR ready for review;
 - move it to `Concluído` only after the PR is merged and the Issue acceptance criteria are satisfied/closed;
 - do not merge a PR or mark a Trello card complete without explicit user authorization;
-- before starting a new ticket, read the current Trello card, linked GitHub Issue and relevant authoritative docs instead of relying on stale session context.
+- before starting a new ticket, read the current Trello card, linked GitHub Issue and relevant authoritative docs instead of relying on stale session context;
+- when a review discovers a missing security/methodological invariant, update the active Issue/card acceptance criteria before calling the work complete.
 
 ## Authoritative documents
 

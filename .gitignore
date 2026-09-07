@@ -33,6 +33,9 @@ venv/
 
 # Research safety: never commit original confidential data,
 # pseudonym mappings, local vaults or private experiment artifacts.
+# Anchored to the repo root (leading slash) so this does not also match
+# src/adaptive_disclosure_gateway/vault/, which is source code (the Vault
+# abstraction/InMemoryVault implementation), not runtime vault data.
 local-data/
-vault/
+/vault/
 artifacts/private/
