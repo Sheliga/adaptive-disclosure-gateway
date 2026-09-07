@@ -10,7 +10,7 @@ This repository supports a **candidate master's research proposal** for UTFPR PP
 
 ## Current implementation status
 
-The architecture foundation, deterministic detector and the B1 — Static Sanitization sanitizer (`StaticSanitizer`) are implemented and merged. Fail-closed hardening for malformed `SensitiveSpan` offsets is implemented in PR #19 and is currently under validation; B2 — Reversible Pseudonymization, the vault, reconstruction and `FakeProvider` remain pending. B2 must not start until PR #19 is merged and Issue #17 is closed.
+The architecture foundation, deterministic detector, B1 — Static Sanitization (`StaticSanitizer`) and the fail-closed `SensitiveSpan` hardening from PR #19 are implemented and merged. B2 — Reversible Pseudonymization, the local vault, authorized reconstruction and `FakeProvider` remain pending. The security blocker from Issue #17 is closed, so B2 is technically unblocked; the current T15 naming refactor should merge first so B2 starts on the semantic module/class conventions established here.
 
 See [`docs/implementation-status.md`](docs/implementation-status.md) for the live engineering status, current blockers and recommended execution order. Architectural decisions are recorded separately in [`docs/adr/0001-milestone-1-architecture.md`](docs/adr/0001-milestone-1-architecture.md).
 
@@ -83,7 +83,7 @@ The first implementation milestone uses a simplified HR slice. Contracts follow 
 
 ## Milestone 1
 
-The first functional milestone is **B0 — Direct + B1 + B2 end-to-end over direct HR text using a deterministic FakeProvider**.
+The first functional milestone is **B0 — Direct + B1 — Static Sanitization + B2 — Reversible Pseudonymization end-to-end over direct HR text using a deterministic FakeProvider**.
 
 Frozen RH categories:
 
