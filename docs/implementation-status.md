@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-09-07 (T16 / Issue #23 implemented on branch `feat/t16-pseudonym-scope-lifecycles`, in validation; with it, T06 / Issue #3 is complete apart from anything else still listed below as not started)
+Last updated: 2026-09-07 (T11 / Issue #12 implemented on branch `feat/t16-pseudonym-scope-lifecycles`, in validation, alongside T16 / Issue #23; with T16, T06 / Issue #3 is complete apart from anything else still listed below as not started)
 
 This file tracks **what is implemented now**. Architectural decisions belong in ADRs; research-proposal versions remain separate documents.
 
@@ -55,6 +55,19 @@ Independent review found two missing parts of the B2 boundary, both now resolved
 
 With T16 implemented, **T06 / Issue #3 is complete apart from anything else still listed in this file as not started** (see "Not started / incomplete in Milestone 1" below) — it remains open only pending T16's own review/merge.
 
+### T11 / Issue #12 — external provider adapter interface (implemented on `feat/t16-pseudonym-scope-lifecycles`, pending review/merge)
+
+A new `src/adaptive_disclosure_gateway/providers/` package implements the single adapter boundary shared by every treatment:
+
+- `Provider` (`providers/base.py`): a `Protocol` with one method, `generate(request: ProviderRequest) -> ProviderResponse`, plus a `provider_class` class attribute (mirroring the `treatment` class-attribute convention). `ProviderRequest` carries exactly two fields — `payload` (the text a treatment already decided to disclose, e.g. `DisclosureResult.external_payload`) and `task` (the non-sensitive prompt/task instruction). No `GovernanceContext`, raw document, detected span or policy/vault object is reachable from a provider; `tests/test_provider_isolation.py` pins both the exact `ProviderRequest` field set and, at the AST level, that `providers/` imports none of policy, vault or detection.
+- `invoke_provider` (`providers/base.py`): the single entrypoint every treatment must call a provider through. It checks `provider.provider_class` against a caller-supplied `expected_provider_class` (normally `GovernanceContext.provider_class`, already consulted by `PolicyRule`/`PolicyOverride`) and raises `ProviderClassMismatchError` *before* invoking the provider on a mismatch — the mismatched provider is never called. It enforces a hard wall-clock `timeout` itself (via a one-shot `ThreadPoolExecutor`, not merely trusting the provider), makes exactly one call with no retry, and turns any provider exception — including a timeout — into `ProviderError`/`ProviderTimeoutError` without chaining the original exception's message (`from None`), so a third-party provider client's own error text cannot leak request content through the exception chain. A caller must treat any `ProviderError` as the whole request blocked; nothing in this module ever falls back to B0 — Direct.
+- `count_transmitted_bytes` (`providers/base.py`): the documented transmitted-volume counting rule for issue #8's metric — UTF-8 encoded byte length of `payload` only, deliberately excluding `task` (held constant across treatments per docs/experimental-design.md, so it must not move a metric meant to isolate what differs between treatments).
+- `FakeProvider` (`providers/fake.py`): deterministic and offline — `generate` is a pure function of `(task, payload)` (SHA-256 digest, no randomness/clock/state), used as the default provider across B0–B2 so comparisons are never confounded by model variance. Fixed class-attribute reproducibility metadata (`model_id`, `model_snapshot`, `decoding_config`) is identical across independently constructed instances.
+
+Covered in `tests/test_providers.py` and `tests/test_provider_isolation.py`: FakeProvider determinism and non-constant output, reproducibility metadata stability, the transmitted-bytes counting rule (multi-byte UTF-8, task-length independence), `provider_class` mismatch detection (provider never invoked on mismatch) and the matching success path, fail-closed behavior on both a raising stub and a timing-out stub (single attempt, no retry, bounded wall-clock latency on timeout), and a runtime isolation check that runs the HR fixture through `StaticSanitizer` and asserts a recording stub provider never receives the sensitive originals in any field of what it was given.
+
+Not yet built (explicitly out of scope for this issue, tracked for later work): a real external/Ollama provider adapter (Post-Milestone 1 per this file), and the end-to-end runner wiring that would call `invoke_provider` from within B0–B4 themselves (Issue #26).
+
 ### T13 / Issue #16 — semantic GENERALIZE
 
 PR #22 replaces the previous redaction-equivalent placeholder with a central category strategy registry:
@@ -84,8 +97,8 @@ Recommended execution order:
 3. ~~Merge PR #22 now that both review blockers are resolved. It closes Issue #16 / T13 and Issue #24 / T17, but must not close Issue #3 / T06.~~ Done.
 4. ~~T16 / Issue #23 — add real REQUEST / DOCUMENT / SESSION lifecycle identifiers and fail closed when the resolved scope lacks its required identifier.~~ Implemented on `feat/t16-pseudonym-scope-lifecycles`, pending review/merge.
 5. Complete T06 / Issue #3 after T16 is merged.
-6. T11 / Issue #12 — common provider boundary + deterministic `FakeProvider`.
-7. Complete the shared B0 — Direct / B1 — Static Sanitization / B2 — Reversible Pseudonymization HR end-to-end flow and structural audit trail.
+6. ~~T11 / Issue #12 — common provider boundary + deterministic `FakeProvider`.~~ Implemented on `feat/t16-pseudonym-scope-lifecycles`, pending review/merge.
+7. Complete the shared B0 — Direct / B1 — Static Sanitization / B2 — Reversible Pseudonymization HR end-to-end flow and structural audit trail, wiring `invoke_provider` into that flow (not yet done: `providers/` exists as a standalone adapter boundary, but no treatment or runner calls it yet).
 8. Only then move to B3 — Task-aware and B4 — Policy-governed on top of the corrected B2 vault boundary.
 9. Experiment runner / Issue #8 produces authoritative utility/exposure numbers only after the above prerequisites are frozen.
 
@@ -94,9 +107,8 @@ Recommended execution order:
 - `SQLiteVault` or another persistent/shared vault backend;
 - a detection rule emitting `birth_date` (its `GENERALIZATION_STRATEGIES` entry exists but is currently unreachable);
 - pseudonym property tests with Hypothesis;
-- deterministic `FakeProvider` implementation;
 - complete structural audit trail;
-- end-to-end B0/B1/B2 runner over the same HR cases.
+- end-to-end B0/B1/B2 runner over the same HR cases, calling `providers.invoke_provider` (the provider adapter itself is implemented — see T11 / Issue #12 above — but nothing yet drives it from a treatment or runner).
 
 `SQLiteVault` is not required for the current in-process experiment slice unless a later execution design requires persistence across processes.
 
@@ -119,13 +131,13 @@ Milestone 1 is complete when the same controlled HR case can run through B0 — 
 - `BLOCK_REQUEST` stops the entire external request;
 - pseudonyms are stable for the **real authorized lifecycle** of the resolved scope (resolved: T16 / Issue #23, real `request_id`/`document_id`/`session_id` identifiers with fail-closed enforcement when the resolved scope's identifier is missing);
 - external pseudonyms are not guessable from a public unkeyed digest construction (resolved: opaque random tokens, Issue #24 / T17);
-- vault originals and secrets never reach the provider or telemetry;
+- vault originals and secrets never reach the provider or telemetry (partially resolved: `providers/` itself enforces this at the adapter boundary and is covered by a runtime isolation test — T11 / Issue #12 — but no treatment or runner calls it yet, so this is not yet demonstrated end-to-end);
 - the response round-trip reconstructs authorized pseudonyms correctly;
 - audit data captures the relevant stages without logging sensitive text by default;
-- the common deterministic `FakeProvider` path works for B0/B1/B2;
+- the common deterministic `FakeProvider` path works for B0/B1/B2 (resolved as a standalone adapter: T11 / Issue #12 delivers `Provider`/`invoke_provider`/`FakeProvider`; still pending is B0/B1/B2 actually calling it, tracked under "Complete the shared ... end-to-end flow" above);
 - CI is green.
 
-PR #22 plus T16 (this branch) implement a substantial part of these criteria, but **Milestone 1 is not complete on the branch or on master** while `FakeProvider` and the end-to-end/audit path remain pending.
+PR #22 plus T16 and T11 (this branch) implement a substantial part of these criteria, but **Milestone 1 is not complete on the branch or on master** while the end-to-end/audit path wiring `providers.invoke_provider` into B0/B1/B2 remains pending.
 
 ## References
 
@@ -141,4 +153,4 @@ PR #22 plus T16 (this branch) implement a substantial part of these criteria, bu
 - Semantic GENERALIZE: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/16
 - Pseudonym lifecycle follow-up: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/23
 - Pseudonym guessing-resistance (resolved on PR #22): https://github.com/Sheliga/adaptive-disclosure-gateway/issues/24
-- Provider adapter/FakeProvider: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/12
+- Provider adapter/FakeProvider (implemented on `feat/t16-pseudonym-scope-lifecycles`, pending review/merge): https://github.com/Sheliga/adaptive-disclosure-gateway/issues/12
