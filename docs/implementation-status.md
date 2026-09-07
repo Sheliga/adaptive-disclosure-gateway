@@ -55,7 +55,7 @@ rule: any future change to the schema, an existing case's text/offsets/
 labels, or the set of cases creates `corpus/hr/v2/` rather than editing
 `v1` in place.**
 
-`corpus/hr/v1/` (schema `SCHEMA.md`, freeze/versioning rule `README.md`, 12
+`corpus/hr/v1/` (schema `SCHEMA.md`, freeze/versioning rule `README.md`, 13
 case files under `cases/`) and `src/adaptive_disclosure_gateway/corpus/`
 (`CorpusCaseInput`, `CaseOracle`, `ExpectedSpan`, `ReconstructionExpectation`,
 `TaskNecessity`, `TaskFamily`, the fail-closed YAML loader) cover:
@@ -65,8 +65,12 @@ case files under `cases/`) and `src/adaptive_disclosure_gateway/corpus/`
   with a method that builds a `DisclosureRequest`; `CaseOracle` has no path
   into the pipeline, pinned by an AST-based isolation test alongside
   `tests/test_treatment_isolation.py`'s treatment-isolation checks);
-- 12 HR pilot cases (3 per required task family — near the approved range's
-  lower bound);
+- 13 HR pilot cases (3 per required task family, plus a fourth
+  `team_summary_without_salary` case, `hr_team_summary_004`, where
+  `employee_name` is genuinely task-required rather than suppressed by
+  default -- pinned by `tests/test_corpus_necessity_discrimination.py` so
+  no non-exempt category is always `NOT_REQUIRED` across the corpus — near
+  the approved range's lower bound);
 - expected sensitive spans/categories, each with offsets validated against
   their own case's text by reusing `transformations/span_validation.py`;
 - governance context + `policy_version` (all cases use `hr-v1`);
