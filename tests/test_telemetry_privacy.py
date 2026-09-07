@@ -8,7 +8,11 @@ from pathlib import Path
 from adaptive_disclosure_gateway.detection import Detector
 from adaptive_disclosure_gateway.domain import DisclosureRequest, GovernanceContext
 from adaptive_disclosure_gateway.policies import PolicyRepository
-from adaptive_disclosure_gateway.transformations import ReversiblePseudonymizer, StaticSanitizer
+from adaptive_disclosure_gateway.transformations import (
+    ReversiblePseudonymizer,
+    StaticSanitizer,
+    TaskAwareDiscloser,
+)
 from adaptive_disclosure_gateway.transformations.direct_disclosure import DirectDiscloser
 from adaptive_disclosure_gateway.vault import InMemoryVault
 from tests import telemetry_assertions
@@ -155,6 +159,75 @@ def test_b2_configured_unparseable_generalize_span_attributes_do_not_leak_the_va
     assert result.status == "blocked"
     finished = recorded_spans.get_finished_spans()
     _assert_span_attributes_never_leak(finished, "to be negotiated later", UNPARSEABLE_SALARY_TEXT)
+
+
+def test_b3_span_attributes_never_contain_detected_values_payload_or_pseudonym_mapping(
+    recorded_spans,
+):
+    request = DisclosureRequest(
+        text=SECRET_TEXT,
+        task=(
+            "Determine whether this employee's salary falls within the standard "
+            "compensation band for their department. You do not need the employee's "
+            "name or CPF to answer."
+        ),
+        context=GovernanceContext(
+            domain="hr",
+            purpose="salary_analysis",
+            requester_id="u1",
+            policy_version="hr-v1",
+            session_id="s1",
+        ),
+    )
+    spans = Detector().detect(SECRET_TEXT)
+    recorded_spans.clear()  # isolate B3's own spans from the detector's
+
+    discloser = TaskAwareDiscloser(
+        vault=InMemoryVault(), policy_repository=PolicyRepository.from_directory(POLICY_DIR)
+    )
+    result = discloser.sanitize(request, spans)
+
+    pseudonym = next(t.transformed for t in result.transformations if t.category == "employee_name")
+    pseudonym_mapping = f"Ana Souza:{pseudonym}"
+
+    finished = recorded_spans.get_finished_spans()
+    _assert_span_attributes_never_leak(
+        finished,
+        "Ana Souza",
+        "123.456.789-09",
+        "8500",
+        SECRET_TEXT,
+        result.external_payload,
+        pseudonym_mapping,
+        request.task,
+    )
+
+
+def test_b3_reconstruct_span_attributes_never_contain_original_values(recorded_spans):
+    request = DisclosureRequest(
+        text="Employee: Ana Souza\n",
+        task="Draft the opening line of an internal announcement addressed by name to this employee.",
+        context=GovernanceContext(
+            domain="hr",
+            purpose="team_summary",
+            requester_id="u1",
+            policy_version="hr-v1",
+            session_id="s1",
+        ),
+    )
+    spans = Detector().detect(request.text)
+    discloser = TaskAwareDiscloser(
+        vault=InMemoryVault(), policy_repository=PolicyRepository.from_directory(POLICY_DIR)
+    )
+    result = discloser.sanitize(request, spans)
+    pseudonym = next(t.transformed for t in result.transformations if t.category == "employee_name")
+    recorded_spans.clear()  # isolate reconstruct()'s own span
+
+    response_text = f"Hello {pseudonym}, welcome to the team."
+    reconstructed = discloser.reconstruct(response_text, result, request.context)
+
+    finished = recorded_spans.get_finished_spans()
+    _assert_span_attributes_never_leak(finished, "Ana Souza", request.text, reconstructed)
 
 
 def test_b2_reconstruct_span_attributes_never_contain_original_values(recorded_spans):
