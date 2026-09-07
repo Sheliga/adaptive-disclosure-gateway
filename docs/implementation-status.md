@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-09-06
+Last updated: 2026-09-06 (issue #17 fail-closed span validation)
 
 This file tracks **what is implemented now**. Architectural decisions belong in ADRs; research-proposal versions remain separate documents.
 
@@ -56,15 +56,22 @@ Known limitations retained deliberately at this stage:
 - Labeled HR extraction is controlled-fixture parsing, not free-text NER.
 - Precision/recall measurement waits for the ground-truth corpus.
 
-## Immediate follow-ups from B1 review
+### Fail-closed span offset validation
 
-### Security blocker before B2
+GitHub Issue: #17 — `Fail closed on malformed or missing SensitiveSpan offsets`
 
-Issue #17 — `Fail closed on malformed or missing SensitiveSpan offsets`
+Review of the merged B1 implementation found that `SensitiveSpan.start` / `end` were optional in the domain model while the transformation boundary normalized missing offsets to zero (`span.start or 0`), which let a malformed span reach a nominal `REMOVE` decision while the original value stayed in the "allowed" external payload. The same `or 0` coercion in the overlap resolver could silently treat a malformed span as a harmless zero-length `(0, 0)` interval.
 
-Review of the merged B1 implementation found that `SensitiveSpan.start` / `end` are optional in the domain model while the transformation boundary currently normalizes missing offsets to zero. A malformed externally supplied span can therefore reach a nominal `REMOVE` decision while leaving the original value in an allowed payload.
+Fixed at two layers:
 
-Before extending the transformation boundary into B2/vault work, malformed spans must fail closed. Coverage must include missing, negative, inverted, out-of-range and value/offset-mismatch cases.
+- **Domain model** (`domain.py`): `SensitiveSpan.start` / `end` are now required `int` fields (no `None`), with a `model_validator` rejecting `start < 0` and `end <= start` (negative, inverted and zero-length offsets) at construction time. `confidence` stays optional.
+- **Transformation boundary** (`transformations/span_validation.py`): a new `spans_are_valid` / `span_matches_text` helper checks what the model cannot — `end <= len(text)` and `text[start:end] == span.value` — since a span does not carry its own source text. `B1StaticSanitizer.sanitize` calls this before any slicing and fails the whole request closed (`status="blocked"`, empty payload) on any violation, including a span built via `model_construct` to bypass model validation. The helper lives outside `b1.py` specifically so B2/B3/B4 inherit the same boundary check instead of reimplementing it.
+- The now-dead `or 0` coercions in `b1.py` and `detection/overlap.py` were removed; `resolve_overlaps` now surfaces a malformed span as an error rather than silently normalizing it to `(0, 0)`.
+- Tests cover missing, negative, inverted, zero-length, out-of-bounds and value/offset-mismatch offsets, at both the model and the boundary, plus a reproduction of the original leak and a check that overlap resolution no longer normalizes a malformed span away silently.
+
+PR #19 — `fix: fail closed on malformed or missing SensitiveSpan offsets` (open, pending review/merge).
+
+## Remaining follow-up from B1 review
 
 ### Experimental correctness follow-up
 
@@ -76,17 +83,15 @@ This does **not** invalidate the completed B1 engineering slice, but it must be 
 
 ## Recommended next execution order
 
-1. Issue #17 — harden `SensitiveSpan` validation / fail-closed transformation behavior.
-2. Issue #3 — B2 reversible pseudonym vault and authorized reconstruction.
-3. Issue #12 — deterministic `FakeProvider` through the common provider adapter boundary, as required to complete Milestone 1 end-to-end.
-4. Complete B0/B1/B2 shared HR execution path and structural audit trail.
-5. Issue #16 before utility/metric collection becomes authoritative.
+1. Issue #3 — B2 reversible pseudonym vault and authorized reconstruction (now on top of the fail-closed span validation landed for Issue #17).
+2. Issue #12 — deterministic `FakeProvider` through the common provider adapter boundary, as required to complete Milestone 1 end-to-end.
+3. Complete B0/B1/B2 shared HR execution path and structural audit trail.
+4. Issue #16 before utility/metric collection becomes authoritative.
 
 Issue #16 can be implemented before or alongside B2 if convenient, but it is a hard prerequisite for meaningful task-utility results in Issue #8, not for the basic B2 pseudonym round-trip itself.
 
 ## Not started / incomplete in Milestone 1
 
-- hardened malformed-span validation (Issue #17);
 - `InMemoryVault` / `SQLiteVault`;
 - B2 reversible pseudonymization;
 - pseudonym property tests with Hypothesis;
@@ -125,9 +130,10 @@ Milestone 1 is complete when the same controlled HR case can run through B0, B1 
 - Foundation PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/10
 - B0–B4 design PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/13
 - Detector/B1 PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/15
+- Span offset validation PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/19
 - Completed policy-engine issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/2
 - Completed detector/B1 issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/5
-- Security hardening follow-up: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/17
+- Completed span offset validation issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/17
 - Semantic generalization follow-up: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/16
 - B2/vault issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/3
 - Provider adapter/FakeProvider issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/12
