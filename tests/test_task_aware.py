@@ -8,17 +8,20 @@ fail-closed paths issue #6 requires.
 
 Tasks are constructed inline throughout, never read from
 ``corpus/hr/v1``'s ``task_necessity`` oracle field -- CLAUDE.md and issue #6
-forbid using ground truth as treatment input. A handful of tests use
-``CorpusCaseInput`` purely as a source of realistic ``text``/``context``
-values (explicitly permitted -- see the issue's "Corpus congelado" section),
-never the paired ``CaseOracle``.
+forbid using ground truth as treatment input. See
+``scripts/report_b3_corpus_divergence.py`` for this suite's replacement of
+its former corpus-conformance test: a standalone report, not a pytest
+invariant, that runs B3 over the frozen 13-case corpus and prints
+per-case/per-category convergence against the oracle -- kept out of this
+suite so the frozen corpus is never a de facto implementation target (see
+the "Comparison against the frozen HR corpus's ground truth" section below
+for why that test was removed).
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from adaptive_disclosure_gateway.corpus.loader import load_corpus
 from adaptive_disclosure_gateway.detection import Detector
 from adaptive_disclosure_gateway.domain import (
     DisclosureAction,
@@ -32,7 +35,6 @@ from adaptive_disclosure_gateway.transformations import ReversiblePseudonymizer,
 from adaptive_disclosure_gateway.vault import InMemoryVault
 
 POLICY_DIR = Path(__file__).parents[1] / "configs" / "policies"
-REAL_CORPUS_DIR = Path(__file__).parents[1] / "corpus" / "hr" / "v1" / "cases"
 
 TEXT = "Employee: Ana Souza\nCPF: 123.456.789-09\nSalary: R$ 8500.00\nDepartment: Engineering\n"
 
@@ -120,7 +122,14 @@ def test_same_input_and_task_produce_the_same_decision_across_repeated_runs():
 
 
 def test_different_tasks_over_the_same_text_and_context_yield_different_decisions():
-    exact_salary_task = "Confirm whether this employee's salary matches Finance department policy."
+    # "exactly" is required here (PR #33 review round): a positive salary
+    # mention with no explicit exact-value evidence now defaults to
+    # RELEVANT_WITHOUT_EXACT_VALUE (GENERALIZE), not PRESERVE -- see
+    # task_analysis/deterministic.py's EXACT_VALUE_INDICATORS. This task
+    # genuinely wants the exact figure, so it says so explicitly.
+    exact_salary_task = (
+        "Confirm whether this employee's salary matches Finance department policy exactly."
+    )
     no_salary_task = "Write a one-sentence summary of this employee's role. Salary is not needed."
 
     with_salary = _discloser().sanitize(_request(TEXT, exact_salary_task), Detector().detect(TEXT))
@@ -398,6 +407,85 @@ def test_ambiguous_relevance_resolves_to_the_least_disclosing_action_never_prese
     assert any("ambiguous" in reason.lower() for reason in ambiguous_reasons)
 
 
+def test_pay_as_a_common_verb_never_escalates_salary_to_preserve():
+    # Negative control (PR #33 review round): a false-positive lexical match
+    # is a disclosure-control defect, not a quality one -- unlike a false
+    # negative (which only costs utility by falling back to the category's
+    # least-disclosing action), a false positive can escalate an unrelated
+    # task's resolved action all the way to PRESERVE. Asserted here at the
+    # *action* level -- not just the analyzer's relevance label in
+    # tests/test_task_analysis_deterministic.py -- because the action is
+    # what actually determines exposure in the external payload.
+    result = _discloser().sanitize(
+        _request(TEXT, "Pay attention to the department summary."), Detector().detect(TEXT)
+    )
+    assert _actions_by_category(result)["salary"] is DisclosureAction.REMOVE
+
+
+def test_pay_the_invoice_never_escalates_salary_to_preserve():
+    result = _discloser().sanitize(
+        _request(TEXT, "Pay the invoice and summarize the department."), Detector().detect(TEXT)
+    )
+    assert _actions_by_category(result)["salary"] is DisclosureAction.REMOVE
+
+
+def test_pay_heed_never_escalates_salary_to_preserve():
+    task = "Summarize the department. Take care to pay heed to formatting."
+    result = _discloser().sanitize(_request(TEXT, task), Detector().detect(TEXT))
+    assert _actions_by_category(result)["salary"] is DisclosureAction.REMOVE
+
+
+def test_department_name_does_not_escalate_employee_name_disclosure():
+    result = _discloser().sanitize(
+        _request(TEXT, "What is the department name?"), Detector().detect(TEXT)
+    )
+    assert _actions_by_category(result)["employee_name"] is DisclosureAction.REMOVE
+
+
+def test_naming_convention_does_not_escalate_employee_name_disclosure():
+    result = _discloser().sanitize(
+        _request(TEXT, "Follow the naming convention for the division."), Detector().detect(TEXT)
+    )
+    assert _actions_by_category(result)["employee_name"] is DisclosureAction.REMOVE
+
+
+def test_team_player_idiom_does_not_escalate_department_disclosure():
+    # Found while auditing the indicator tables for the same class of
+    # defect as "pay"/"name": "team" as a bare indicator matches idioms
+    # unrelated to an org unit and would otherwise PRESERVE the department
+    # for a task that never asked for it.
+    task = "Write a one-sentence summary praising this employee as a great team player."
+    result = _discloser().sanitize(_request(TEXT, task), Detector().detect(TEXT))
+    assert _actions_by_category(result)["department"] is DisclosureAction.REMOVE
+
+
+def test_long_division_does_not_escalate_department_disclosure():
+    task = "Perform long division to check the total on this record."
+    result = _discloser().sanitize(_request(TEXT, task), Detector().detect(TEXT))
+    assert _actions_by_category(result)["department"] is DisclosureAction.REMOVE
+
+
+# --- Positive controls: hardened indicators still recognize genuine need ---
+
+
+def test_pay_band_positive_control_still_selects_preserve_for_salary():
+    task = "Confirm this employee's pay band for their current role exactly."
+    result = _discloser().sanitize(_request(TEXT, task), Detector().detect(TEXT))
+    assert _actions_by_category(result)["salary"] is DisclosureAction.PRESERVE
+
+
+def test_full_name_positive_control_still_selects_pseudonymize():
+    task = "What is the employee's full name for this record?"
+    result = _discloser().sanitize(_request(TEXT, task), Detector().detect(TEXT))
+    assert _actions_by_category(result)["employee_name"] is DisclosureAction.PSEUDONYMIZE
+
+
+def test_employees_team_positive_control_still_selects_preserve_for_department():
+    task = "Provide a one-sentence description of this employee's team for an internal directory entry."
+    result = _discloser().sanitize(_request(TEXT, task), Detector().detect(TEXT))
+    assert _actions_by_category(result)["department"] is DisclosureAction.PRESERVE
+
+
 def test_medical_data_still_blocks_unconditionally_regardless_of_relevance():
     for relevance in TaskRelevance:
         text = TEXT + "Medical notes: Reports chronic migraine and requested leave.\n"
@@ -456,73 +544,23 @@ def test_b2_and_b3_produce_identical_payloads_and_reconstruction_when_b3_mirrors
 
 # --- Comparison against the frozen HR corpus's ground truth -----------------
 #
-# This is scoring, not treatment input: the oracle (``case.oracle``) is read
-# only inside this test's own assertions, never passed to
-# ``CorpusCaseInput.to_disclosure_request()`` or to ``TaskAwareDiscloser`` --
-# see the module docstring and tests/test_corpus_oracle_isolation.py, which
-# pins that no production code has a path to do so at all.
+# There used to be a suite-level invariant here asserting every one of the
+# 13 frozen HR corpus cases' B3 decisions fell inside that case's
+# oracle-acceptable action set. Removed deliberately (PR #33 review round,
+# alongside the exact-value default flip above): once a positive category
+# mention defaults to RELEVANT_WITHOUT_EXACT_VALUE unless the task carries
+# narrow, explicit exact-value evidence, treating 100% conformance against
+# this specific frozen corpus as a pass/fail suite gate turns the corpus
+# into an implementation target -- exactly what CLAUDE.md's corpus-freeze
+# rule and issue #6 forbid. The corpus is this experiment's *evaluation*
+# oracle (scored in T10), not a specification B3 must reproduce exactly.
 #
-# A few corpus cases omit ``session_id`` in their YAML (their governance
-# context resolves to the SESSION scope, whose identifier a caller -- not
-# the corpus file itself -- is expected to supply; see
-# ``pipeline.py``'s "identifier contract" docstring and
-# ``tests/test_pipeline.py``'s own overrides for the same reason). A fixed
-# harness session id is filled in here only when the case omits one, exactly
-# like a real caller would -- never overriding a case that already supplies
-# its own scope-lifecycle identifier.
-
-
-def _corpus_request(case_input) -> DisclosureRequest:
-    request = case_input.to_disclosure_request()
-    if request.context.session_id is None:
-        context = request.context.model_copy(update={"session_id": "corpus-harness-session"})
-        return DisclosureRequest(text=request.text, task=request.task, context=context)
-    return request
-
-
-def test_b3_decisions_stay_within_the_frozen_corpus_oracles_acceptable_actions():
-    """For every non-blocked case in the frozen HR pilot corpus, B3's
-    per-category decision falls inside that category's oracle-acceptable
-    action set. This is not tuning B3 to the corpus (the analyzer's
-    indicator/negation tables are generic, authored before this check was
-    written, and never read corpus content) -- it is confirmation that a
-    generic, task-analyzer-driven B3 happens to reproduce the pilot's own
-    conformance annotations exactly. See the module docstring for the
-    oracle-isolation boundary this test respects.
-
-    No divergence was found while implementing T07 (2026-09-07): every case
-    passes. If a future corpus version or analyzer change breaks this, the
-    correct response is to treat it as a B3 behavior/limitation to report,
-    per issue #6's "Corpus congelado" section -- never to adjust
-    ``corpus/hr/v1`` to make this test pass.
-    """
-    cases = load_corpus(REAL_CORPUS_DIR)
-    assert cases, "expected at least one frozen HR corpus case to check"
-
-    failures: list[str] = []
-    for case in cases:
-        if case.oracle.expected_block_request:
-            continue  # a block cascades across every category; see B2's own _blocked_result.
-
-        request = _corpus_request(case.input)
-        spans = Detector().detect(request.text)
-        result = _discloser().sanitize(request, spans)
-        assert result.status == "allowed", (
-            f"{case.input.sample_id}: expected an allowed result, got {result.status}"
-        )
-
-        actions_by_category: dict[str, DisclosureAction] = {}
-        for decision in result.decisions:
-            actions_by_category.setdefault(decision.category, decision.action)
-
-        for span in case.oracle.expected_spans:
-            got = actions_by_category.get(span.category)
-            acceptable = {action.value for action in span.expected_actions}
-            got_value = got.value if got is not None else None
-            if got_value not in acceptable:
-                failures.append(
-                    f"{case.input.sample_id}/{span.category}: got {got_value!r}, "
-                    f"acceptable={sorted(acceptable)}"
-                )
-
-    assert not failures, "\n".join(failures)
+# ``scripts/report_b3_corpus_divergence.py`` replaces this: a standalone,
+# non-pytest report that runs B3 over the 13 cases and prints per-case,
+# per-category convergence/divergence against the oracle, for development
+# visibility now and reuse in T10 -- it is not part of this suite because a
+# script that only reports, and cannot fail a build, is not a test.
+#
+# tests/test_corpus_oracle_isolation.py still pins that no production code
+# (including this analyzer) has any import path to ``case.oracle`` at all;
+# that guarantee is unaffected by this removal.

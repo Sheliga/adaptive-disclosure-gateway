@@ -80,7 +80,13 @@ def test_without_clause_does_not_negate_text_preceding_it_in_the_same_sentence()
     )
     relevance = _relevance(task)
 
-    assert relevance["salary"] is TaskRelevance.RELEVANT_WITH_EXACT_VALUE
+    # Positive mention of "salary" with no explicit exact-value evidence
+    # (PR #33 review round: absence of signal never escalates to
+    # RELEVANT_WITH_EXACT_VALUE) -- what this test actually pins is that
+    # "without" does not retroactively negate "salary", which the
+    # RELEVANT_WITHOUT_EXACT_VALUE (as opposed to NOT_RELEVANT) outcome
+    # below still demonstrates.
+    assert relevance["salary"] is TaskRelevance.RELEVANT_WITHOUT_EXACT_VALUE
     assert relevance["employee_name"] is TaskRelevance.NOT_RELEVANT
     assert relevance["department"] is TaskRelevance.NOT_RELEVANT
 
@@ -121,3 +127,100 @@ def test_category_with_no_controlled_indicator_profile_defaults_to_not_relevant(
     relevance = _relevance("Summarize this record.", categories=("some_future_category",))
 
     assert relevance["some_future_category"] is TaskRelevance.NOT_RELEVANT
+
+
+# --- Negative control: an indicator term with a common non-category meaning
+# must not falsely mark the category relevant (PR #33 review round) --------
+#
+# A false NEGATIVE here only costs utility: the task-aware treatment falls
+# back to the category's least-disclosing action, exactly as it would for
+# any other NOT_RELEVANT category. A false POSITIVE is strictly worse: it
+# can drive the resolved action all the way up to PRESERVE for a task that
+# never asked for that category at all, actively *increasing* disclosure
+# beyond what the task required. So whenever an indicator term's own English
+# meaning is genuinely ambiguous (it has a common sense unrelated to the
+# category), the safe reading is NOT_RELEVANT rather than a guessed
+# RELEVANT_* level -- this is not a silent fallback to PRESERVE, it is the
+# same explicit "least disclosing action in the category's action space"
+# behavior NOT_RELEVANT already produces. See
+# tests/test_task_aware.py's mirrored negative controls, which assert the
+# actual *action* TaskAwareDiscloser produces from these same tasks, since
+# the action -- not the relevance label alone -- is what determines real
+# exposure in the external payload.
+
+
+def test_pay_as_a_common_verb_does_not_falsely_mark_salary_relevant():
+    relevance = _relevance("Pay attention to the department summary.")
+    assert relevance["salary"] is TaskRelevance.NOT_RELEVANT
+
+
+def test_pay_the_invoice_does_not_falsely_mark_salary_relevant():
+    relevance = _relevance("Pay the invoice and summarize the department.")
+    assert relevance["salary"] is TaskRelevance.NOT_RELEVANT
+
+
+def test_pay_heed_does_not_falsely_mark_salary_relevant():
+    task = "Summarize the department. Take care to pay heed to formatting."
+    relevance = _relevance(task)
+    assert relevance["salary"] is TaskRelevance.NOT_RELEVANT
+
+
+def test_department_name_does_not_falsely_mark_employee_name_relevant():
+    relevance = _relevance("What is the department name?")
+    assert relevance["employee_name"] is TaskRelevance.NOT_RELEVANT
+
+
+def test_naming_convention_does_not_falsely_mark_employee_name_relevant():
+    relevance = _relevance("Follow the naming convention for the division.")
+    assert relevance["employee_name"] is TaskRelevance.NOT_RELEVANT
+
+
+def test_team_player_idiom_does_not_falsely_mark_department_relevant():
+    # Found while auditing the indicator tables for the same class of
+    # defect: "team" as a bare indicator matches common idioms that have
+    # nothing to do with an org unit.
+    relevance = _relevance(
+        "Write a one-sentence summary praising this employee as a great team player."
+    )
+    assert relevance["department"] is TaskRelevance.NOT_RELEVANT
+
+
+def test_work_as_a_team_idiom_does_not_falsely_mark_department_relevant():
+    relevance = _relevance("Work as a team to summarize this report.")
+    assert relevance["department"] is TaskRelevance.NOT_RELEVANT
+
+
+def test_long_division_does_not_falsely_mark_department_relevant():
+    relevance = _relevance("Perform long division to check the total on this record.")
+    assert relevance["department"] is TaskRelevance.NOT_RELEVANT
+
+
+# --- Positive controls: hardening the tables above must not blind the
+# analyzer to genuine requests for the category -- otherwise "fixing" the
+# false positive would just trade it for a false negative. ------------------
+
+
+def test_pay_band_positive_control_still_marks_salary_relevant():
+    relevance = _relevance("Confirm this employee's pay band for their current role.")
+    assert relevance["salary"] is not TaskRelevance.NOT_RELEVANT
+
+
+def test_payroll_positive_control_still_marks_salary_relevant():
+    relevance = _relevance("Review the payroll figures for this department.")
+    assert relevance["salary"] is not TaskRelevance.NOT_RELEVANT
+
+
+def test_by_name_positive_control_still_marks_employee_name_relevant():
+    relevance = _relevance("Draft an announcement addressed by name to this employee.")
+    assert relevance["employee_name"] is not TaskRelevance.NOT_RELEVANT
+
+
+def test_full_name_positive_control_still_marks_employee_name_relevant():
+    relevance = _relevance("What is the employee's full name?")
+    assert relevance["employee_name"] is not TaskRelevance.NOT_RELEVANT
+
+
+def test_employees_team_positive_control_still_marks_department_relevant():
+    task = "Provide a one-sentence description of this employee's team for an internal directory entry."
+    relevance = _relevance(task)
+    assert relevance["department"] is not TaskRelevance.NOT_RELEVANT

@@ -11,6 +11,45 @@ depend on ``sample_id``/``task_family``/any corpus file-naming convention
 (pinned by ``tests/test_corpus_oracle_isolation.py``): the indicator tables
 below are generic English terms authored for the pilot's task *style*, not
 literal strings copied out of any one corpus case.
+
+Indicator-table safety rule (PR #33 review round): a false NEGATIVE here
+(the analyzer misses a genuine mention) only costs utility -- the caller
+falls back to that category's least-disclosing action, same as any other
+NOT_RELEVANT outcome. A false POSITIVE is strictly worse -- a bare,
+ambiguous indicator term (e.g. a former version of this table used the
+single word "pay", which also matches ordinary verbs like "pay attention")
+can make a category look relevant to a task that never asked for it,
+driving the resolved action all the way up to PRESERVE and *increasing*
+disclosure beyond what the task required. So every indicator below is
+chosen to be unambiguous on its own, using a multi-word phrase where a
+single word would collide with common English usage unrelated to the
+category. When a term's own meaning is genuinely ambiguous and no
+unambiguous phrase covers the same need, the term is simply left out --
+the resulting NOT_RELEVANT is not a silent fallback to PRESERVE, it is the
+same explicit "least disclosing action in the category's action space"
+outcome NOT_RELEVANT always produces (see transformations/task_aware.py's
+``_select_action``). See tests/test_task_analysis_deterministic.py's and
+tests/test_task_aware.py's negative-control tests for concrete examples
+this rule rules out, and their paired positive controls proving the
+hardening does not blind the analyzer to genuine mentions.
+
+The same asymmetry governs the exact-value-vs-reduced-form choice below
+(``EXACT_VALUE_INDICATORS``): a positive mention with no explicit, narrow
+evidence that the *exact* value is needed resolves to
+``RELEVANT_WITHOUT_EXACT_VALUE``, never to ``RELEVANT_WITH_EXACT_VALUE`` by
+default. Absence of signal must never escalate to the more revealing
+representation. Concretely: a false positive that increases disclosure
+(marking a category relevant, or "needs the exact value", when the task
+never asked for that) is more serious than a false negative/conservative
+read (marking it not relevant, or "does not need the exact value", when it
+actually did) -- the former exposes data the task did not require, while
+the latter only costs utility. That utility cost is a B3 result to be
+*measured* against the frozen HR corpus in T10, not a defect to eliminate
+here: this analyzer's indicator tables are never tuned retrospectively
+against the corpus's expected actions to make a specific case converge
+(CLAUDE.md's corpus-freeze rule) -- see ``scripts/report_b3_corpus_divergence.py``
+for the current, expected divergence this produces against
+``corpus/hr/v1``.
 """
 
 from __future__ import annotations
@@ -26,43 +65,83 @@ from adaptive_disclosure_gateway.task_analysis.base import TaskAnalysis, TaskRel
 # NOT_RELEVANT -- see analyze()'s fallback branch.
 CATEGORY_INDICATORS: dict[str, tuple[str, ...]] = {
     "employee_name": (
-        "name",
         "identity",
         "identify",
         "identifying",
         "identified",
-        "naming",
         "named",
+        "employee name",
+        "employee's name",
+        "by name",
+        "full name",
+        "person's name",
+        "name of the employee",
     ),
     "cpf": ("cpf",),
     "cnpj": ("cnpj",),
     "email": ("email", "e-mail"),
     "phone": ("phone", "telephone"),
-    "salary": ("salary", "compensation", "wage", "wages", "pay"),
-    "department": ("department", "team", "division"),
+    "salary": (
+        "salary",
+        "compensation",
+        "wage",
+        "wages",
+        "remuneration",
+        "pay band",
+        "pay range",
+        "pay grade",
+        "pay rate",
+        "payroll",
+        "paycheck",
+        "take-home pay",
+    ),
+    "department": (
+        "department",
+        "which team",
+        "what team",
+        "their team",
+        "employee's team",
+        "which division",
+        "employee's division",
+    ),
     "medical_data": ("medical", "diagnosis", "health condition", "illness"),
 }
+# Bare "name"/"naming" and bare "pay"/"team"/"division" were removed from the
+# tables above (PR #33 review round): each collided with common English
+# usage unrelated to the category ("Pay attention...", "team player", "long
+# division", "the department name") and would falsely mark the category
+# relevant -- see the module docstring's safety rule. The multi-word phrases
+# above cover the pilot's genuine task style (including the frozen corpus's
+# "addressed by name" and "this employee's team" phrasings) without matching
+# those idioms.
 
-# Phrases that, when present in a *non-negated* mention of a category, signal
-# that a reduced/aggregated representation already serves the task -- so the
-# exact original value is not needed. Only meaningful for a category whose
-# generic action space (transformations/task_aware.py) has an intermediate
-# step between REMOVE and PRESERVE (salary, for the pilot); for a category
-# with no such step this signal has no effect on the resulting action, since
-# "least revealing that still carries information" and "the exact value" then
-# collapse to the same action anyway.
+# Phrases whose presence in a *non-negated* mention of a category is narrow,
+# explicit evidence that the *exact* original value (not a reduced/aggregated
+# representation) is needed. Only meaningful for a category whose generic
+# action space (transformations/task_aware.py) has an intermediate step
+# between REMOVE and PRESERVE (salary, for the pilot); for a category with no
+# such step, "the least revealing representation that still carries
+# information" and "the exact value" collapse to the same action regardless
+# of this signal.
 #
-# Deliberately clause-scoped rather than indicator-token-scoped: if a single
-# clause mentions two categories together with one of these words (e.g. "the
-# average salary and department"), both are marked "without exact value"
-# even though the distinction only changes the selected action for the
-# numeric one. Documented limitation, not a hidden defect.
-REDUCED_FORM_INDICATORS: tuple[str, ...] = (
-    "average",
-    "aggregate",
-    "distribution",
-    "estimate",
-    "range",
+# Deliberately narrow, for the same false-positive-is-worse-than-false-
+# negative reason as CATEGORY_INDICATORS above: a positive category mention
+# with no evidence here already resolves to RELEVANT_WITHOUT_EXACT_VALUE (see
+# analyze() below) -- these terms only ever *upgrade* that default to
+# RELEVANT_WITH_EXACT_VALUE, so a term here that turns out ambiguous would be
+# the direction of defect this whole review round exists to close. None of
+# these were chosen to make any specific frozen-corpus case converge; a task
+# that needs the exact value but is phrased without one of them is read as
+# not needing it, which is a documented utility cost, not a bug to patch by
+# widening this list against the corpus.
+EXACT_VALUE_INDICATORS: tuple[str, ...] = (
+    "exact",
+    "exactly",
+    "precise",
+    "precisely",
+    "verbatim",
+    "specific figure",
+    "individual value",
 )
 
 # --- Negation ----------------------------------------------------------
@@ -157,9 +236,12 @@ class DeterministicTaskAnalyzer:
     3. If an indicator term appears only in the negated text ->
        ``NOT_RELEVANT`` (explicit negation).
     4. If an indicator term appears only in the non-negated text -> relevant;
-       ``RELEVANT_WITHOUT_EXACT_VALUE`` if a reduced-form indicator also
-       appears in the non-negated text, otherwise
-       ``RELEVANT_WITH_EXACT_VALUE``.
+       ``RELEVANT_WITH_EXACT_VALUE`` only if an ``EXACT_VALUE_INDICATORS``
+       term *also* appears in the non-negated text (narrow, explicit
+       evidence that the exact value -- not a reduced representation -- is
+       needed); otherwise ``RELEVANT_WITHOUT_EXACT_VALUE``. This is a
+       default-to-least-revealing rule (PR #33 review round): absence of
+       evidence for the exact value never escalates to it.
     5. If an indicator term appears in *both* -> the signal is genuinely
        conflicting (e.g. the task both names and disclaims the same
        category in different sentences) -> ``AMBIGUOUS`` rather than
@@ -172,17 +254,22 @@ class DeterministicTaskAnalyzer:
       (e.g. two clauses joined only by "and", no comma or period) is not
       recognized;
     - double negation ("not unnecessary") is read as a single negation;
-    - the reduced-vs-exact heuristic only recognizes the configured cue
-      words (``REDUCED_FORM_INDICATORS``); a task that needs an approximate
-      figure but is phrased without any of them is read as needing the
-      exact value;
+    - the exact-value heuristic only recognizes the configured cue words
+      (``EXACT_VALUE_INDICATORS``); a task that genuinely needs the exact
+      value but is phrased without any of them is read as needing only a
+      reduced representation. This is a deliberate, documented utility cost
+      (see the module docstring's safety rule), not a defect to close by
+      widening the cue list -- especially not to make any one frozen-corpus
+      case converge;
     - the indicator/negation tables are hand-authored for the HR pilot's
       controlled task profiles (docs/experimental-design.md), not a
       general-purpose negation-scope resolver -- a task phrased very
       differently from the pilot's style may be misclassified. Any such
       misclassification found against the frozen HR corpus is a documented
-      B3 behavior/limitation to report, never a reason to special-case
-      corpus content in this analyzer (CLAUDE.md's corpus-freeze rule).
+      B3 behavior/limitation to report (see
+      ``scripts/report_b3_corpus_divergence.py``), never a reason to
+      special-case corpus content in this analyzer (CLAUDE.md's
+      corpus-freeze rule).
     """
 
     def analyze(self, task: str, categories: Collection[str]) -> TaskAnalysis:
@@ -201,13 +288,15 @@ class DeterministicTaskAnalyzer:
             if found_positive and found_negated:
                 relevance[category] = TaskRelevance.AMBIGUOUS
             elif found_positive:
-                found_reduced = any(
-                    _contains(term, positive_text) for term in REDUCED_FORM_INDICATORS
-                )
+                # Default to the least-revealing relevant level: only narrow,
+                # explicit evidence (EXACT_VALUE_INDICATORS) upgrades this to
+                # RELEVANT_WITH_EXACT_VALUE. Absence of that evidence never
+                # escalates to the more revealing representation.
+                found_exact = any(_contains(term, positive_text) for term in EXACT_VALUE_INDICATORS)
                 relevance[category] = (
-                    TaskRelevance.RELEVANT_WITHOUT_EXACT_VALUE
-                    if found_reduced
-                    else TaskRelevance.RELEVANT_WITH_EXACT_VALUE
+                    TaskRelevance.RELEVANT_WITH_EXACT_VALUE
+                    if found_exact
+                    else TaskRelevance.RELEVANT_WITHOUT_EXACT_VALUE
                 )
             else:
                 relevance[category] = TaskRelevance.NOT_RELEVANT
