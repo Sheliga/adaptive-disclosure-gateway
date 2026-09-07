@@ -136,6 +136,39 @@ any of the five frozen categories); `tests/test_corpus_answer_grounded_in_input.
 pins that every monetary figure an `expected_answer` cites is a verbatim
 substring of `input.text`.
 
+## Conformance and utility are independent oracles
+
+`expected_actions` and `expected_answer` measure two different things, and
+the corpus deliberately does not collapse them into one:
+
+- `expected_actions` is the **conformance** oracle -- which disclosure
+  action(s) are acceptable for a span under disclosure policy, task
+  necessity and the experimental semantics of the treatment being scored.
+- `expected_answer` (with `answer_depends_on_categories`) is the
+  **utility** oracle -- whether the task can still be answered correctly
+  from a treatment's output.
+
+**Conformance does not imply utility.** An action can be a fully acceptable
+member of `expected_actions` and still degrade or destroy the information
+`expected_answer` depends on -- for example, a coarse `GENERALIZE` band
+that is conformant but too wide to answer a threshold question. That
+trade-off is not a corpus defect to be edited away; it is one of the
+effects T10's runner and metrics exist to observe and measure across
+B0-B4. A case's `input.text`, offsets or reference values are never
+adjusted after the fact to make a currently-implemented transformation's
+output happen to fit -- the ground truth is an oracle independent of any
+treatment's behavior (see "The input/oracle separation" above), and it is
+frozen per the freeze rule below.
+
+`hr_department_aggregation_003` is the concrete example: with
+`band_width=5000`, `GENERALIZE` bins its largest salary (`R$ 15800.00`)
+into `R$ 15000-20000`, a band that extends past the case's reference
+ceiling of `R$ 16000.00`. `generalize` remains the only conformant action
+for that span under its task family (aggregation without individual
+identity), and the resulting utility loss is left in place on purpose
+rather than papered over by widening the reference band to fit the band
+`GENERALIZE` happens to produce today.
+
 ## Task families
 
 Every case's `task_family` is one of:
