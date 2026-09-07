@@ -13,10 +13,10 @@ from adaptive_disclosure_gateway.domain import (
 from adaptive_disclosure_gateway.observability import get_tracer
 from adaptive_disclosure_gateway.transformations.span_validation import spans_are_valid
 
-# B1 baseline: a fixed, task- and policy-independent category -> action
+# Static Sanitization (B1) baseline: a fixed, task- and policy-independent category -> action
 # mapping. It does not consult PolicyRepository, task relevance, or the
-# pseudonym vault -- that independence is what separates the B1 baseline from
-# B2/B3/B4. Because B1 has no vault, it never uses PSEUDONYMIZE (which
+# pseudonym vault -- that independence is what separates the Static Sanitization (B1) baseline from
+# later treatments (B2–B4). Because Static Sanitization (B1) has no vault, it never uses PSEUDONYMIZE (which
 # requires reversible local storage); it only uses actions that are safe
 # without one.
 ACTIONS: dict[str, DisclosureAction] = {
@@ -34,7 +34,7 @@ _GENERALIZED_PLACEHOLDER = "[REDACTED:{category}]"
 
 
 class StaticSanitizer:
-    """B1 treatment: static sanitization independent of task and policy.
+    """Static Sanitization (B1): static sanitization independent of task and policy.
 
     Applies the fixed ``ACTIONS`` mapping above to detected spans, producing
     an auditable ``Transformation`` list and an external payload. Overlaps
@@ -49,7 +49,7 @@ class StaticSanitizer:
     entirely locally, without calling the policy engine.
 
     ``request.task`` and ``request.context`` are intentionally never read:
-    B1's output depends only on ``request.text`` and the supplied spans.
+    Static Sanitization (B1)'s output depends only on ``request.text`` and the supplied spans.
     """
 
     treatment = Treatment.STATIC_SANITIZATION
@@ -107,7 +107,7 @@ class StaticSanitizer:
             PolicyDecision(
                 category=category,
                 action=DisclosureAction.BLOCK_REQUEST,
-                reason="B1 static baseline blocks this category unconditionally",
+                reason="Static Sanitization (B1) static baseline blocks this category unconditionally",
                 allowed_actions=[DisclosureAction.BLOCK_REQUEST],
             )
             for category in blocking_categories
@@ -131,7 +131,7 @@ class StaticSanitizer:
                 category=category,
                 action=DisclosureAction.BLOCK_REQUEST,
                 reason=(
-                    "B1 static baseline blocks: span offsets are missing, out of "
+                    "Static Sanitization (B1) static baseline blocks: span offsets are missing, out of "
                     "bounds, or do not match the source text"
                 ),
                 allowed_actions=[DisclosureAction.BLOCK_REQUEST],
@@ -185,7 +185,7 @@ class StaticSanitizer:
                     PolicyDecision(
                         category=span.category,
                         action=action,
-                        reason="B1 static baseline mapping",
+                        reason="Static Sanitization (B1) static baseline mapping",
                         allowed_actions=[action],
                     )
                 )

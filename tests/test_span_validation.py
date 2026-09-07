@@ -1,6 +1,6 @@
 """Unit coverage for the shared transformation-boundary span validator
-(issue #17). B1's own tests (tests/test_static_sanitization.py) cover it
-through `StaticSanitizer.sanitize`; these pin the helper directly since B2/B3/B4
+(issue #17). Static Sanitization (B1)'s own tests (tests/test_static_sanitization.py) cover it
+through `StaticSanitizer.sanitize`; these pin the helper directly since later treatments (B2–B4)
 are expected to import it too.
 """
 

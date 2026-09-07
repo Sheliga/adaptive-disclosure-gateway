@@ -38,7 +38,7 @@ def test_b1_span_attributes_never_contain_detected_values_or_payload(recorded_sp
         context=GovernanceContext(domain="hr", purpose="team_summary", policy_version="hr-v1"),
     )
     spans = Detector().detect(SECRET_TEXT)
-    recorded_spans.clear()  # isolate B1's own span from the detector's
+    recorded_spans.clear()  # isolate Static Sanitization (B1)'s own span from the detector's
 
     result = StaticSanitizer().sanitize(request, spans)
 

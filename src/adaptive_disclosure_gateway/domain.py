@@ -21,7 +21,7 @@ class PseudonymScope(StrEnum):
 
 
 class Treatment(StrEnum):
-    """The five experimental disclosure-control treatments, B0-B4.
+    """The five experimental disclosure-control treatments: B0–B4 (Direct through Policy-governed).
 
     Member names carry the intent (what the treatment does); member values
     carry experimental traceability (the frozen B0-B4 identifiers used
