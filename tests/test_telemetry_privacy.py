@@ -9,6 +9,7 @@ from adaptive_disclosure_gateway.detection import Detector
 from adaptive_disclosure_gateway.domain import DisclosureRequest, GovernanceContext
 from adaptive_disclosure_gateway.policies import PolicyRepository
 from adaptive_disclosure_gateway.transformations import ReversiblePseudonymizer, StaticSanitizer
+from adaptive_disclosure_gateway.transformations.direct_disclosure import DirectDiscloser
 from adaptive_disclosure_gateway.vault import InMemoryVault
 
 POLICY_DIR = Path(__file__).parents[1] / "configs" / "policies"
@@ -34,6 +35,27 @@ def _assert_span_attributes_never_leak(spans, *forbidden_values: str) -> None:
                 assert forbidden not in serialized, (
                     f"span attribute {key}={serialized!r} leaked forbidden value {forbidden!r}"
                 )
+
+
+def test_b0_span_attributes_never_contain_the_raw_text_even_though_it_is_the_payload(
+    recorded_spans,
+):
+    # B0's external payload *is* the raw input text (issue #25) -- the one
+    # treatment where the usual "don't log the payload" span rule and "don't
+    # log the raw text" span rule are the same rule, checked against the
+    # same string. A naive implementation logging e.g. the payload "for
+    # debugging" would be an actual leak here, not a false positive.
+    request = DisclosureRequest(
+        text=SECRET_TEXT,
+        task="summarize",
+        context=GovernanceContext(domain="hr", purpose="team_summary", policy_version="hr-v1"),
+    )
+
+    result = DirectDiscloser().sanitize(request, spans=[])
+
+    finished = recorded_spans.get_finished_spans()
+    _assert_span_attributes_never_leak(finished, "Ana Souza", "123.456.789-09", "8500", SECRET_TEXT)
+    assert result.external_payload == SECRET_TEXT
 
 
 def test_detector_span_attributes_never_contain_detected_values_or_raw_text(recorded_spans):

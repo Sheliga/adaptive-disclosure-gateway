@@ -20,6 +20,10 @@ The rule is NOT the same for every treatment:
   isolates task-awareness as the *only* variable B3 adds over B2, so if B2
   could consult task relevance that isolation would already be broken
   before B3 exists.
+- Direct (B0, issue #25) is stricter than B1: it needs no detection either,
+  since no detected span participates in producing its payload at all (the
+  payload is the input text, verbatim). So B0 forbids policy, vault,
+  detection *and* task-awareness -- it needs none of them.
 """
 
 import ast
@@ -29,6 +33,11 @@ SRC_ROOT = Path(__file__).parents[1] / "src" / "adaptive_disclosure_gateway"
 
 # Full isolation: detection and B1 may depend on none of these.
 B1_FORBIDDEN_SUBSTRINGS = ("polic", "vault", "task_relevance", "task_analysis")
+
+# B0 is stricter still: unlike B1 (which imports detection.overlap to
+# resolve overlapping spans before slicing), B0 never slices the text at
+# all, so it needs no detection dependency either.
+B0_FORBIDDEN_SUBSTRINGS = ("polic", "vault", "detect", "task_relevance", "task_analysis")
 
 # B2's allowance is narrow: it may import policy/vault (for scope
 # resolution, reconstruction authorization, and pseudonym storage only --
@@ -69,6 +78,12 @@ def test_static_sanitizer_has_no_policy_or_vault_dependency():
     static_sanitization_path = SRC_ROOT / "transformations" / "static_sanitization.py"
     assert static_sanitization_path.exists()
     _assert_no_forbidden_imports(static_sanitization_path, B1_FORBIDDEN_SUBSTRINGS)
+
+
+def test_direct_discloser_has_no_policy_vault_detection_or_task_awareness_dependency():
+    direct_disclosure_path = SRC_ROOT / "transformations" / "direct_disclosure.py"
+    assert direct_disclosure_path.exists()
+    _assert_no_forbidden_imports(direct_disclosure_path, B0_FORBIDDEN_SUBSTRINGS)
 
 
 def test_reversible_pseudonymizer_has_no_task_awareness_dependency():
