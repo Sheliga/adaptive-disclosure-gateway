@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-09-06 (T14 merged; T15 / PR #21 under validation)
+Last updated: 2026-09-06 (T14 and T15 merged; T06 / T13 / PR #22 under validation)
 
 This file tracks **what is implemented now**. Architectural decisions belong in ADRs; research-proposal versions remain separate documents.
 
@@ -72,11 +72,9 @@ The review of B1 found that malformed `SensitiveSpan` offsets could previously b
 
 The security dependency that blocked B2 is therefore resolved.
 
-## In validation
-
 ### T15 / Issue #20 — semantic treatment names
 
-GitHub PR: #21 — `T15: Adopt semantic names for B0-B4 treatments`
+Merged PR: #21 — `T15: Adopt semantic names for B0-B4 treatments`
 
 The project now uses semantic names for humans while retaining B0–B4 / `b0`–`b4` as frozen experimental identifiers:
 
@@ -88,37 +86,52 @@ The project now uses semantic names for humans while retaining B0–B4 / `b0`–
 
 PR #21 introduces a `Treatment` `StrEnum` with semantic members and frozen values, renames the B1 module/class to `static_sanitization.py` / `StaticSanitizer`, renames the treatment-specific tests, changes OTel namespaces from `b1.*` to `static_sanitization.*`, and keeps `treatment="b1"` as machine-readable experimental data. `CLAUDE.md` records the canonical sequence, TDD expectations and workflow-state rules.
 
-Independent review found no change to the experimental meaning or the B1 isolation/security guarantees. CI on the reviewed head was green and the suite reported 59 passing tests. Review also corrected stale project-state text inherited from master that still described T14 / PR #19 as under validation.
+Independent review found no change to the experimental meaning or the B1 isolation/security guarantees. PR #21 merged into `master`; Issue #20 closed.
 
-T15 remains in `Validação` until PR #21 is merged and Issue #20 closes.
+## In validation
 
-## Remaining follow-up from B1 review
+### T06 / Issue #3 — B2 — Reversible Pseudonymization
 
 ### T13 / Issue #16 — semantic GENERALIZE
 
-B1 currently implements `GENERALIZE` as a fixed `[REDACTED:<category>]` placeholder. This is safe for disclosure but semantically equivalent to removal, so it cannot yet support a fair utility comparison where generalization is expected to preserve partial information. A category-specific deterministic generalization strategy is required before the experiment runner produces comparative utility numbers.
+GitHub PR: #22 — `T06 + T13: Reversible Pseudonymization (B2) vault/reconstruction and semantic GENERALIZE`
 
-This does **not** invalidate the completed B1 engineering slice, but it must be corrected before Issue #8 produces scientific measurements.
+Implemented together on one branch (T06 first, then T13), since B2's static category → action mapping uses `GENERALIZE` for `salary` and needed *some* generalization behavior to exist before T13 replaced the placeholder.
 
-## Recommended next execution order
+**T06 — Reversible Pseudonymization (B2):**
 
-1. Finish validation and merge T15 / PR #21 so future treatment code starts with the semantic naming convention.
-2. T06 / Issue #3 — B2 — Reversible Pseudonymization: vault, stable pseudonyms and authorized reconstruction.
-3. T11 / Issue #12 — deterministic `FakeProvider` through the common provider adapter boundary.
-4. Complete the shared B0/B1/B2 HR execution path and structural audit trail.
-5. T13 / Issue #16 before utility/metric collection becomes authoritative.
+- `vault/`: a `Vault` ABC plus `InMemoryVault`, an in-process, non-persistent implementation. Pseudonyms are stable per `(scope, scope_key, category, value)`; different scopes/scope_keys never share mappings. Collisions are disambiguated by mutating the emitted pseudonym string (an incrementing suffix), which terminates even under a digest function that returns the same output regardless of input.
+- `transformations/reversible_pseudonymization.py` / `ReversiblePseudonymizer` (`Treatment.REVERSIBLE_PSEUDONYMIZATION`): the same static, task-independent category → action mapping as B1, except identifier categories (`employee_name`, `cpf`, `cnpj`, `email`, `phone`) are `PSEUDONYMIZE`-d instead of `REMOVE`-d. `salary`, `department` and `medical_data` are unchanged from B1.
+- `PolicyRepository.is_reconstruction_authorized`: reuses the same fail-closed policy-resolution condition as `decide()` / `resolve_pseudonym_scope()`, so reconstruction of a provider response can be blocked by policy.
+- `ReversiblePseudonymizer.reconstruct`: authorized local reconstruction of a provider response, replacing pseudonyms with their originals via the vault. Covered by a round-trip test and a multi-entity contract example (two parties, each with a repeated identifier, whose relationships survive reconstruction).
+- `tests/test_treatment_isolation.py` now encodes a per-treatment isolation rule instead of one blanket rule: B1 keeps full isolation (no policy, vault or task-awareness); B2 may import policy/vault narrowly (pseudonym-scope resolution and reconstruction authorization only, never to choose a category's action — pinned by asserting `PolicyRepository.decide()` is never called from B2's source) but still may not import task-relevance/task-analysis, preserving the B2 → B3 isolation boundary from `docs/experimental-design.md`.
+- Known simplification: `GovernanceContext` has no explicit per-request/session/document identifier yet, so the vault's scope key is derived from `(domain, requester_id/role)`. REQUEST and DOCUMENT scope are therefore, for now, as durable as SESSION scope; only ORGANIZATION scope (keyed on domain alone) is actually distinguishable. Scopes never share mappings regardless, since the scope name itself is folded into the key.
+- Out of scope for this PR: a SQLite-backed `Vault` implementation (`InMemoryVault` only).
 
-T06 is technically unblocked by the T14 security fix, but should start after T15 merges to avoid concurrent changes around the renamed transformation module and to use `Treatment.REVERSIBLE_PSEUDONYMIZATION` from the outset. T13 can be implemented before or alongside B2 if convenient; it blocks meaningful task-utility measurement, not the basic B2 pseudonym round-trip.
+**T13 — semantic GENERALIZE:**
+
+- `transformations/generalization.py`: a category-keyed generalization strategy registry (not hardcoded per call site), used by both B1 and B2 wherever they map a category to `GENERALIZE`.
+- `NumericBandStrategy`: fixed-width, half-open `[lower, upper)` bands, e.g. `salary "R$ 8500.00"` → `"R$ 5000-10000"`. A documented minimum band width (`MIN_NUMERIC_BAND_WIDTH = 1000.0`) is enforced at construction so a band cannot be configured tight enough to re-identify the original value.
+- `MonthYearDateStrategy`: date → `"YYYY-MM"`; day-of-month is never disclosed (a fixed, non-configurable minimum granularity).
+- A category mapped to `GENERALIZE` with no registered strategy fails closed (`BLOCK_REQUEST`), resolved before any text is sliced, in both B1 and B2.
+- Band boundaries are pinned at both edges (the likely off-by-one bug), along with determinism, non-leakage of the original value, and the fail-closed path for an unconfigured category.
+
+Both under validation: 96 tests passing (up from 59 on `master`), `ruff check .` and `ruff format --check .` clean. PR #22 remains in `Validação` until merged and Issues #3/#16 close.
 
 ## Not started / incomplete in Milestone 1
 
-- `InMemoryVault` / `SQLiteVault`;
-- B2 — Reversible Pseudonymization;
+- `SQLiteVault` (persistent/shared vault backend);
+- a real per-request/session/document identifier in `GovernanceContext` (the vault scope key currently falls back to requester identity — see T06 above);
 - pseudonym property tests with Hypothesis;
 - deterministic `FakeProvider` implementation;
-- authorized local reconstruction;
 - complete structural audit trail;
 - end-to-end B0/B1/B2 runner over the same HR cases.
+
+## Recommended next execution order
+
+1. T11 / Issue #12 — deterministic `FakeProvider` through the common provider adapter boundary.
+2. Complete the shared B0/B1/B2 HR execution path and structural audit trail.
+3. Experiment runner and metric collection (Issue #8), now that B1/B2 GENERALIZE produces comparable utility numbers.
 
 ## Post-Milestone 1
 
@@ -143,6 +156,8 @@ Milestone 1 is complete when the same controlled HR case can run through B0 — 
 - audit data captures the relevant stages without logging sensitive text by default;
 - CI is green.
 
+All of the above are implemented on the T06/T13 branch (PR #22, not yet merged); the exit criteria are pending that merge and are not yet claimed as `master`'s state until then.
+
 ## References
 
 - ADR 0001: `docs/adr/0001-milestone-1-architecture.md`
@@ -152,6 +167,7 @@ Milestone 1 is complete when the same controlled HR case can run through B0 — 
 - Detector/B1 PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/15
 - Span offset validation PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/19
 - Semantic naming PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/21
+- B2 vault/reconstruction + semantic GENERALIZE PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/22
 - Policy-engine issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/2
 - Detector/B1 issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/5
 - Span offset validation issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/17
