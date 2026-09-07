@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-09-06 (T14 and T15 merged; T06 / T13 / PR #22 under validation)
+Last updated: 2026-09-06 (T06 / T13 / PR #22 under validation; T16 and T17 added from review)
 
 This file tracks **what is implemented now**. Architectural decisions belong in ADRs; research-proposal versions remain separate documents.
 
@@ -9,134 +9,102 @@ This file tracks **what is implemented now**. Architectural decisions belong in 
 Milestone 1 is the first functional vertical slice:
 
 - direct HR text input;
-- B0 — Direct disclosure;
+- B0 — Direct;
 - B1 — Static Sanitization;
 - B2 — Reversible Pseudonymization;
 - deterministic `FakeProvider`;
 - local vault and authorized reconstruction;
 - auditable end-to-end execution without requiring a real external LLM.
 
-## Completed
+## Completed on master
 
-- Architecture decisions for Milestone 1 frozen in ADR 0001.
+- Milestone 1 architecture frozen in ADR 0001.
 - `DisclosureAction`: `PRESERVE`, `PSEUDONYMIZE`, `GENERALIZE`, `REMOVE`, `BLOCK_REQUEST`, `TASK_DEPENDENT`.
-- `GovernanceContext` with domain, purpose, requester role/user, provider class, policy version and requested pseudonym scope.
-- Pseudonym scopes: `request`, `document`, `session`, `organization`.
-- Versioned YAML policy loading and deterministic evaluation.
-- Fail-closed behavior for missing/invalid/ambiguous policy resolution.
-- Organizational policy precedence over task-awareness.
-- Explicit allowed-action space for `TASK_DEPENDENT`.
-- Role/user ceiling for pseudonym persistence scope; task/purpose can only narrow it.
-- Simplified HR policy for the first slice.
-- OpenTelemetry SDK + OTLP foundation.
-- Local Jaeger service through Docker Compose.
-- GitHub Actions CI with Ruff and pytest on CPython 3.13.13.
-- PR #10 merged into `master`; Issue #2 closed.
-- Experimental design B0–B4 formalized in PR #13; Issue #1 closed.
-- Project-scoped Trello MCP configuration versioned in PR #14.
+- `GovernanceContext`, pseudonym-scope policy model and versioned YAML policy engine.
+- Fail-closed policy resolution and policy precedence over task-awareness.
+- Role/user pseudonym-scope ceilings.
+- OpenTelemetry + OTLP foundation and local Jaeger.
+- GitHub Actions CI on CPython 3.13.13.
+- B0–B4 experimental design, now named semantically as Direct → Static Sanitization → Reversible Pseudonymization → Task-aware → Policy-governed.
+- deterministic detector and B1 — Static Sanitization.
+- fail-closed `SensitiveSpan` validation shared at the transformation boundary.
+- T15 semantic treatment naming (`Treatment` enum, semantic module/class/OTel names).
 
-### Detector + B1 — Static Sanitization
-
-GitHub Issue: #5 — `Implement sensitive-data detector and B1 static sanitizer`
-
-Merged PR: #15 — `Implement sensitive-data detector and B1 static sanitizer`
-
-- `Detector` (`src/adaptive_disclosure_gateway/detection/`): deterministic regex rules for structured Brazilian identifiers (CPF, CNPJ, e-mail, phone, canonical punctuated format) plus a deliberately simple labeled-line detector (`Label: value`) for the controlled HR fixture's `employee_name`, `salary`, `department` and `medical_data` categories.
-- The detector is intentionally **not** a general NER component and depends on no NER library.
-- Deterministic overlap resolution: longest match wins; equal-length overlaps are broken by fixed category precedence, then leftmost start, category name and value.
-- The Static Sanitization treatment uses a fixed task- and policy-independent category → action mapping, with static-analysis tests preventing dependency on policy, task-awareness or vault code.
-- `REMOVE`, `PRESERVE`, `GENERALIZE` and `BLOCK_REQUEST` paths are covered by tests; an unmapped category blocks rather than silently disclosing.
-- OpenTelemetry detector/static-sanitization spans are metadata-only; tests assert that raw text, detected values and external payloads do not appear in span attributes.
-- Controlled synthetic HR fixture covers all five frozen categories and both allowed and blocking flows.
-- PR #15 CI passed with 39 tests; Issue #5 closed.
-
-Known limitations retained deliberately at this stage:
-
-- CPF/CNPJ detection is format-only; check digits are not validated yet.
-- Labeled HR extraction is controlled-fixture parsing, not free-text NER.
-- Precision/recall measurement waits for the ground-truth corpus.
-
-### T14 / Issue #17 — fail-closed span offset validation
-
-Merged PR: #19 — `Fail closed on malformed or missing SensitiveSpan offsets`
-
-The review of B1 found that malformed `SensitiveSpan` offsets could previously be normalized to zero and reach a nominal removal while the original value remained in an allowed payload. PR #19 fixed that boundary before B2 work.
-
-- `SensitiveSpan.start` / `end` are required `int` fields; normal construction rejects missing, negative, inverted and zero-length offsets.
-- Shared validation in `transformations/span_validation.py` checks source-text bounds and `text[start:end] == span.value` before payload slicing.
-- Invalid spans fail the whole request closed with `status="blocked"` and an empty external payload.
-- `resolve_overlaps` no longer normalizes malformed offsets to `(0, 0)` and fails explicitly without placing `span.value` in the exception.
-- The validator is shared so B2/B3/B4 can reuse the same transformation boundary.
-- Tests cover missing, negative, inverted, zero-length, out-of-bounds, mismatch and model-validation bypass cases.
-- PR #19 merged as commit `0c2ce858cbac9fd6b2a9f107c3f56aad06b8977a`; Issue #17 closed; Trello T14 is completed.
-
-The security dependency that blocked B2 is therefore resolved.
-
-### T15 / Issue #20 — semantic treatment names
-
-Merged PR: #21 — `T15: Adopt semantic names for B0-B4 treatments`
-
-The project now uses semantic names for humans while retaining B0–B4 / `b0`–`b4` as frozen experimental identifiers:
-
-- B0 — Direct;
-- B1 — Static Sanitization;
-- B2 — Reversible Pseudonymization;
-- B3 — Task-aware;
-- B4 — Policy-governed.
-
-PR #21 introduces a `Treatment` `StrEnum` with semantic members and frozen values, renames the B1 module/class to `static_sanitization.py` / `StaticSanitizer`, renames the treatment-specific tests, changes OTel namespaces from `b1.*` to `static_sanitization.*`, and keeps `treatment="b1"` as machine-readable experimental data. `CLAUDE.md` records the canonical sequence, TDD expectations and workflow-state rules.
-
-Independent review found no change to the experimental meaning or the B1 isolation/security guarantees. PR #21 merged into `master`; Issue #20 closed.
+Relevant merged work: PR #10 / Issue #2, PR #13 / Issue #1, PR #15 / Issue #5, PR #19 / Issue #17 and PR #21 / Issue #20.
 
 ## In validation
 
-### T06 / Issue #3 — B2 — Reversible Pseudonymization
+### T06 / Issue #3 — B2 — Reversible Pseudonymization core
+
+PR #22 implements the core B2 mechanism:
+
+- `Vault` abstraction + `InMemoryVault`;
+- `ReversiblePseudonymizer` with `Treatment.REVERSIBLE_PSEUDONYMIZATION`;
+- a static, task-independent category → action mapping, preserving the B2→B3 isolation boundary;
+- shared malformed-span validation from T14;
+- stable mappings inside the currently supplied vault partition;
+- collision handling;
+- authorized local reconstruction;
+- multi-entity round-trip coverage;
+- metadata-only OTel instrumentation.
+
+The core is useful and reviewable, but **T06 / Issue #3 must remain open after PR #22**. Independent review found two missing parts of the B2 boundary:
+
+1. **T16 / Issue #23 — real pseudonym-scope lifecycles.** REQUEST, DOCUMENT and SESSION currently derive their partition key from requester identity/role because `GovernanceContext` has no `request_id`, `document_id` or `session_id`. The scope label is isolated, but its intended lifetime is not enforced. Missing identifiers for the resolved scope must fail closed rather than falling back to requester identity.
+2. **T17 / Issue #24 — guessing-resistant pseudonyms.** `InMemoryVault` currently emits a truncated unkeyed SHA-256 digest of predictable context + original value. Low-entropy values can be susceptible to offline dictionary guessing. Production-mode pseudonyms must depend on local secret/vault state (opaque random token or keyed construction); deterministic experiment reproduction should use an injected test seed/key instead of requiring globally reproducible production pseudonyms.
+
+T06 is complete only after T16 and T17 are resolved and their tests are merged.
 
 ### T13 / Issue #16 — semantic GENERALIZE
 
-GitHub PR: #22 — `T06 + T13: Reversible Pseudonymization (B2) vault/reconstruction and semantic GENERALIZE`
+PR #22 replaces the previous redaction-equivalent placeholder with a central category strategy registry:
 
-Implemented together on one branch (T06 first, then T13), since B2's static category → action mapping uses `GENERALIZE` for `salary` and needed *some* generalization behavior to exist before T13 replaced the placeholder.
+- salary → deterministic fixed-width numeric band;
+- date strategy → year/month;
+- `GENERALIZE` remains distinguishable from `REMOVE`;
+- minimum numeric granularity is enforced;
+- an unconfigured GENERALIZE category becomes `BLOCK_REQUEST`;
+- B1 and B2 share the same generalization implementation.
 
-**T06 — Reversible Pseudonymization (B2):**
+Independent review found one merge blocker: a category may have a configured strategy but contain an unparseable value. In the current head, `GeneralizationError` escapes from the treatment instead of producing a fail-closed `DisclosureResult`. The error messages also interpolate the raw value, creating a possible log/telemetry leak.
 
-- `vault/`: a `Vault` ABC plus `InMemoryVault`, an in-process, non-persistent implementation. Pseudonyms are stable per `(scope, scope_key, category, value)`; different scopes/scope_keys never share mappings. Collisions are disambiguated by mutating the emitted pseudonym string (an incrementing suffix), which terminates even under a digest function that returns the same output regardless of input.
-- `transformations/reversible_pseudonymization.py` / `ReversiblePseudonymizer` (`Treatment.REVERSIBLE_PSEUDONYMIZATION`): the same static, task-independent category → action mapping as B1, except identifier categories (`employee_name`, `cpf`, `cnpj`, `email`, `phone`) are `PSEUDONYMIZE`-d instead of `REMOVE`-d. `salary`, `department` and `medical_data` are unchanged from B1.
-- `PolicyRepository.is_reconstruction_authorized`: reuses the same fail-closed policy-resolution condition as `decide()` / `resolve_pseudonym_scope()`, so reconstruction of a provider response can be blocked by policy.
-- `ReversiblePseudonymizer.reconstruct`: authorized local reconstruction of a provider response, replacing pseudonyms with their originals via the vault. Covered by a round-trip test and a multi-entity contract example (two parties, each with a repeated identifier, whose relationships survive reconstruction).
-- `tests/test_treatment_isolation.py` now encodes a per-treatment isolation rule instead of one blanket rule: B1 keeps full isolation (no policy, vault or task-awareness); B2 may import policy/vault narrowly (pseudonym-scope resolution and reconstruction authorization only, never to choose a category's action — pinned by asserting `PolicyRepository.decide()` is never called from B2's source) but still may not import task-relevance/task-analysis, preserving the B2 → B3 isolation boundary from `docs/experimental-design.md`.
-- Known simplification: `GovernanceContext` has no explicit per-request/session/document identifier yet, so the vault's scope key is derived from `(domain, requester_id/role)`. REQUEST and DOCUMENT scope are therefore, for now, as durable as SESSION scope; only ORGANIZATION scope (keyed on domain alone) is actually distinguishable. Scopes never share mappings regardless, since the scope name itself is folded into the key.
-- Out of scope for this PR: a SQLite-backed `Vault` implementation (`InMemoryVault` only).
+Before PR #22 merges, TDD coverage must prove for both B1 and B2 that:
 
-**T13 — semantic GENERALIZE:**
+- configured-but-unparseable values result in `BLOCK_REQUEST` with an empty external payload;
+- the original value does not appear in exception text, trace attributes or other telemetry.
 
-- `transformations/generalization.py`: a category-keyed generalization strategy registry (not hardcoded per call site), used by both B1 and B2 wherever they map a category to `GENERALIZE`.
-- `NumericBandStrategy`: fixed-width, half-open `[lower, upper)` bands, e.g. `salary "R$ 8500.00"` → `"R$ 5000-10000"`. A documented minimum band width (`MIN_NUMERIC_BAND_WIDTH = 1000.0`) is enforced at construction so a band cannot be configured tight enough to re-identify the original value.
-- `MonthYearDateStrategy`: date → `"YYYY-MM"`; day-of-month is never disclosed (a fixed, non-configurable minimum granularity).
-- A category mapped to `GENERALIZE` with no registered strategy fails closed (`BLOCK_REQUEST`), resolved before any text is sliced, in both B1 and B2.
-- Band boundaries are pinned at both edges (the likely off-by-one bug), along with determinism, non-leakage of the original value, and the fail-closed path for an unconfigured category.
+PR #22's last reviewed CI run was green with 96 tests, but the missing cases above were not covered; green CI therefore does not remove this blocker.
 
-Both under validation: 96 tests passing (up from 59 on `master`), `ruff check .` and `ruff format --check .` clean. PR #22 remains in `Validação` until merged and Issues #3/#16 close.
+## Planning after PR #22 review
+
+Recommended execution order:
+
+1. Fix the T13 configured-but-unparseable `GENERALIZE` fail-closed/non-leaking path on PR #22 and rerun full CI.
+2. Merge PR #22 when the review blocker is resolved. It may close Issue #16 / T13, but **must not close Issue #3 / T06**.
+3. T16 / Issue #23 — add real REQUEST / DOCUMENT / SESSION lifecycle identifiers and fail closed when the resolved scope lacks its required identifier.
+4. T17 / Issue #24 — replace public deterministic digest pseudonyms with opaque/keyed pseudonyms while keeping deterministic test configuration available.
+5. Complete T06 / Issue #3 after T16 + T17 are merged.
+6. T11 / Issue #12 — common provider boundary + deterministic `FakeProvider`.
+7. Complete the shared B0 — Direct / B1 — Static Sanitization / B2 — Reversible Pseudonymization HR end-to-end flow and structural audit trail.
+8. Only then move to B3 — Task-aware and B4 — Policy-governed on top of the corrected B2 vault boundary.
+9. Experiment runner / Issue #8 produces authoritative utility/exposure numbers only after the above prerequisites are frozen.
 
 ## Not started / incomplete in Milestone 1
 
-- `SQLiteVault` (persistent/shared vault backend);
-- a real per-request/session/document identifier in `GovernanceContext` (the vault scope key currently falls back to requester identity — see T06 above);
+- real REQUEST / DOCUMENT / SESSION lifecycle semantics (T16 / Issue #23);
+- guessing-resistant production pseudonym generation (T17 / Issue #24);
+- `SQLiteVault` or another persistent/shared vault backend;
 - pseudonym property tests with Hypothesis;
 - deterministic `FakeProvider` implementation;
 - complete structural audit trail;
 - end-to-end B0/B1/B2 runner over the same HR cases.
 
-## Recommended next execution order
-
-1. T11 / Issue #12 — deterministic `FakeProvider` through the common provider adapter boundary.
-2. Complete the shared B0/B1/B2 HR execution path and structural audit trail.
-3. Experiment runner and metric collection (Issue #8), now that B1/B2 GENERALIZE produces comparable utility numbers.
+`SQLiteVault` is not required for the current in-process experiment slice unless a later execution design requires persistence across processes.
 
 ## Post-Milestone 1
 
-- B3 — Task-aware minimization without strong contextual organizational policy constraints;
-- B4 — Policy-governed proposed disclosure approach;
+- B3 — Task-aware minimization, retaining B2's reversible mechanism;
+- B4 — Policy-governed disclosure, retaining B3's reversible mechanism and adding the explicit contextual policy action-space constraint;
 - Docling ingestion adapter for PDF/DOCX/XLSX/images;
 - richer contract-oriented corpus and semantic-relation tests;
 - real external/Ollama provider adapters;
@@ -150,13 +118,15 @@ Milestone 1 is complete when the same controlled HR case can run through B0 — 
 - malformed/invalid span metadata fails closed rather than leaking values;
 - `REMOVE` content does not appear in the external payload;
 - `BLOCK_REQUEST` stops the entire external request;
-- pseudonyms are stable within the authorized scope;
-- vault originals never reach the provider;
+- pseudonyms are stable for the **real authorized lifecycle** of the resolved scope;
+- external pseudonyms are not guessable from a public unkeyed digest construction;
+- vault originals and secrets never reach the provider or telemetry;
 - the response round-trip reconstructs authorized pseudonyms correctly;
 - audit data captures the relevant stages without logging sensitive text by default;
+- the common deterministic `FakeProvider` path works for B0/B1/B2;
 - CI is green.
 
-All of the above are implemented on the T06/T13 branch (PR #22, not yet merged); the exit criteria are pending that merge and are not yet claimed as `master`'s state until then.
+PR #22 implements a substantial part of these criteria, but **Milestone 1 is not complete on the branch or on master** while T16, T17, `FakeProvider` and the end-to-end/audit path remain pending.
 
 ## References
 
@@ -167,11 +137,9 @@ All of the above are implemented on the T06/T13 branch (PR #22, not yet merged);
 - Detector/B1 PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/15
 - Span offset validation PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/19
 - Semantic naming PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/21
-- B2 vault/reconstruction + semantic GENERALIZE PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/22
-- Policy-engine issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/2
-- Detector/B1 issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/5
-- Span offset validation issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/17
-- Semantic naming issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/20
-- Semantic generalization follow-up: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/16
-- B2/vault issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/3
-- Provider adapter/FakeProvider issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/12
+- B2 core + semantic GENERALIZE PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/22
+- B2 core issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/3
+- Semantic GENERALIZE: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/16
+- Pseudonym lifecycle follow-up: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/23
+- Pseudonym guessing-resistance follow-up: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/24
+- Provider adapter/FakeProvider: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/12
