@@ -23,7 +23,16 @@ CORPUS_DIR = SRC_ROOT / "corpus"
 # The production modules that implement B0-B4 and the shared pipeline. None
 # of these may depend on the corpus package at all -- ground truth has no
 # legitimate reason to be reachable from treatment/detection/policy code.
-PRODUCTION_DIRS = (SRC_ROOT / "transformations", SRC_ROOT / "detection")
+# ``task_analysis`` was added by T07/B3 (issue #6): the task analyzer and
+# ``transformations/task_aware.py``/``transformations/decision_application.py``
+# (the latter two live under ``transformations`` and are already covered by
+# that directory's glob) must be just as isolated from the frozen HR corpus
+# as every other treatment module.
+PRODUCTION_DIRS = (
+    SRC_ROOT / "transformations",
+    SRC_ROOT / "detection",
+    SRC_ROOT / "task_analysis",
+)
 PRODUCTION_FILES = (SRC_ROOT / "policies.py", SRC_ROOT / "pipeline.py")
 
 
@@ -57,6 +66,20 @@ def test_no_production_module_imports_the_corpus_package():
                 violations.append(f"{path} imports forbidden module {module!r}")
 
     assert not violations, "\n".join(violations)
+
+
+def test_production_source_files_actually_cover_the_new_b3_modules():
+    """Pins that the T07/B3 extension to ``PRODUCTION_DIRS`` above actually
+    reaches the new files it claims to cover -- a typo'd directory name
+    would make ``test_no_production_module_imports_the_corpus_package``
+    vacuously pass over an empty glob instead of actually checking anything.
+    """
+    files = {path.name for path in _production_source_files()}
+    assert "task_aware.py" in files
+    assert "decision_application.py" in files
+    task_analysis_files = {path.name for path in (SRC_ROOT / "task_analysis").glob("*.py")}
+    assert task_analysis_files, "expected task_analysis package source files to exist"
+    assert task_analysis_files <= files
 
 
 def _functions_constructing_disclosure_request(path: Path) -> list[str]:

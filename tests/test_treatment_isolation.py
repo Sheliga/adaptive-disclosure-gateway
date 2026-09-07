@@ -24,6 +24,15 @@ The rule is NOT the same for every treatment:
   since no detected span participates in producing its payload at all (the
   payload is the input text, verbatim). So B0 forbids policy, vault,
   detection *and* task-awareness -- it needs none of them.
+- Task-aware (B3, issue #6/T07) is the mirror image of B2's narrow
+  allowance: it may import ``policy``/``vault`` for exactly the same two
+  reasons B2 does (pseudonym-scope resolution and reconstruction
+  authorization -- never per-category action selection), and it may
+  additionally import ``task_analysis`` (B2 must not). What B3 must never
+  do -- pinned below just like B2's own static-mapping test -- is derive a
+  category's action from ``PolicyRepository.decide()``: the generic action
+  space in ``transformations/task_aware.py`` stays a plain module-level
+  dict, exactly like B1/B2's ``ACTIONS``.
 """
 
 import ast
@@ -127,4 +136,77 @@ def test_reversible_pseudonymizer_category_action_mapping_is_static_not_policy_d
 
     assert isinstance(b2.ACTIONS, dict) and b2.ACTIONS, (
         "ACTIONS must be a static, non-empty mapping"
+    )
+
+
+# --- Task-aware (B3, issue #6/T07): narrow policy/vault allowance identical
+# to B2's, plus the additional task_analysis dependency B2 must not have,
+# and the same "never derive an action from PolicyRepository.decide()" rule.
+
+
+def test_task_aware_discloser_never_calls_policy_decide():
+    """Mirrors
+    ``test_reversible_pseudonymizer_category_action_mapping_is_static_not_policy_derived``
+    for B3: ``PolicyRepository`` may be imported (for pseudonym-scope
+    resolution and reconstruction authorization -- see
+    ``transformations/task_aware.py``'s module docstring), but
+    ``PolicyRepository.decide()`` -- the per-category action-selection
+    entrypoint -- must never be called from B3's own source, and the
+    generic action space it selects within must stay a static, non-empty,
+    module-level mapping, not something computed from policy.
+    """
+    task_aware_path = SRC_ROOT / "transformations" / "task_aware.py"
+    tree = ast.parse(task_aware_path.read_text(encoding="utf-8"), filename=str(task_aware_path))
+    decide_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "decide"
+    ]
+    assert not decide_calls, (
+        "transformations/task_aware.py must never call PolicyRepository.decide() -- "
+        "the generic action space is fixed and task-analyzer-selected, never policy-derived"
+    )
+
+    from adaptive_disclosure_gateway.transformations import task_aware as b3
+
+    assert isinstance(b3.TASK_AWARE_ACTION_SPACES, dict) and b3.TASK_AWARE_ACTION_SPACES, (
+        "TASK_AWARE_ACTION_SPACES must be a static, non-empty mapping"
+    )
+
+
+def test_task_aware_discloser_uses_policy_repository_only_for_scope_and_reconstruction():
+    """The narrow half of B3's policy allowance: every attribute accessed
+    off whatever ``task_aware.py`` calls its ``PolicyRepository`` instance
+    must be one of the two legitimate entrypoints B2 also uses -- never
+    ``decide`` (already pinned above) and never some new, wider surface.
+    """
+    task_aware_path = SRC_ROOT / "transformations" / "task_aware.py"
+    tree = ast.parse(task_aware_path.read_text(encoding="utf-8"), filename=str(task_aware_path))
+
+    allowed_policy_methods = {"resolve_pseudonym_scope", "is_reconstruction_authorized"}
+    policy_like_calls = {
+        node.func.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in allowed_policy_methods | {"decide"}
+    }
+    assert policy_like_calls <= allowed_policy_methods, (
+        f"transformations/task_aware.py calls unexpected PolicyRepository method(s): "
+        f"{policy_like_calls - allowed_policy_methods}"
+    )
+
+
+def test_task_aware_discloser_may_import_task_analysis_unlike_b2():
+    """The one dependency B2 is forbidden and B3 is expected to have: proves
+    the isolation test above isn't accidentally passing because
+    ``task_aware.py`` never imports ``task_analysis`` at all.
+    """
+    task_aware_path = SRC_ROOT / "transformations" / "task_aware.py"
+    modules = _imported_modules(task_aware_path)
+    assert any("task_analysis" in module.lower() for module in modules), (
+        "transformations/task_aware.py is expected to import task_analysis -- "
+        "if this fails, B3 is not actually task-aware"
     )
