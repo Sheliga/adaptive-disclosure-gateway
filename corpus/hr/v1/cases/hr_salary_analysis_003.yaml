@@ -38,7 +38,11 @@ oracle:
       start: 51
       end: 61
       task_necessity: required
-      expected_actions: [preserve, generalize]
+      # With band_width=5000, R$ 4200.00 falls in R$ 0-5000, which straddles
+      # the reference minimum wage floor of R$ 1518.00 -- generalizing would
+      # make "above the floor" unverifiable, so preserve is the only action
+      # that keeps enough information for the expected_answer.
+      expected_actions: [preserve]
     - category: department
       value: Support
       start: 74
