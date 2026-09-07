@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-09-06 (T06 / T13 / PR #22 under validation; T16 and T17 added from review)
+Last updated: 2026-09-07 (T06 / PR #22 under validation; T17 / Issue #24 and the T13 / Issue #16 fail-closed-GENERALIZE blocker are now resolved on PR #22; T16 / Issue #23 remains the only open item before T06 / Issue #3 can close)
 
 This file tracks **what is implemented now**. Architectural decisions belong in ADRs; research-proposal versions remain separate documents.
 
@@ -50,10 +50,10 @@ PR #22 implements the core B2 mechanism:
 
 The core is useful and reviewable, but **T06 / Issue #3 must remain open after PR #22**. Independent review found two missing parts of the B2 boundary:
 
-1. **T16 / Issue #23 — real pseudonym-scope lifecycles.** REQUEST, DOCUMENT and SESSION currently derive their partition key from requester identity/role because `GovernanceContext` has no `request_id`, `document_id` or `session_id`. The scope label is isolated, but its intended lifetime is not enforced. Missing identifiers for the resolved scope must fail closed rather than falling back to requester identity.
-2. **T17 / Issue #24 — guessing-resistant pseudonyms.** `InMemoryVault` currently emits a truncated unkeyed SHA-256 digest of predictable context + original value. Low-entropy values can be susceptible to offline dictionary guessing. Production-mode pseudonyms must depend on local secret/vault state (opaque random token or keyed construction); deterministic experiment reproduction should use an injected test seed/key instead of requiring globally reproducible production pseudonyms.
+1. **T16 / Issue #23 — real pseudonym-scope lifecycles (still open).** REQUEST, DOCUMENT and SESSION currently derive their partition key from requester identity/role because `GovernanceContext` has no `request_id`, `document_id` or `session_id`. The scope label is isolated, but its intended lifetime is not enforced. Missing identifiers for the resolved scope must fail closed rather than falling back to requester identity.
+2. **T17 / Issue #24 — guessing-resistant pseudonyms (resolved on this PR).** `InMemoryVault` no longer derives the pseudonym from the original value or from any public/predictable context at all: `pseudonymize()` generates an opaque random token (via a CSPRNG `token_factory`, `secrets.token_hex(16)` by default — 128 bits) and stores the mapping; there is nothing left to invert offline. Stability within a partition still comes from the forward-map lookup, not from the generator being deterministic. The `token_factory` is injectable so experiments can use a deterministic generator; the production default is explicitly *not* required to be reproducible across independent vault instances (`tests/test_vault.py` pins both directions). Collision handling is unchanged in shape and still verified against a degenerate (constant-output) token factory. The `PSEUDO-{category}-` prefix is kept for audit readability only — with a random token the category no longer helps an attacker guess anything.
 
-T06 is complete only after T16 and T17 are resolved and their tests are merged.
+T06 is complete only after T16 is resolved and merged.
 
 ### T13 / Issue #16 — semantic GENERALIZE
 
@@ -66,24 +66,24 @@ PR #22 replaces the previous redaction-equivalent placeholder with a central cat
 - an unconfigured GENERALIZE category becomes `BLOCK_REQUEST`;
 - B1 and B2 share the same generalization implementation.
 
-Independent review found one merge blocker: a category may have a configured strategy but contain an unparseable value. In the current head, `GeneralizationError` escapes from the treatment instead of producing a fail-closed `DisclosureResult`. The error messages also interpolate the raw value, creating a possible log/telemetry leak.
+Independent review found one merge blocker, now resolved on this PR:
 
-Before PR #22 merges, TDD coverage must prove for both B1 and B2 that:
+- **Fail-closed on configured-but-unparseable values.** Both `static_sanitization.py` and `reversible_pseudonymization.py` now resolve every span's action *and* attempt any GENERALIZE span's generalization in one pre-pass, before any text slicing starts (`_resolve_actions_and_generalized_values`). A value a configured strategy cannot parse (e.g. a free-text `Salary:` field) downgrades just that span to `BLOCK_REQUEST`, exactly like an unconfigured category — the request returns `status="blocked"` with an empty payload instead of raising `GeneralizationError` mid-slice. Covered for both treatments in `tests/test_static_sanitization.py` / `tests/test_reversible_pseudonymization.py`, plus telemetry coverage in `tests/test_telemetry_privacy.py`.
+- **Non-leaking error messages.** The four `raise GeneralizationError(...)` sites in `generalization.py` no longer interpolate the raw value; they name the category and failure kind only. `MonthYearDateStrategy.generalize` suppresses `datetime.strptime`'s own `ValueError` with `raise ... from None` so its value-bearing message cannot resurface through a formatted traceback. Pinned in `tests/test_generalization.py`, and generalized into a codebase-wide AST-based invariant test, `tests/test_no_sensitive_value_in_raises.py` (see CLAUDE.md's "No-leak invariant").
 
-- configured-but-unparseable values result in `BLOCK_REQUEST` with an empty external payload;
-- the original value does not appear in exception text, trace attributes or other telemetry.
+PR #22's last reviewed CI run was green with 96 tests; the fixes above bring the suite to 109.
 
-PR #22's last reviewed CI run was green with 96 tests, but the missing cases above were not covered; green CI therefore does not remove this blocker.
+**Known scope note, not fixed here:** `GENERALIZATION_STRATEGIES` configures a `birth_date` strategy, but no detection rule currently emits a `birth_date` category, so that strategy is unreachable in practice. Left as a follow-up (adding a `birth_date` detection rule is out of scope for this PR).
 
 ## Planning after PR #22 review
 
 Recommended execution order:
 
-1. Fix the T13 configured-but-unparseable `GENERALIZE` fail-closed/non-leaking path on PR #22 and rerun full CI.
-2. Merge PR #22 when the review blocker is resolved. It may close Issue #16 / T13, but **must not close Issue #3 / T06**.
-3. T16 / Issue #23 — add real REQUEST / DOCUMENT / SESSION lifecycle identifiers and fail closed when the resolved scope lacks its required identifier.
-4. T17 / Issue #24 — replace public deterministic digest pseudonyms with opaque/keyed pseudonyms while keeping deterministic test configuration available.
-5. Complete T06 / Issue #3 after T16 + T17 are merged.
+1. ~~Fix the T13 configured-but-unparseable `GENERALIZE` fail-closed/non-leaking path on PR #22 and rerun full CI.~~ Done on PR #22.
+2. ~~T17 / Issue #24 — replace public deterministic digest pseudonyms with opaque/keyed pseudonyms while keeping deterministic test configuration available.~~ Done on PR #22 (opaque random tokens).
+3. Merge PR #22 now that both review blockers are resolved. It closes Issue #16 / T13 and Issue #24 / T17, but **must not close Issue #3 / T06**.
+4. T16 / Issue #23 — add real REQUEST / DOCUMENT / SESSION lifecycle identifiers and fail closed when the resolved scope lacks its required identifier.
+5. Complete T06 / Issue #3 after T16 is merged.
 6. T11 / Issue #12 — common provider boundary + deterministic `FakeProvider`.
 7. Complete the shared B0 — Direct / B1 — Static Sanitization / B2 — Reversible Pseudonymization HR end-to-end flow and structural audit trail.
 8. Only then move to B3 — Task-aware and B4 — Policy-governed on top of the corrected B2 vault boundary.
@@ -92,8 +92,8 @@ Recommended execution order:
 ## Not started / incomplete in Milestone 1
 
 - real REQUEST / DOCUMENT / SESSION lifecycle semantics (T16 / Issue #23);
-- guessing-resistant production pseudonym generation (T17 / Issue #24);
 - `SQLiteVault` or another persistent/shared vault backend;
+- a detection rule emitting `birth_date` (its `GENERALIZATION_STRATEGIES` entry exists but is currently unreachable);
 - pseudonym property tests with Hypothesis;
 - deterministic `FakeProvider` implementation;
 - complete structural audit trail;
@@ -119,14 +119,14 @@ Milestone 1 is complete when the same controlled HR case can run through B0 — 
 - `REMOVE` content does not appear in the external payload;
 - `BLOCK_REQUEST` stops the entire external request;
 - pseudonyms are stable for the **real authorized lifecycle** of the resolved scope;
-- external pseudonyms are not guessable from a public unkeyed digest construction;
+- external pseudonyms are not guessable from a public unkeyed digest construction (resolved: opaque random tokens, Issue #24 / T17);
 - vault originals and secrets never reach the provider or telemetry;
 - the response round-trip reconstructs authorized pseudonyms correctly;
 - audit data captures the relevant stages without logging sensitive text by default;
 - the common deterministic `FakeProvider` path works for B0/B1/B2;
 - CI is green.
 
-PR #22 implements a substantial part of these criteria, but **Milestone 1 is not complete on the branch or on master** while T16, T17, `FakeProvider` and the end-to-end/audit path remain pending.
+PR #22 implements a substantial part of these criteria, but **Milestone 1 is not complete on the branch or on master** while T16, `FakeProvider` and the end-to-end/audit path remain pending.
 
 ## References
 
@@ -141,5 +141,5 @@ PR #22 implements a substantial part of these criteria, but **Milestone 1 is not
 - B2 core issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/3
 - Semantic GENERALIZE: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/16
 - Pseudonym lifecycle follow-up: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/23
-- Pseudonym guessing-resistance follow-up: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/24
+- Pseudonym guessing-resistance (resolved on PR #22): https://github.com/Sheliga/adaptive-disclosure-gateway/issues/24
 - Provider adapter/FakeProvider: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/12

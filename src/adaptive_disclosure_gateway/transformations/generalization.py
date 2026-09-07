@@ -58,7 +58,11 @@ _AMOUNT_PATTERN = re.compile(r"-?\d+(?:\.\d+)?")
 def _parse_amount(value: str) -> float:
     match = _AMOUNT_PATTERN.search(value)
     if match is None:
-        raise GeneralizationError(f"Could not parse a numeric amount out of {value!r}")
+        # Never interpolate the raw value here: this message can reach logs
+        # and OTel exception recording (issue #16 / 2a). The category and
+        # failure kind are named by the caller (``generalize()``), which has
+        # the category and wraps this into a category-scoped message.
+        raise GeneralizationError("Could not parse a numeric amount from the supplied value")
     return float(match.group())
 
 
@@ -109,8 +113,16 @@ class MonthYearDateStrategy(GeneralizationStrategy):
             # or retained, so there is no timezone to attach (DTZ007 does
             # not apply -- the result is truncated to year/month regardless).
             parsed = datetime.strptime(value, self.date_format).date()  # noqa: DTZ007
-        except ValueError as exc:
-            raise GeneralizationError(f"Could not parse {value!r} as a date") from exc
+        except ValueError:
+            # `from None` (not `from exc`) is deliberate: datetime.strptime's
+            # own ValueError embeds the raw offending string in its message
+            # (e.g. "time data 'xyz' does not match format ..."). Chaining it
+            # -- even just as __context__ -- would let that string resurface
+            # through a full traceback dump (logging.exception, OTel
+            # exception recording) even though this message never mentions
+            # it. Never interpolate the value here (issue #16 / 2a); the
+            # category is added by the caller (``generalize()``).
+            raise GeneralizationError("Could not parse the supplied value as a date") from None
         return f"{parsed.year:04d}-{parsed.month:02d}"
 
 
@@ -144,7 +156,20 @@ def generalize(category: str, value: str) -> str:
         raise GeneralizationError(
             f"No generalization strategy configured for category {category!r}"
         )
-    result = strategy.generalize(value)
+    try:
+        result = strategy.generalize(value)
+    except GeneralizationError:
+        # Re-raised with the category added and `from None`: the inner
+        # exception's own message is already value-free (see
+        # `_parse_amount`/`MonthYearDateStrategy.generalize` above), but
+        # discarding it here too means no future strategy can reintroduce a
+        # value-bearing message or chained context through this entrypoint
+        # without a test catching it (see tests/test_generalization.py and
+        # the codebase-wide invariant in
+        # tests/test_no_sensitive_value_in_raises.py).
+        raise GeneralizationError(
+            f"Generalization strategy for category {category!r} could not parse the supplied value"
+        ) from None
     if result == value:
         raise GeneralizationError(
             f"Generalization strategy for {category!r} returned the original value unchanged"

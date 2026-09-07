@@ -90,6 +90,22 @@ def test_unconfigured_generalize_category_fails_closed_instead_of_disclosing(mon
     assert "500" not in result.external_payload
 
 
+def test_configured_generalize_category_with_unparseable_value_fails_closed_not_raises():
+    # Issue #16 (2b): "salary" *is* configured for GENERALIZE, but a free-text
+    # value the strategy cannot parse must block the request -- not let
+    # GeneralizationError escape mid-slice with a half-built payload.
+    text = "Salary: to be negotiated later\n"
+    request = _request(text)
+    spans = Detector().detect(text)
+    assert any(s.category == "salary" for s in spans)  # detected, just unparseable
+
+    result = _pseudonymizer().sanitize(request, spans)
+
+    assert result.status == "blocked"
+    assert result.external_payload == ""
+    assert "to be negotiated later" not in result.external_payload
+
+
 def test_span_with_missing_offsets_bypassing_model_is_blocked_not_leaked():
     text = "CPF: 123.456.789-09 recorded."
     request = _request(text)

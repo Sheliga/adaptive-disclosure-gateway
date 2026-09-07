@@ -58,6 +58,43 @@ def _resolve_action(category: str) -> DisclosureAction:
     return action
 
 
+def _resolve_actions_and_generalized_values(
+    ordered: list[SensitiveSpan],
+) -> tuple[list[DisclosureAction], dict[int, str]]:
+    """Resolve every span's action *and*, for GENERALIZE actions, attempt the
+    generalization itself -- all before any text slicing happens.
+
+    Issue #16 (2b): a category can have a configured strategy yet still fail
+    to parse a *particular* value (e.g. a free-text ``Salary:`` field). That
+    used to raise ``GeneralizationError`` out of ``_allowed_result`` mid-slice,
+    with a half-built payload already in progress. Attempting the
+    generalization here, in the same pre-pass that already downgrades an
+    unconfigured category, means a parse failure downgrades that one span to
+    BLOCK_REQUEST exactly like any other fail-closed category -- so the
+    request blocks with an empty payload instead of raising. Mirrors
+    ``static_sanitization._resolve_actions_and_generalized_values`` (B1); both
+    treatments need the identical fix (see tests/test_static_sanitization.py
+    and tests/test_reversible_pseudonymization.py).
+
+    Returns the resolved actions (same order as ``ordered``) plus a map from
+    span index to its precomputed generalized value, populated only for
+    spans whose action is (still) GENERALIZE. ``_allowed_result`` reads from
+    that map instead of calling ``generalization.generalize`` again, so a
+    GENERALIZE span it lays out is guaranteed already-resolved.
+    """
+    actions: list[DisclosureAction] = []
+    generalized_values: dict[int, str] = {}
+    for index, span in enumerate(ordered):
+        action = _resolve_action(span.category)
+        if action is DisclosureAction.GENERALIZE:
+            try:
+                generalized_values[index] = generalization.generalize(span.category, span.value)
+            except generalization.GeneralizationError:
+                action = DisclosureAction.BLOCK_REQUEST
+        actions.append(action)
+    return actions, generalized_values
+
+
 def _scope_key(scope: PseudonymScope, context: GovernanceContext) -> str:
     """Deterministically derive a vault partition key from governance
     context alone, so a later, separate call to ``reconstruct()`` with an
@@ -117,7 +154,7 @@ class ReversiblePseudonymizer:
                 return self._invalid_span_result(spans)
 
             ordered = resolve_overlaps(spans)
-            actions = [_resolve_action(span.category) for span in ordered]
+            actions, generalized_values = _resolve_actions_and_generalized_values(ordered)
             blocked = DisclosureAction.BLOCK_REQUEST in actions
 
             # Metadata only: categories, counts, a block flag and timing --
@@ -140,7 +177,9 @@ class ReversiblePseudonymizer:
             scope_key = _scope_key(scope, request.context)
             otel_span.set_attribute("reversible_pseudonymization.pseudonym_scope", scope.value)
 
-            result = self._allowed_result(request.text, ordered, actions, scope, scope_key)
+            result = self._allowed_result(
+                request.text, ordered, actions, generalized_values, scope, scope_key
+            )
             otel_span.set_attribute(
                 "reversible_pseudonymization.duration_ms", (time.perf_counter() - started) * 1000
             )
@@ -248,6 +287,7 @@ class ReversiblePseudonymizer:
         text: str,
         ordered: list[SensitiveSpan],
         actions: list[DisclosureAction],
+        generalized_values: dict[int, str],
         scope: PseudonymScope,
         scope_key: str,
     ) -> DisclosureResult:
@@ -258,14 +298,19 @@ class ReversiblePseudonymizer:
         cursor = 0
         any_pseudonymized = False
 
-        for span, action in zip(ordered, actions):
+        for index, (span, action) in enumerate(zip(ordered, actions)):
             start, end = span.start, span.end
             payload_parts.append(text[cursor:start])
 
             if action is DisclosureAction.REMOVE:
                 transformed = None
             elif action is DisclosureAction.GENERALIZE:
-                transformed = generalization.generalize(span.category, span.value)
+                # Already resolved, before any slicing started, by
+                # _resolve_actions_and_generalized_values -- a GENERALIZE
+                # span only reaches _allowed_result (i.e. `blocked` was
+                # False) once its value has already been generalized
+                # successfully, so this lookup cannot raise or be missing.
+                transformed = generalized_values[index]
             elif action is DisclosureAction.PSEUDONYMIZE:
                 transformed = self._vault.pseudonymize(scope, scope_key, span.category, span.value)
                 any_pseudonymized = True

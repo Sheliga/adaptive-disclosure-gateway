@@ -26,7 +26,7 @@ class Vault(ABC):
         pseudonym (scopes do not share mappings). Two different ``value``s
         within the same ``(scope, scope_key, category)`` must never receive
         the same pseudonym -- even if they happen to collide under whatever
-        hashing scheme an implementation uses internally; see
+        pseudonym-generation scheme an implementation uses internally; see
         ``InMemoryVault`` for how collisions are disambiguated.
         """
 

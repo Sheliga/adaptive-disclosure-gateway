@@ -17,6 +17,11 @@ SECRET_TEXT = (
     "Employee: Ana Souza\nCPF: 123.456.789-09\nSalary: R$ 8500.00\nDepartment: Engineering\n"
 )
 
+# Issue #16 (2b): a configured-but-unparseable GENERALIZE value, used below to
+# confirm the fail-closed pre-pass doesn't leak the unparseable value through
+# telemetry either -- not just through the external payload.
+UNPARSEABLE_SALARY_TEXT = "Salary: to be negotiated later\n"
+
 
 def _assert_span_attributes_never_leak(spans, *forbidden_values: str) -> None:
     assert spans, "expected at least one recorded span"
@@ -89,6 +94,47 @@ def test_b2_span_attributes_never_contain_detected_values_payload_or_pseudonym_m
         result.external_payload,
         pseudonym_mapping,
     )
+
+
+def test_b1_configured_unparseable_generalize_span_attributes_do_not_leak_the_value(
+    recorded_spans,
+):
+    request = DisclosureRequest(
+        text=UNPARSEABLE_SALARY_TEXT,
+        task="summarize",
+        context=GovernanceContext(domain="hr", purpose="team_summary", policy_version="hr-v1"),
+    )
+    spans = Detector().detect(UNPARSEABLE_SALARY_TEXT)
+    recorded_spans.clear()  # isolate Static Sanitization (B1)'s own span from the detector's
+
+    result = StaticSanitizer().sanitize(request, spans)
+
+    assert result.status == "blocked"
+    finished = recorded_spans.get_finished_spans()
+    _assert_span_attributes_never_leak(finished, "to be negotiated later", UNPARSEABLE_SALARY_TEXT)
+
+
+def test_b2_configured_unparseable_generalize_span_attributes_do_not_leak_the_value(
+    recorded_spans,
+):
+    request = DisclosureRequest(
+        text=UNPARSEABLE_SALARY_TEXT,
+        task="summarize",
+        context=GovernanceContext(
+            domain="hr", purpose="team_summary", requester_id="u1", policy_version="hr-v1"
+        ),
+    )
+    spans = Detector().detect(UNPARSEABLE_SALARY_TEXT)
+    recorded_spans.clear()  # isolate B2's own spans from the detector's
+
+    pseudonymizer = ReversiblePseudonymizer(
+        vault=InMemoryVault(), policy_repository=PolicyRepository.from_directory(POLICY_DIR)
+    )
+    result = pseudonymizer.sanitize(request, spans)
+
+    assert result.status == "blocked"
+    finished = recorded_spans.get_finished_spans()
+    _assert_span_attributes_never_leak(finished, "to be negotiated later", UNPARSEABLE_SALARY_TEXT)
 
 
 def test_b2_reconstruct_span_attributes_never_contain_original_values(recorded_spans):

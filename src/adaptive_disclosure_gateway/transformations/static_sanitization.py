@@ -46,6 +46,40 @@ def _resolve_action(category: str) -> DisclosureAction:
     return action
 
 
+def _resolve_actions_and_generalized_values(
+    ordered: list[SensitiveSpan],
+) -> tuple[list[DisclosureAction], dict[int, str]]:
+    """Resolve every span's action *and*, for GENERALIZE actions, attempt the
+    generalization itself -- all before any text slicing happens.
+
+    Issue #16 (2b): a category can have a configured strategy yet still fail
+    to parse a *particular* value (e.g. a free-text ``Salary:`` field). That
+    used to raise ``GeneralizationError`` out of ``_allowed_result`` mid-slice,
+    with a half-built payload already in progress. Attempting the
+    generalization here, in the same pre-pass that already downgrades an
+    unconfigured category, means a parse failure downgrades that one span to
+    BLOCK_REQUEST exactly like any other fail-closed category -- so the
+    request blocks with an empty payload instead of raising.
+
+    Returns the resolved actions (same order as ``ordered``) plus a map from
+    span index to its precomputed generalized value, populated only for
+    spans whose action is (still) GENERALIZE. ``_allowed_result`` reads from
+    that map instead of calling ``generalization.generalize`` again, so a
+    GENERALIZE span it lays out is guaranteed already-resolved.
+    """
+    actions: list[DisclosureAction] = []
+    generalized_values: dict[int, str] = {}
+    for index, span in enumerate(ordered):
+        action = _resolve_action(span.category)
+        if action is DisclosureAction.GENERALIZE:
+            try:
+                generalized_values[index] = generalization.generalize(span.category, span.value)
+            except generalization.GeneralizationError:
+                action = DisclosureAction.BLOCK_REQUEST
+        actions.append(action)
+    return actions, generalized_values
+
+
 class StaticSanitizer:
     """Static Sanitization (B1): disclosure control independent of task and policy.
 
@@ -90,7 +124,7 @@ class StaticSanitizer:
                 return self._invalid_span_result(spans)
 
             ordered = resolve_overlaps(spans)
-            actions = [_resolve_action(span.category) for span in ordered]
+            actions, generalized_values = _resolve_actions_and_generalized_values(ordered)
             blocked = DisclosureAction.BLOCK_REQUEST in actions
 
             # Metadata only: categories, counts and a block flag -- never the
@@ -103,7 +137,7 @@ class StaticSanitizer:
 
             if blocked:
                 return self._blocked_result(ordered, actions)
-            return self._allowed_result(request.text, ordered, actions)
+            return self._allowed_result(request.text, ordered, actions, generalized_values)
 
     @staticmethod
     def _blocked_result(
@@ -160,7 +194,10 @@ class StaticSanitizer:
 
     @staticmethod
     def _allowed_result(
-        text: str, ordered: list[SensitiveSpan], actions: list[DisclosureAction]
+        text: str,
+        ordered: list[SensitiveSpan],
+        actions: list[DisclosureAction],
+        generalized_values: dict[int, str],
     ) -> DisclosureResult:
         payload_parts: list[str] = []
         transformations: list[Transformation] = []
@@ -168,7 +205,7 @@ class StaticSanitizer:
         seen_categories: set[str] = set()
         cursor = 0
 
-        for span, action in zip(ordered, actions):
+        for index, (span, action) in enumerate(zip(ordered, actions)):
             # Offsets are guaranteed present, in-bounds and value-matched by
             # this point: SensitiveSpan requires them, and spans_are_valid()
             # already validated them against `text` before sanitize() got here.
@@ -178,7 +215,12 @@ class StaticSanitizer:
             if action is DisclosureAction.REMOVE:
                 transformed = None
             elif action is DisclosureAction.GENERALIZE:
-                transformed = generalization.generalize(span.category, span.value)
+                # Already resolved, before any slicing started, by
+                # _resolve_actions_and_generalized_values -- a GENERALIZE
+                # span only reaches _allowed_result (i.e. `blocked` was
+                # False) once its value has already been generalized
+                # successfully, so this lookup cannot raise or be missing.
+                transformed = generalized_values[index]
             else:  # PRESERVE
                 transformed = span.value
 
