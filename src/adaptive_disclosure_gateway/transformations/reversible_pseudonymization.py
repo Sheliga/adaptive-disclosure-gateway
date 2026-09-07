@@ -14,7 +14,7 @@ from adaptive_disclosure_gateway.domain import (
     Transformation,
     Treatment,
 )
-from adaptive_disclosure_gateway.observability import get_tracer
+from adaptive_disclosure_gateway.observability import elapsed_ms_since, get_tracer
 from adaptive_disclosure_gateway.policies import PolicyRepository
 from adaptive_disclosure_gateway.transformations.span_validation import spans_are_valid
 from adaptive_disclosure_gateway.vault import Vault
@@ -183,7 +183,7 @@ class ReversiblePseudonymizer:
             if blocked:
                 otel_span.set_attribute(
                     "reversible_pseudonymization.duration_ms",
-                    (time.perf_counter() - started) * 1000,
+                    elapsed_ms_since(started),
                 )
                 return self._blocked_result(ordered, actions)
 
@@ -199,7 +199,7 @@ class ReversiblePseudonymizer:
                 otel_span.set_attribute("reversible_pseudonymization.blocked", True)
                 otel_span.set_attribute(
                     "reversible_pseudonymization.duration_ms",
-                    (time.perf_counter() - started) * 1000,
+                    elapsed_ms_since(started),
                 )
                 return self._missing_scope_identifier_result(ordered)
 
@@ -207,7 +207,7 @@ class ReversiblePseudonymizer:
                 request.text, ordered, actions, generalized_values, scope, scope_key
             )
             otel_span.set_attribute(
-                "reversible_pseudonymization.duration_ms", (time.perf_counter() - started) * 1000
+                "reversible_pseudonymization.duration_ms", elapsed_ms_since(started)
             )
             return result
 
