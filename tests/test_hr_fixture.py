@@ -11,7 +11,7 @@ from adaptive_disclosure_gateway.domain import (
     DisclosureRequest,
     GovernanceContext,
 )
-from adaptive_disclosure_gateway.transformations import B1StaticSanitizer
+from adaptive_disclosure_gateway.transformations import StaticSanitizer
 
 HR_FIXTURE_NO_MEDICAL = (
     "Employee: Ana Souza\nCPF: 123.456.789-09\nSalary: R$ 8500.00\nDepartment: Engineering\n"
@@ -47,7 +47,7 @@ def test_b1_sanitizes_non_medical_fixture_without_leaking_removed_or_generalized
     text = HR_FIXTURE_NO_MEDICAL
     spans = Detector().detect(text)
 
-    result = B1StaticSanitizer().sanitize(_request(text), spans)
+    result = StaticSanitizer().sanitize(_request(text), spans)
 
     assert result.status == "allowed"
     assert "Ana Souza" not in result.external_payload
@@ -68,7 +68,7 @@ def test_b1_blocks_fixture_with_medical_data_and_leaks_nothing():
     text = HR_FIXTURE_WITH_MEDICAL
     spans = Detector().detect(text)
 
-    result = B1StaticSanitizer().sanitize(_request(text), spans)
+    result = StaticSanitizer().sanitize(_request(text), spans)
 
     assert result.status == "blocked"
     assert result.external_payload == ""

@@ -1,10 +1,11 @@
 """Pins the architectural isolation acceptance criterion for issue #5:
 
-B1 and the detector must not depend on PolicyRepository, task relevance, or
-the pseudonym vault. This is checked at the import-graph level (static
-analysis of the actual source) rather than by trusting docstrings, so a
-future change that wires B1 to the policy engine or a vault fails the suite
-instead of silently regressing the isolation guarantee.
+The B1 -- Static Sanitization treatment and the detector must not depend on
+PolicyRepository, task relevance, or the pseudonym vault. This is checked at
+the import-graph level (static analysis of the actual source) rather than by
+trusting docstrings, so a future change that wires the static sanitizer to
+the policy engine or a vault fails the suite instead of silently regressing
+the isolation guarantee.
 """
 
 import ast
@@ -41,7 +42,7 @@ def test_detection_package_has_no_policy_or_vault_dependency():
         _assert_no_forbidden_imports(path)
 
 
-def test_b1_sanitizer_has_no_policy_or_vault_dependency():
-    b1_path = SRC_ROOT / "transformations" / "b1.py"
-    assert b1_path.exists()
-    _assert_no_forbidden_imports(b1_path)
+def test_static_sanitizer_has_no_policy_or_vault_dependency():
+    static_sanitization_path = SRC_ROOT / "transformations" / "static_sanitization.py"
+    assert static_sanitization_path.exists()
+    _assert_no_forbidden_imports(static_sanitization_path)

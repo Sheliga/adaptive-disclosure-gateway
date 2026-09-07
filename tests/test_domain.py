@@ -6,6 +6,7 @@ from adaptive_disclosure_gateway.domain import (
     GovernanceContext,
     PseudonymScope,
     SensitiveSpan,
+    Treatment,
 )
 
 
@@ -53,7 +54,7 @@ def test_pseudonym_scope_rejects_unknown_values():
 # construction time, so such a span cannot be built at all. Checks that
 # depend on the source text (in-bounds `end`, value/offset match) cannot
 # live here -- the model has no access to the text -- and are covered at the
-# transformation boundary instead (tests/test_b1_sanitizer.py).
+# transformation boundary instead (tests/test_static_sanitization.py).
 
 
 def test_sensitive_span_rejects_missing_offsets():
@@ -74,3 +75,16 @@ def test_sensitive_span_rejects_inverted_offsets():
 def test_sensitive_span_rejects_zero_length_span():
     with pytest.raises(ValidationError):
         SensitiveSpan(category="cpf", value="123.456.789-09", start=5, end=5)
+
+
+# T15: Treatment enum members carry semantic names for B0-B4, but the
+# values are the frozen identifiers that traceability across docs, cards and
+# telemetry depends on (docs/experimental-design.md). This pins each member's
+# value against the frozen code, so a careless rename that also touches the
+# value would fail here instead of silently breaking that traceability.
+def test_treatment_values_are_frozen_experimental_codes():
+    assert Treatment.DIRECT.value == "b0"
+    assert Treatment.STATIC_SANITIZATION.value == "b1"
+    assert Treatment.REVERSIBLE_PSEUDONYMIZATION.value == "b2"
+    assert Treatment.TASK_AWARE.value == "b3"
+    assert Treatment.POLICY_GOVERNED.value == "b4"

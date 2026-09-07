@@ -20,6 +20,24 @@ class PseudonymScope(StrEnum):
     ORGANIZATION = "organization"
 
 
+class Treatment(StrEnum):
+    """The five experimental disclosure-control treatments, Direct (B0) through Policy-governed (B4).
+
+    Member names carry the intent (what the treatment does); member values
+    carry experimental traceability (the frozen B0-B4 identifiers used
+    throughout the research design, docs and telemetry). The values must
+    never change -- see docs/experimental-design.md for the canonical
+    sequence Direct -> Static Sanitization -> Reversible Pseudonymization ->
+    Task-aware -> Policy-governed and what each comparison isolates.
+    """
+
+    DIRECT = "b0"
+    STATIC_SANITIZATION = "b1"
+    REVERSIBLE_PSEUDONYMIZATION = "b2"
+    TASK_AWARE = "b3"
+    POLICY_GOVERNED = "b4"
+
+
 class GovernanceContext(BaseModel):
     domain: str
     purpose: str

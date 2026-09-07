@@ -5,7 +5,7 @@ from adaptive_disclosure_gateway.domain import (
     GovernanceContext,
     SensitiveSpan,
 )
-from adaptive_disclosure_gateway.transformations import B1StaticSanitizer
+from adaptive_disclosure_gateway.transformations import StaticSanitizer
 
 
 def _request(text: str, **context_overrides) -> DisclosureRequest:
@@ -23,7 +23,7 @@ def test_remove_action_drops_value_and_does_not_leak_original():
     request = _request(text)
     spans = Detector().detect(text)
 
-    result = B1StaticSanitizer().sanitize(request, spans)
+    result = StaticSanitizer().sanitize(request, spans)
 
     assert "123.456.789-09" not in result.external_payload
     transformation = next(t for t in result.transformations if t.category == "cpf")
@@ -36,7 +36,7 @@ def test_generalize_action_replaces_salary_without_leaking_original_value():
     request = _request(text)
     spans = Detector().detect(text)
 
-    result = B1StaticSanitizer().sanitize(request, spans)
+    result = StaticSanitizer().sanitize(request, spans)
 
     assert "8500" not in result.external_payload
     transformation = next(t for t in result.transformations if t.category == "salary")
@@ -50,7 +50,7 @@ def test_preserve_action_keeps_department_value_in_payload():
     request = _request(text)
     spans = Detector().detect(text)
 
-    result = B1StaticSanitizer().sanitize(request, spans)
+    result = StaticSanitizer().sanitize(request, spans)
 
     assert "Engineering" in result.external_payload
     transformation = next(t for t in result.transformations if t.category == "department")
@@ -63,7 +63,7 @@ def test_medical_data_blocks_entire_request_and_suppresses_other_spans():
     request = _request(text)
     spans = Detector().detect(text)
 
-    result = B1StaticSanitizer().sanitize(request, spans)
+    result = StaticSanitizer().sanitize(request, spans)
 
     assert result.status == "blocked"
     assert result.external_payload == ""
@@ -75,7 +75,7 @@ def test_unmapped_category_fails_closed_instead_of_leaking():
     request = _request("some free text value here")
     spans = [SensitiveSpan(category="unknown_category", value="value here", start=15, end=25)]
 
-    result = B1StaticSanitizer().sanitize(request, spans)
+    result = StaticSanitizer().sanitize(request, spans)
 
     assert result.status == "blocked"
     assert "value here" not in result.external_payload
@@ -85,10 +85,10 @@ def test_sanitizer_output_is_independent_of_governance_context():
     text = "Department: Engineering\n"
     spans = Detector().detect(text)
 
-    result_a = B1StaticSanitizer().sanitize(
+    result_a = StaticSanitizer().sanitize(
         _request(text, purpose="team_summary", requester_role="hr_viewer"), spans
     )
-    result_b = B1StaticSanitizer().sanitize(
+    result_b = StaticSanitizer().sanitize(
         _request(text, purpose="salary_analysis", requester_role="hr_admin"), spans
     )
 
@@ -102,8 +102,8 @@ def test_sanitizer_is_deterministic_across_runs():
     request = _request(text)
     spans = Detector().detect(text)
 
-    first = B1StaticSanitizer().sanitize(request, spans)
-    second = B1StaticSanitizer().sanitize(request, spans)
+    first = StaticSanitizer().sanitize(request, spans)
+    second = StaticSanitizer().sanitize(request, spans)
 
     assert first == second
 
@@ -118,7 +118,7 @@ def test_sanitizer_is_deterministic_across_runs():
 # normal constructor; `model_construct` bypasses that validation entirely
 # (it skips Pydantic's validators), so it is the only way left to get a
 # malformed span into the sanitizer, and is used below to prove the boundary
-# check in `B1StaticSanitizer.sanitize` -- not just the model -- stops it.
+# check in `StaticSanitizer.sanitize` -- not just the model -- stops it.
 
 
 def test_span_with_missing_offsets_bypassing_model_is_blocked_not_leaked():
@@ -128,7 +128,7 @@ def test_span_with_missing_offsets_bypassing_model_is_blocked_not_leaked():
         category="cpf", value="123.456.789-09", start=None, end=None, confidence=None
     )
 
-    result = B1StaticSanitizer().sanitize(request, [malformed])
+    result = StaticSanitizer().sanitize(request, [malformed])
 
     assert result.status == "blocked"
     assert result.external_payload == ""
@@ -142,7 +142,7 @@ def test_span_with_negative_start_bypassing_model_is_blocked():
         category="cpf", value="123.456.789-09", start=-5, end=20, confidence=None
     )
 
-    result = B1StaticSanitizer().sanitize(request, [malformed])
+    result = StaticSanitizer().sanitize(request, [malformed])
 
     assert result.status == "blocked"
     assert "123.456.789-09" not in result.external_payload
@@ -155,7 +155,7 @@ def test_span_with_inverted_offsets_bypassing_model_is_blocked():
         category="cpf", value="123.456.789-09", start=20, end=5, confidence=None
     )
 
-    result = B1StaticSanitizer().sanitize(request, [malformed])
+    result = StaticSanitizer().sanitize(request, [malformed])
 
     assert result.status == "blocked"
     assert "123.456.789-09" not in result.external_payload
@@ -168,7 +168,7 @@ def test_span_with_zero_length_offsets_bypassing_model_is_blocked():
         category="cpf", value="123.456.789-09", start=5, end=5, confidence=None
     )
 
-    result = B1StaticSanitizer().sanitize(request, [malformed])
+    result = StaticSanitizer().sanitize(request, [malformed])
 
     assert result.status == "blocked"
     assert "123.456.789-09" not in result.external_payload
@@ -182,7 +182,7 @@ def test_span_with_out_of_bounds_end_is_blocked():
     # boundary, since the model never sees `text`.
     out_of_bounds = SensitiveSpan(category="cpf", value="123.456.789-09", start=5, end=1000)
 
-    result = B1StaticSanitizer().sanitize(request, [out_of_bounds])
+    result = StaticSanitizer().sanitize(request, [out_of_bounds])
 
     assert result.status == "blocked"
     assert "123.456.789-09" not in result.external_payload
@@ -195,7 +195,7 @@ def test_span_with_value_offset_mismatch_is_blocked():
     # slice of `text` than the one the span claims as its value.
     mismatched = SensitiveSpan(category="cpf", value="123.456.789-09", start=0, end=4)
 
-    result = B1StaticSanitizer().sanitize(request, [mismatched])
+    result = StaticSanitizer().sanitize(request, [mismatched])
 
     assert result.status == "blocked"
     assert "123.456.789-09" not in result.external_payload

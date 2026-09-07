@@ -4,7 +4,7 @@ timing only -- never the detected value, the raw text, or the payload.
 
 from adaptive_disclosure_gateway.detection import Detector
 from adaptive_disclosure_gateway.domain import DisclosureRequest, GovernanceContext
-from adaptive_disclosure_gateway.transformations import B1StaticSanitizer
+from adaptive_disclosure_gateway.transformations import StaticSanitizer
 
 SECRET_TEXT = (
     "Employee: Ana Souza\nCPF: 123.456.789-09\nSalary: R$ 8500.00\nDepartment: Engineering\n"
@@ -38,9 +38,9 @@ def test_b1_span_attributes_never_contain_detected_values_or_payload(recorded_sp
         context=GovernanceContext(domain="hr", purpose="team_summary", policy_version="hr-v1"),
     )
     spans = Detector().detect(SECRET_TEXT)
-    recorded_spans.clear()  # isolate B1's own span from the detector's
+    recorded_spans.clear()  # isolate Static Sanitization (B1)'s own span from the detector's
 
-    result = B1StaticSanitizer().sanitize(request, spans)
+    result = StaticSanitizer().sanitize(request, spans)
 
     finished = recorded_spans.get_finished_spans()
     _assert_span_attributes_never_leak(
