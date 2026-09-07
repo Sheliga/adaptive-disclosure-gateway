@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-09-06 (issue #17 fail-closed span validation)
+Last updated: 2026-09-06 (PR #19 / T14 under validation)
 
 This file tracks **what is implemented now**. Architectural decisions belong in ADRs; research-proposal versions remain separate documents.
 
@@ -56,26 +56,28 @@ Known limitations retained deliberately at this stage:
 - Labeled HR extraction is controlled-fixture parsing, not free-text NER.
 - Precision/recall measurement waits for the ground-truth corpus.
 
-### Fail-closed span offset validation
+## In validation
 
-GitHub Issue: #17 — `Fail closed on malformed or missing SensitiveSpan offsets`
+### T14 / Issue #17 — fail-closed span offset validation
 
-Review of the merged B1 implementation found that `SensitiveSpan.start` / `end` were optional in the domain model while the transformation boundary normalized missing offsets to zero (`span.start or 0`), which let a malformed span reach a nominal `REMOVE` decision while the original value stayed in the "allowed" external payload. The same `or 0` coercion in the overlap resolver could silently treat a malformed span as a harmless zero-length `(0, 0)` interval.
+GitHub PR: #19 — `Fail closed on malformed or missing SensitiveSpan offsets`
 
-Fixed at two layers:
+Review of the merged B1 implementation found that `SensitiveSpan.start` / `end` were optional in the domain model while the transformation boundary normalized missing offsets to zero (`span.start or 0`). A malformed span could therefore reach a nominal `REMOVE` decision while the original value remained in an `allowed` external payload. The same coercion in overlap resolution could silently turn malformed metadata into a harmless-looking zero-length `(0, 0)` interval.
 
-- **Domain model** (`domain.py`): `SensitiveSpan.start` / `end` are now required `int` fields (no `None`), with a `model_validator` rejecting `start < 0` and `end <= start` (negative, inverted and zero-length offsets) at construction time. `confidence` stays optional.
-- **Transformation boundary** (`transformations/span_validation.py`): a new `spans_are_valid` / `span_matches_text` helper checks what the model cannot — `end <= len(text)` and `text[start:end] == span.value` — since a span does not carry its own source text. `B1StaticSanitizer.sanitize` calls this before any slicing and fails the whole request closed (`status="blocked"`, empty payload) on any violation, including a span built via `model_construct` to bypass model validation. The helper lives outside `b1.py` specifically so B2/B3/B4 inherit the same boundary check instead of reimplementing it.
-- The now-dead `or 0` coercions in `b1.py` and `detection/overlap.py` were removed; `resolve_overlaps` now surfaces a malformed span as an error rather than silently normalizing it to `(0, 0)`.
-- Tests cover missing, negative, inverted, zero-length, out-of-bounds and value/offset-mismatch offsets, at both the model and the boundary, plus a reproduction of the original leak and a check that overlap resolution no longer normalizes a malformed span away silently.
+PR #19 addresses the defect at two layers:
 
-PR #19 — `fix: fail closed on malformed or missing SensitiveSpan offsets` (open, pending review/merge).
+- **Domain model** (`domain.py`): `SensitiveSpan.start` / `end` are required `int` fields, and construction rejects negative, inverted and zero-length offsets.
+- **Transformation boundary** (`transformations/span_validation.py`): shared validation checks `end <= len(text)` and `text[start:end] == span.value` before payload slicing. `B1StaticSanitizer.sanitize` fails the whole request closed (`status="blocked"`, empty payload) if any supplied span is invalid.
+- `resolve_overlaps` no longer normalizes malformed offsets to zero and now raises an explicit `ValueError` whose message contains category/offset metadata but not `span.value`.
+- The shared validator is deliberately outside `b1.py` so B2/B3/B4 can reuse the same boundary rather than reimplementing it.
+- Tests cover missing, negative, inverted, zero-length, out-of-bounds and value/offset-mismatch cases, including model-validation bypass through `model_construct`.
+- PR #19 CI is green with 58 tests.
+
+Independent review found the implementation technically sound. The work remains **in validation**, not completed, until PR #19 is merged and Issue #17 closes. Trello card T14 must remain in `Validação` until that happens.
 
 ## Remaining follow-up from B1 review
 
-### Experimental correctness follow-up
-
-Issue #16 — `Implement semantic GENERALIZE distinct from redaction`
+### T13 / Issue #16 — semantic GENERALIZE
 
 B1 currently implements `GENERALIZE` as a fixed `[REDACTED:<category>]` placeholder. This is safe for disclosure but semantically equivalent to removal, so it cannot yet support a fair utility comparison where generalization is expected to preserve partial information. A category-specific deterministic generalization strategy is required before the experiment runner produces comparative utility numbers.
 
@@ -83,12 +85,13 @@ This does **not** invalidate the completed B1 engineering slice, but it must be 
 
 ## Recommended next execution order
 
-1. Issue #3 — B2 reversible pseudonym vault and authorized reconstruction (now on top of the fail-closed span validation landed for Issue #17).
-2. Issue #12 — deterministic `FakeProvider` through the common provider adapter boundary, as required to complete Milestone 1 end-to-end.
-3. Complete B0/B1/B2 shared HR execution path and structural audit trail.
-4. Issue #16 before utility/metric collection becomes authoritative.
+1. Validate and merge PR #19 / T14; Issue #17 must close before B2 starts.
+2. T06 / Issue #3 — B2 reversible pseudonym vault and authorized reconstruction.
+3. T11 / Issue #12 — deterministic `FakeProvider` through the common provider adapter boundary, as required to complete Milestone 1 end-to-end.
+4. Complete the shared B0/B1/B2 HR execution path and structural audit trail.
+5. T13 / Issue #16 before utility/metric collection becomes authoritative.
 
-Issue #16 can be implemented before or alongside B2 if convenient, but it is a hard prerequisite for meaningful task-utility results in Issue #8, not for the basic B2 pseudonym round-trip itself.
+T06 has moved to `Próximas` because its blocker is implemented and under validation, but implementation must not start concurrently with PR #19 on the same `SensitiveSpan`/transformation boundary. T13 can be implemented before or alongside B2 if convenient; it blocks meaningful task-utility measurement, not the basic B2 pseudonym round-trip.
 
 ## Not started / incomplete in Milestone 1
 
@@ -133,7 +136,7 @@ Milestone 1 is complete when the same controlled HR case can run through B0, B1 
 - Span offset validation PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/19
 - Completed policy-engine issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/2
 - Completed detector/B1 issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/5
-- Completed span offset validation issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/17
+- Span offset validation issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/17
 - Semantic generalization follow-up: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/16
 - B2/vault issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/3
 - Provider adapter/FakeProvider issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/12
