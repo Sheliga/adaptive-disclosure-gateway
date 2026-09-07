@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-09-07 — post-Milestone 1 planning synchronization after the research-decision review. **Milestone 1 remains complete on `master`.**
+Last updated: 2026-09-07 — post-Milestone 1 planning synchronization after the research-decision review, updated for T09 Phase A completion (PR #31 review round 2). **Milestone 1 remains complete on `master`.**
 
 This file tracks the current engineering/research state and execution order. Architectural decisions belong in ADRs; experimental definitions belong in `docs/experimental-design.md`; historical PR/Issue descriptions remain in GitHub.
 
@@ -48,17 +48,17 @@ The research-decision review fixed the immediate experimental direction:
 - a simplified Next.js UI is allowed to start now from synthetic fixtures, but remains non-blocking and must not define scientific metrics/contracts;
 - the Python project will expose CLI, HTTP API and MCP as thin adapters over the same application/core boundary.
 
-## Current engineering gate
+## T09 / Issue #4 — controlled HR minicorpus and ground truth
 
-### T09 / Issue #4 — controlled HR minicorpus and ground truth
-
-**Phase A is implemented and in an open PR; the gate is not yet released.**
+**Phase A is complete. `corpus/hr/v1/` is frozen per `README.md`'s freeze
+rule: any future change to the schema, an existing case's text/offsets/
+labels, or the set of cases creates `corpus/hr/v2/` rather than editing
+`v1` in place.**
 
 `corpus/hr/v1/` (schema `SCHEMA.md`, freeze/versioning rule `README.md`, 12
 case files under `cases/`) and `src/adaptive_disclosure_gateway/corpus/`
 (`CorpusCaseInput`, `CaseOracle`, `ExpectedSpan`, `ReconstructionExpectation`,
-`TaskNecessity`, `TaskFamily`, the fail-closed YAML loader) are on branch
-`feat/t09-hr-corpus-ground-truth`, covering:
+`TaskNecessity`, `TaskFamily`, the fail-closed YAML loader) cover:
 
 - the case schema, structurally separating `input` (what a treatment may
   see) from `oracle` (scoring only — `CorpusCaseInput` is the only type
@@ -75,13 +75,26 @@ case files under `cases/`) and `src/adaptive_disclosure_gateway/corpus/`
   oracle, with `HELPFUL` representable only via a separate, auxiliary
   `ExpectedSpan.helpful` flag never mixed into the primary label;
 - expected answer / objectively verifiable property, required exactly when
-  a case does not expect `BLOCK_REQUEST` and forbidden when it does;
+  a case does not expect `BLOCK_REQUEST` and forbidden when it does, and
+  checkable purely from `input.text` — never from a compensation band,
+  department policy or wage floor known only to a scoring model or to
+  `transformations/generalization.py`'s bucket configuration
+  (`tests/test_corpus_answer_grounded_in_input.py`); a case whose task
+  requires comparing against such a reference states that reference
+  explicitly inside `input.text`;
+- `oracle.answer_depends_on_categories`, naming every category
+  `expected_answer` actually depends on: a span can only be annotated
+  `task_necessity: required` when the case's own answer depends on that
+  category, checked exactly by
+  `tests/test_corpus_task_necessity_coherence.py`;
 - expected `BLOCK_REQUEST` behavior, including a case whose only
   task-required information unit is the one hr-v1 unconditionally forbids
   (`hr_medical_block_002`) — a worked example of the "correctly blocked,
   impossible under policy" outcome docs/experimental-design.md's metrics
   distinguish from an ordinary utility failure;
-- pseudonym/reconstruction expectations where applicable.
+- pseudonym/reconstruction expectations where applicable;
+- a corpus case file's base name is validated to equal its own
+  `input.sample_id` (`CorpusLoadError` on a mismatch).
 
 Minimum HR task families, all present:
 
@@ -93,16 +106,15 @@ Minimum HR task families, all present:
 4. medical/prohibited-data case that must block
    (`medical_or_prohibited_block`).
 
-**Exit gate:** schema + cases + annotations are versioned/frozen *on
-`master`*. Implementing this in an open PR is necessary but not sufficient
-— T07/B3 is released for implementation only once this PR merges, not
-before.
+**Gate:** the B3 gate is released — schema, cases and annotations are
+versioned and frozen, satisfying T09 Phase A's exit criterion. T07 / Issue
+#6 (B3 — Task-aware) is the next critical-path step.
 
 ## Next research implementation
 
 ### T07 / Issue #6 — B3 — Task-aware
 
-Status: **blocked only by T09 Phase A**.
+Status: **ready to start — the T09 gate is released.**
 
 B3 introduces deterministic task-awareness while retaining B2 pseudonymization, vault, reconstruction and provider behavior. Its generic action space must be independent of `domain`, `purpose`, `requester_role`, `provider_class` and contextual `policy_version`, so B2→B3 isolates task-awareness.
 
@@ -110,7 +122,7 @@ T01 line/advisor selection does not block B3.
 
 ### T08 / Issue #7 — B4 — Policy-governed
 
-Status: **depends on B3 + shared T09 ground truth**.
+Status: **depends on B3 (T07) + the frozen T09 ground truth, which is now available**.
 
 B4 keeps the same task analyzer/reversible mechanism and adds explicit contextual policy constraints. Policy resolves the allowed action space first; task-awareness can only minimize within that space. B3→B4 must isolate the effect of explicit policy governance.
 
@@ -202,8 +214,9 @@ T01 must be resolved before the final submission framing/line/advisor is frozen,
 
 ### Critical research path
 
-1. **T09 / Issue #4 — freeze HR pilot corpus + ground truth.**
-2. **T07 / Issue #6 — implement B3.**
+1. **T09 / Issue #4 — freeze HR pilot corpus + ground truth.** Phase A is
+   complete: `corpus/hr/v1/` is finalized and frozen.
+2. **T07 / Issue #6 — implement B3.** Next critical-path step.
 3. **T08 / Issue #7 — implement B4.**
 4. **T10 / Issue #8 — run the controlled B0–B4 pilot and stabilize metrics/output.**
 5. Freeze utility/overhead interpretation thresholds from the pilot.
