@@ -26,7 +26,13 @@ def _precedence_rank(category: str) -> int:
 
 
 def _span_bounds(span: SensitiveSpan) -> tuple[int, int]:
-    return span.start or 0, span.end or 0
+    # No `or 0` coercion: SensitiveSpan.start/end are required, validated
+    # ints (issue #17). A span that reaches here with missing/invalid
+    # offsets (e.g. constructed via model_construct, bypassing validation)
+    # must not be silently normalized into a zero-length (0, 0) span that
+    # then passes resolution unnoticed -- it should surface as an error
+    # instead.
+    return span.start, span.end
 
 
 def _sort_key(span: SensitiveSpan) -> tuple[int, int, int, str, str]:

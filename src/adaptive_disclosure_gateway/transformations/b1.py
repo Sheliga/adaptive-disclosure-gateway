@@ -10,6 +10,7 @@ from adaptive_disclosure_gateway.domain import (
     Transformation,
 )
 from adaptive_disclosure_gateway.observability import get_tracer
+from adaptive_disclosure_gateway.transformations.span_validation import spans_are_valid
 
 # B1 baseline: a fixed, task- and policy-independent category -> action
 # mapping. It does not consult PolicyRepository, task relevance, or the
@@ -53,7 +54,21 @@ class B1StaticSanitizer:
     def sanitize(self, request: DisclosureRequest, spans: list[SensitiveSpan]) -> DisclosureResult:
         tracer = get_tracer()
         with tracer.start_as_current_span("b1.sanitize") as otel_span:
-            ordered = resolve_overlaps(list(spans))
+            spans = list(spans)
+
+            # Boundary check before any slicing: a span whose offsets are
+            # out of bounds or do not match its claimed value against
+            # ``request.text`` must fail closed rather than reach
+            # ``resolve_overlaps``/``_allowed_result``, where a malformed
+            # offset can leave the original value in an "allowed" payload
+            # (issue #17).
+            if not spans_are_valid(spans, request.text):
+                otel_span.set_attribute("b1.span_count", len(spans))
+                otel_span.set_attribute("b1.blocked", True)
+                otel_span.set_attribute("b1.categories", sorted({s.category for s in spans}))
+                return self._invalid_span_result(spans)
+
+            ordered = resolve_overlaps(spans)
             actions = [
                 ACTIONS.get(span.category, DisclosureAction.BLOCK_REQUEST) for span in ordered
             ]
@@ -97,6 +112,32 @@ class B1StaticSanitizer:
         )
 
     @staticmethod
+    def _invalid_span_result(spans: list[SensitiveSpan]) -> DisclosureResult:
+        # Fail closed for the whole request rather than trying to identify
+        # and drop only the offending span: a span with malformed offsets
+        # cannot be safely sliced, so its category (and, conservatively, the
+        # rest of the batch) is blocked rather than partially disclosed.
+        categories = sorted({span.category for span in spans})
+        decisions = [
+            PolicyDecision(
+                category=category,
+                action=DisclosureAction.BLOCK_REQUEST,
+                reason=(
+                    "B1 static baseline blocks: span offsets are missing, out of "
+                    "bounds, or do not match the source text"
+                ),
+                allowed_actions=[DisclosureAction.BLOCK_REQUEST],
+            )
+            for category in categories
+        ]
+        return DisclosureResult(
+            external_payload="",
+            decisions=decisions,
+            transformations=[],
+            status="blocked",
+        )
+
+    @staticmethod
     def _allowed_result(
         text: str, ordered: list[SensitiveSpan], actions: list[DisclosureAction]
     ) -> DisclosureResult:
@@ -107,7 +148,10 @@ class B1StaticSanitizer:
         cursor = 0
 
         for span, action in zip(ordered, actions):
-            start, end = span.start or 0, span.end or 0
+            # Offsets are guaranteed present, in-bounds and value-matched by
+            # this point: SensitiveSpan requires them, and spans_are_valid()
+            # already validated them against `text` before sanitize() got here.
+            start, end = span.start, span.end
             payload_parts.append(text[cursor:start])
 
             if action is DisclosureAction.REMOVE:

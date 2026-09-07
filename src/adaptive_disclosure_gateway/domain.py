@@ -1,7 +1,7 @@
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class DisclosureAction(StrEnum):
@@ -31,11 +31,27 @@ class GovernanceContext(BaseModel):
 
 
 class SensitiveSpan(BaseModel):
+    # ``start``/``end`` are required: a span that does not know where it sits
+    # in the source text must not be constructible at all, rather than being
+    # silently coerced to offset 0 downstream (see issue #17). ``confidence``
+    # stays optional -- it is legitimately unknown for some detection rules.
     category: str
     value: str
-    start: int | None = None
-    end: int | None = None
+    start: int
+    end: int
     confidence: float | None = Field(default=None, ge=0, le=1)
+
+    @model_validator(mode="after")
+    def _check_offsets(self) -> "SensitiveSpan":
+        # Only checks that do not require the source text: in-bounds,
+        # non-inverted, non-zero-length. Text-relative checks (end within the
+        # source text, the slice matching ``value``) live at the
+        # transformation boundary, which is the only place that has the text.
+        if self.start < 0:
+            raise ValueError("SensitiveSpan.start must be >= 0")
+        if self.end <= self.start:
+            raise ValueError("SensitiveSpan.end must be greater than start")
+        return self
 
 
 class PolicyDecision(BaseModel):
