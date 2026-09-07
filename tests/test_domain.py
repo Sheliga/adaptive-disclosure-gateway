@@ -77,7 +77,7 @@ def test_sensitive_span_rejects_zero_length_span():
         SensitiveSpan(category="cpf", value="123.456.789-09", start=5, end=5)
 
 
-# T15: Treatment enum members carry semantic names for B0–B4, but the
+# T15: Treatment enum members carry semantic names for B0-B4, but the
 # values are the frozen identifiers that traceability across docs, cards and
 # telemetry depends on (docs/experimental-design.md). This pins each member's
 # value against the frozen code, so a careless rename that also touches the
