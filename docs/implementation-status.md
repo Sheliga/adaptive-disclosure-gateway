@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-09-06
+Last updated: 2026-09-06 (PR #19 / T14 under validation)
 
 This file tracks **what is implemented now**. Architectural decisions belong in ADRs; research-proposal versions remain separate documents.
 
@@ -56,19 +56,28 @@ Known limitations retained deliberately at this stage:
 - Labeled HR extraction is controlled-fixture parsing, not free-text NER.
 - Precision/recall measurement waits for the ground-truth corpus.
 
-## Immediate follow-ups from B1 review
+## In validation
 
-### Security blocker before B2
+### T14 / Issue #17 — fail-closed span offset validation
 
-Issue #17 — `Fail closed on malformed or missing SensitiveSpan offsets`
+GitHub PR: #19 — `Fail closed on malformed or missing SensitiveSpan offsets`
 
-Review of the merged B1 implementation found that `SensitiveSpan.start` / `end` are optional in the domain model while the transformation boundary currently normalizes missing offsets to zero. A malformed externally supplied span can therefore reach a nominal `REMOVE` decision while leaving the original value in an allowed payload.
+Review of the merged B1 implementation found that `SensitiveSpan.start` / `end` were optional in the domain model while the transformation boundary normalized missing offsets to zero (`span.start or 0`). A malformed span could therefore reach a nominal `REMOVE` decision while the original value remained in an `allowed` external payload. The same coercion in overlap resolution could silently turn malformed metadata into a harmless-looking zero-length `(0, 0)` interval.
 
-Before extending the transformation boundary into B2/vault work, malformed spans must fail closed. Coverage must include missing, negative, inverted, out-of-range and value/offset-mismatch cases.
+PR #19 addresses the defect at two layers:
 
-### Experimental correctness follow-up
+- **Domain model** (`domain.py`): `SensitiveSpan.start` / `end` are required `int` fields, and construction rejects negative, inverted and zero-length offsets.
+- **Transformation boundary** (`transformations/span_validation.py`): shared validation checks `end <= len(text)` and `text[start:end] == span.value` before payload slicing. `B1StaticSanitizer.sanitize` fails the whole request closed (`status="blocked"`, empty payload) if any supplied span is invalid.
+- `resolve_overlaps` no longer normalizes malformed offsets to zero and now raises an explicit `ValueError` whose message contains category/offset metadata but not `span.value`.
+- The shared validator is deliberately outside `b1.py` so B2/B3/B4 can reuse the same boundary rather than reimplementing it.
+- Tests cover missing, negative, inverted, zero-length, out-of-bounds and value/offset-mismatch cases, including model-validation bypass through `model_construct`.
+- PR #19 CI is green with 58 tests.
 
-Issue #16 — `Implement semantic GENERALIZE distinct from redaction`
+Independent review found the implementation technically sound. The work remains **in validation**, not completed, until PR #19 is merged and Issue #17 closes. Trello card T14 must remain in `Validação` until that happens.
+
+## Remaining follow-up from B1 review
+
+### T13 / Issue #16 — semantic GENERALIZE
 
 B1 currently implements `GENERALIZE` as a fixed `[REDACTED:<category>]` placeholder. This is safe for disclosure but semantically equivalent to removal, so it cannot yet support a fair utility comparison where generalization is expected to preserve partial information. A category-specific deterministic generalization strategy is required before the experiment runner produces comparative utility numbers.
 
@@ -76,17 +85,16 @@ This does **not** invalidate the completed B1 engineering slice, but it must be 
 
 ## Recommended next execution order
 
-1. Issue #17 — harden `SensitiveSpan` validation / fail-closed transformation behavior.
-2. Issue #3 — B2 reversible pseudonym vault and authorized reconstruction.
-3. Issue #12 — deterministic `FakeProvider` through the common provider adapter boundary, as required to complete Milestone 1 end-to-end.
-4. Complete B0/B1/B2 shared HR execution path and structural audit trail.
-5. Issue #16 before utility/metric collection becomes authoritative.
+1. Validate and merge PR #19 / T14; Issue #17 must close before B2 starts.
+2. T06 / Issue #3 — B2 reversible pseudonym vault and authorized reconstruction.
+3. T11 / Issue #12 — deterministic `FakeProvider` through the common provider adapter boundary, as required to complete Milestone 1 end-to-end.
+4. Complete the shared B0/B1/B2 HR execution path and structural audit trail.
+5. T13 / Issue #16 before utility/metric collection becomes authoritative.
 
-Issue #16 can be implemented before or alongside B2 if convenient, but it is a hard prerequisite for meaningful task-utility results in Issue #8, not for the basic B2 pseudonym round-trip itself.
+T06 has moved to `Próximas` because its blocker is implemented and under validation, but implementation must not start concurrently with PR #19 on the same `SensitiveSpan`/transformation boundary. T13 can be implemented before or alongside B2 if convenient; it blocks meaningful task-utility measurement, not the basic B2 pseudonym round-trip.
 
 ## Not started / incomplete in Milestone 1
 
-- hardened malformed-span validation (Issue #17);
 - `InMemoryVault` / `SQLiteVault`;
 - B2 reversible pseudonymization;
 - pseudonym property tests with Hypothesis;
@@ -125,9 +133,10 @@ Milestone 1 is complete when the same controlled HR case can run through B0, B1 
 - Foundation PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/10
 - B0–B4 design PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/13
 - Detector/B1 PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/15
+- Span offset validation PR: https://github.com/Sheliga/adaptive-disclosure-gateway/pull/19
 - Completed policy-engine issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/2
 - Completed detector/B1 issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/5
-- Security hardening follow-up: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/17
+- Span offset validation issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/17
 - Semantic generalization follow-up: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/16
 - B2/vault issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/3
 - Provider adapter/FakeProvider issue: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/12

@@ -3,6 +3,7 @@ from adaptive_disclosure_gateway.domain import (
     DisclosureAction,
     DisclosureRequest,
     GovernanceContext,
+    SensitiveSpan,
 )
 from adaptive_disclosure_gateway.transformations import B1StaticSanitizer
 
@@ -71,8 +72,6 @@ def test_medical_data_blocks_entire_request_and_suppresses_other_spans():
 
 
 def test_unmapped_category_fails_closed_instead_of_leaking():
-    from adaptive_disclosure_gateway.domain import SensitiveSpan
-
     request = _request("some free text value here")
     spans = [SensitiveSpan(category="unknown_category", value="value here", start=15, end=25)]
 
@@ -107,3 +106,96 @@ def test_sanitizer_is_deterministic_across_runs():
     second = B1StaticSanitizer().sanitize(request, spans)
 
     assert first == second
+
+
+# Issue #17: a span with missing/malformed offsets used to reach
+# `_allowed_result`'s `span.start or 0, span.end or 0` coercion, which turned
+# `start=None, end=None` into a zero-length slice at offset 0. The cursor
+# never advanced, so the trailing `text[cursor:]` re-appended the entire
+# original text -- an "allowed" result claiming a REMOVE had happened while
+# actually disclosing the full sensitive value. SensitiveSpan now requires
+# valid offsets, so such a span can no longer be constructed through the
+# normal constructor; `model_construct` bypasses that validation entirely
+# (it skips Pydantic's validators), so it is the only way left to get a
+# malformed span into the sanitizer, and is used below to prove the boundary
+# check in `B1StaticSanitizer.sanitize` -- not just the model -- stops it.
+
+
+def test_span_with_missing_offsets_bypassing_model_is_blocked_not_leaked():
+    text = "CPF: 123.456.789-09 recorded."
+    request = _request(text)
+    malformed = SensitiveSpan.model_construct(
+        category="cpf", value="123.456.789-09", start=None, end=None, confidence=None
+    )
+
+    result = B1StaticSanitizer().sanitize(request, [malformed])
+
+    assert result.status == "blocked"
+    assert result.external_payload == ""
+    assert "123.456.789-09" not in result.external_payload
+
+
+def test_span_with_negative_start_bypassing_model_is_blocked():
+    text = "CPF: 123.456.789-09 recorded."
+    request = _request(text)
+    malformed = SensitiveSpan.model_construct(
+        category="cpf", value="123.456.789-09", start=-5, end=20, confidence=None
+    )
+
+    result = B1StaticSanitizer().sanitize(request, [malformed])
+
+    assert result.status == "blocked"
+    assert "123.456.789-09" not in result.external_payload
+
+
+def test_span_with_inverted_offsets_bypassing_model_is_blocked():
+    text = "CPF: 123.456.789-09 recorded."
+    request = _request(text)
+    malformed = SensitiveSpan.model_construct(
+        category="cpf", value="123.456.789-09", start=20, end=5, confidence=None
+    )
+
+    result = B1StaticSanitizer().sanitize(request, [malformed])
+
+    assert result.status == "blocked"
+    assert "123.456.789-09" not in result.external_payload
+
+
+def test_span_with_zero_length_offsets_bypassing_model_is_blocked():
+    text = "CPF: 123.456.789-09 recorded."
+    request = _request(text)
+    malformed = SensitiveSpan.model_construct(
+        category="cpf", value="123.456.789-09", start=5, end=5, confidence=None
+    )
+
+    result = B1StaticSanitizer().sanitize(request, [malformed])
+
+    assert result.status == "blocked"
+    assert "123.456.789-09" not in result.external_payload
+
+
+def test_span_with_out_of_bounds_end_is_blocked():
+    text = "CPF: 123.456.789-09 recorded."
+    request = _request(text)
+    # A well-formed SensitiveSpan (passes the model's own validator) whose
+    # `end` still runs past the actual source text -- only catchable at the
+    # boundary, since the model never sees `text`.
+    out_of_bounds = SensitiveSpan(category="cpf", value="123.456.789-09", start=5, end=1000)
+
+    result = B1StaticSanitizer().sanitize(request, [out_of_bounds])
+
+    assert result.status == "blocked"
+    assert "123.456.789-09" not in result.external_payload
+
+
+def test_span_with_value_offset_mismatch_is_blocked():
+    text = "CPF: 123.456.789-09 recorded."
+    request = _request(text)
+    # Offsets are in-bounds and well-formed, but they point at a different
+    # slice of `text` than the one the span claims as its value.
+    mismatched = SensitiveSpan(category="cpf", value="123.456.789-09", start=0, end=4)
+
+    result = B1StaticSanitizer().sanitize(request, [mismatched])
+
+    assert result.status == "blocked"
+    assert "123.456.789-09" not in result.external_payload

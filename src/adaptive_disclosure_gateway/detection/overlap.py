@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from adaptive_disclosure_gateway.domain import SensitiveSpan
+from adaptive_disclosure_gateway.domain import (
+    SensitiveSpan,
+    span_offsets_are_structurally_valid,
+)
 
 # Fixed precedence used to break ties between equally long overlapping spans.
 # Earlier categories win. A category absent from this tuple is treated as
@@ -26,7 +29,13 @@ def _precedence_rank(category: str) -> int:
 
 
 def _span_bounds(span: SensitiveSpan) -> tuple[int, int]:
-    return span.start or 0, span.end or 0
+    # No `or 0` coercion: SensitiveSpan.start/end are required, validated
+    # ints (issue #17). A span that reaches here with missing/invalid
+    # offsets (e.g. constructed via model_construct, bypassing validation)
+    # must not be silently normalized into a zero-length (0, 0) span that
+    # then passes resolution unnoticed -- it should surface as an error
+    # instead.
+    return span.start, span.end
 
 
 def _sort_key(span: SensitiveSpan) -> tuple[int, int, int, str, str]:
@@ -53,7 +62,22 @@ def resolve_overlaps(spans: list[SensitiveSpan]) -> list[SensitiveSpan]:
     overlap a span already kept (a variant of the classic weighted
     interval-scheduling greedy algorithm, weighted by the key above rather
     than by end time). The result is returned sorted by start offset.
+
+    Fails closed: every span is checked against
+    ``domain.span_offsets_are_structurally_valid`` before any sorting takes
+    place. A span with missing or invalid offsets (only reachable via
+    ``SensitiveSpan.model_construct``, which bypasses Pydantic validation)
+    raises ``ValueError`` naming the offending span's category and offsets --
+    never its ``value``, which is sensitive data that must not end up in a
+    log or traceback.
     """
+    for span in spans:
+        if not span_offsets_are_structurally_valid(span):
+            raise ValueError(
+                "SensitiveSpan with invalid offsets cannot be resolved: "
+                f"category={span.category!r} start={span.start!r} end={span.end!r}"
+            )
+
     ordered = sorted(spans, key=_sort_key)
     accepted: list[SensitiveSpan] = []
     accepted_bounds: list[tuple[int, int]] = []

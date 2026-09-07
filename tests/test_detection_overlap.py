@@ -1,3 +1,5 @@
+import pytest
+
 from adaptive_disclosure_gateway.detection import Detector
 from adaptive_disclosure_gateway.detection.overlap import resolve_overlaps
 from adaptive_disclosure_gateway.domain import SensitiveSpan
@@ -43,3 +45,33 @@ def test_resolve_overlaps_is_total_for_non_overlapping_spans():
     resolved = resolve_overlaps([second, first])
 
     assert resolved == [first, second]
+
+
+def test_resolve_overlaps_does_not_silently_normalize_missing_offsets_to_zero_length():
+    # Before issue #17, `_span_bounds` coerced `start=None, end=None` to
+    # `(0, 0)`: a degenerate zero-length interval that never overlaps
+    # anything, so the malformed span was silently accepted into the
+    # resolved output instead of being flagged. `model_construct` bypasses
+    # `SensitiveSpan`'s own offset validation (it skips Pydantic validators
+    # entirely), which is the only way to get such a span past the domain
+    # model at all.
+    #
+    # `resolve_overlaps` must fail closed with an explicit `ValueError`
+    # rather than an incidental `TypeError` raised by arithmetic on `None`
+    # inside `_sort_key` -- the guard is a deliberate contract, not a side
+    # effect of subtraction order.
+    malformed = SensitiveSpan.model_construct(
+        category="cpf", value="secret-value-123", start=None, end=None, confidence=None
+    )
+    valid = SensitiveSpan(category="email", value="a@b.com", start=0, end=7)
+
+    with pytest.raises(ValueError) as exc_info:
+        resolve_overlaps([malformed, valid])
+
+    message = str(exc_info.value)
+    assert "cpf" in message
+    assert "start=None" in message
+    assert "end=None" in message
+    # The sensitive `value` must never leak into an exception message: it
+    # would end up in logs and tracebacks.
+    assert malformed.value not in message
