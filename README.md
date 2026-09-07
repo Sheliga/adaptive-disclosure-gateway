@@ -10,7 +10,7 @@ This repository supports a **candidate master's research proposal** for UTFPR PP
 
 ## Current implementation status
 
-The architecture foundation, deterministic detector and B1 static sanitizer are implemented and merged. Fail-closed hardening for malformed `SensitiveSpan` offsets is implemented in PR #19 and is currently under validation; B2/vault/reconstruction/FakeProvider remain pending. B2 must not start until PR #19 is merged and Issue #17 is closed.
+The architecture foundation, deterministic detector and the B1 — Static Sanitization sanitizer (`StaticSanitizer`) are implemented and merged. Fail-closed hardening for malformed `SensitiveSpan` offsets is implemented in PR #19 and is currently under validation; B2 — Reversible Pseudonymization, the vault, reconstruction and `FakeProvider` remain pending. B2 must not start until PR #19 is merged and Issue #17 is closed.
 
 See [`docs/implementation-status.md`](docs/implementation-status.md) for the live engineering status, current blockers and recommended execution order. Architectural decisions are recorded separately in [`docs/adr/0001-milestone-1-architecture.md`](docs/adr/0001-milestone-1-architecture.md).
 
@@ -83,7 +83,7 @@ The first implementation milestone uses a simplified HR slice. Contracts follow 
 
 ## Milestone 1
 
-The first functional milestone is **B0 + B1 + B2 end-to-end over direct HR text using a deterministic FakeProvider**.
+The first functional milestone is **B0 — Direct + B1 + B2 end-to-end over direct HR text using a deterministic FakeProvider**.
 
 Frozen RH categories:
 
@@ -97,11 +97,11 @@ Development follows TDD. The audit trail data model is created from the beginnin
 
 ## Experimental treatments
 
-- **B0** — direct/full external disclosure.
-- **B1** — static sanitization.
-- **B2** — static reversible pseudonymization.
-- **B3** — task-aware minimization without strong contextual organizational policy constraints, retaining the same reversible pseudonymization/vault/reconstruction mechanism used by B2 so the B2→B3 comparison isolates task-awareness rather than reversibility.
-- **B4** — proposed approach: contextual policy constraints + task-aware minimization + reversible pseudonymization + local reconstruction.
+- **B0 — Direct** — direct/full external disclosure.
+- **B1 — Static Sanitization** — static sanitization.
+- **B2 — Reversible Pseudonymization** — static reversible pseudonymization.
+- **B3 — Task-aware** — task-aware minimization without strong contextual organizational policy constraints, retaining the same reversible pseudonymization/vault/reconstruction mechanism used by B2 so the B2→B3 comparison isolates task-awareness rather than reversibility.
+- **B4 — Policy-governed** — proposed approach: contextual policy constraints + task-aware minimization + reversible pseudonymization + local reconstruction.
 
 All treatments must use compatible request/result contracts so they can run against the same cases.
 

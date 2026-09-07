@@ -54,7 +54,7 @@ def test_pseudonym_scope_rejects_unknown_values():
 # construction time, so such a span cannot be built at all. Checks that
 # depend on the source text (in-bounds `end`, value/offset match) cannot
 # live here -- the model has no access to the text -- and are covered at the
-# transformation boundary instead (tests/test_b1_sanitizer.py).
+# transformation boundary instead (tests/test_static_sanitization.py).
 
 
 def test_sensitive_span_rejects_missing_offsets():

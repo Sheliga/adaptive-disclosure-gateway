@@ -9,9 +9,9 @@ This file tracks **what is implemented now**. Architectural decisions belong in 
 Milestone 1 is the first functional vertical slice:
 
 - direct HR text input;
-- B0 direct disclosure;
-- B1 static sanitization;
-- B2 static reversible pseudonymization;
+- B0 — Direct disclosure;
+- B1 — Static Sanitization;
+- B2 — Reversible Pseudonymization;
 - deterministic `FakeProvider`;
 - local vault and authorized reconstruction;
 - auditable end-to-end execution without requiring a real external LLM.
@@ -44,9 +44,9 @@ Merged PR: #15 — `Implement sensitive-data detector and B1 static sanitizer`
 - `Detector` (`src/adaptive_disclosure_gateway/detection/`): deterministic regex rules for structured Brazilian identifiers (CPF, CNPJ, e-mail, phone, matched only in their canonical punctuated format) plus a deliberately simple labeled-line detector (`Label: value`) for the controlled HR fixture's `employee_name`, `salary`, `department` and `medical_data` categories.
 - The detector is intentionally **not** a general NER component and depends on no NER library.
 - Deterministic overlap resolution: longest match wins; equal-length overlaps are broken by fixed category precedence, then leftmost start, category name and value.
-- `B1StaticSanitizer`: fixed task- and policy-independent category → action mapping, with static-analysis tests preventing dependency on policy, task-awareness or vault code.
+- `StaticSanitizer`: fixed task- and policy-independent category → action mapping, with static-analysis tests preventing dependency on policy, task-awareness or vault code.
 - `REMOVE`, `PRESERVE`, `GENERALIZE` and `BLOCK_REQUEST` paths are covered by tests; an unmapped category blocks rather than silently disclosing.
-- OpenTelemetry detector/B1 spans are metadata-only; tests assert that raw text, detected values and external payloads do not appear in span attributes.
+- OpenTelemetry detector/static-sanitization spans are metadata-only; tests assert that raw text, detected values and external payloads do not appear in span attributes.
 - Controlled synthetic HR fixture covers all five frozen categories and both allowed and blocking flows.
 - PR #15 CI passed with 39 tests; Issue #5 closed.
 
@@ -67,9 +67,9 @@ Review of the merged B1 implementation found that `SensitiveSpan.start` / `end` 
 PR #19 addresses the defect at two layers:
 
 - **Domain model** (`domain.py`): `SensitiveSpan.start` / `end` are required `int` fields, and construction rejects negative, inverted and zero-length offsets.
-- **Transformation boundary** (`transformations/span_validation.py`): shared validation checks `end <= len(text)` and `text[start:end] == span.value` before payload slicing. `B1StaticSanitizer.sanitize` fails the whole request closed (`status="blocked"`, empty payload) if any supplied span is invalid.
+- **Transformation boundary** (`transformations/span_validation.py`): shared validation checks `end <= len(text)` and `text[start:end] == span.value` before payload slicing. `StaticSanitizer.sanitize` fails the whole request closed (`status="blocked"`, empty payload) if any supplied span is invalid.
 - `resolve_overlaps` no longer normalizes malformed offsets to zero and now raises an explicit `ValueError` whose message contains category/offset metadata but not `span.value`.
-- The shared validator is deliberately outside `b1.py` so B2/B3/B4 can reuse the same boundary rather than reimplementing it.
+- The shared validator is deliberately outside `static_sanitization.py` so B2/B3/B4 can reuse the same boundary rather than reimplementing it.
 - Tests cover missing, negative, inverted, zero-length, out-of-bounds and value/offset-mismatch cases, including model-validation bypass through `model_construct`.
 - PR #19 CI is green with 58 tests.
 
@@ -105,8 +105,8 @@ T06 has moved to `Próximas` because its blocker is implemented and under valida
 
 ## Post-Milestone 1
 
-- B3 task-aware minimization without strong contextual organizational policy constraints;
-- B4 proposed policy-governed disclosure approach;
+- B3 — Task-aware minimization without strong contextual organizational policy constraints;
+- B4 — Policy-governed proposed disclosure approach;
 - Docling ingestion adapter for PDF/DOCX/XLSX/images;
 - richer contract-oriented corpus and semantic-relation tests;
 - real external/Ollama provider adapters;

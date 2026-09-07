@@ -33,7 +33,7 @@ ACTIONS: dict[str, DisclosureAction] = {
 _GENERALIZED_PLACEHOLDER = "[REDACTED:{category}]"
 
 
-class B1StaticSanitizer:
+class StaticSanitizer:
     """B1 treatment: static sanitization independent of task and policy.
 
     Applies the fixed ``ACTIONS`` mapping above to detected spans, producing
@@ -56,8 +56,9 @@ class B1StaticSanitizer:
 
     def sanitize(self, request: DisclosureRequest, spans: list[SensitiveSpan]) -> DisclosureResult:
         tracer = get_tracer()
-        with tracer.start_as_current_span("b1.sanitize") as otel_span:
+        with tracer.start_as_current_span("static_sanitization.sanitize") as otel_span:
             spans = list(spans)
+            otel_span.set_attribute("treatment", self.treatment.value)
 
             # Boundary check before any slicing: a span whose offsets are
             # out of bounds or do not match its claimed value against
@@ -66,9 +67,11 @@ class B1StaticSanitizer:
             # offset can leave the original value in an "allowed" payload
             # (issue #17).
             if not spans_are_valid(spans, request.text):
-                otel_span.set_attribute("b1.span_count", len(spans))
-                otel_span.set_attribute("b1.blocked", True)
-                otel_span.set_attribute("b1.categories", sorted({s.category for s in spans}))
+                otel_span.set_attribute("static_sanitization.span_count", len(spans))
+                otel_span.set_attribute("static_sanitization.blocked", True)
+                otel_span.set_attribute(
+                    "static_sanitization.categories", sorted({s.category for s in spans})
+                )
                 return self._invalid_span_result(spans)
 
             ordered = resolve_overlaps(spans)
@@ -79,9 +82,11 @@ class B1StaticSanitizer:
 
             # Metadata only: categories, counts and a block flag -- never the
             # detected value, the raw text, or the payload.
-            otel_span.set_attribute("b1.span_count", len(ordered))
-            otel_span.set_attribute("b1.blocked", blocked)
-            otel_span.set_attribute("b1.categories", sorted({s.category for s in ordered}))
+            otel_span.set_attribute("static_sanitization.span_count", len(ordered))
+            otel_span.set_attribute("static_sanitization.blocked", blocked)
+            otel_span.set_attribute(
+                "static_sanitization.categories", sorted({s.category for s in ordered})
+            )
 
             if blocked:
                 return self._blocked_result(ordered, actions)
