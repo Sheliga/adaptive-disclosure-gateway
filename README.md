@@ -10,7 +10,7 @@ This repository supports a **candidate master's research proposal** for UTFPR PP
 
 ## Current implementation status
 
-The architecture foundation, deterministic detector and B1 static sanitizer are implemented and merged. B1 is now the first completed treatment beyond B0, but Milestone 1 is not complete: malformed `SensitiveSpan` metadata still needs fail-closed hardening before the same transformation boundary is extended into B2, and B2/vault/reconstruction/FakeProvider remain pending.
+The architecture foundation, deterministic detector and B1 static sanitizer are implemented and merged. Fail-closed hardening for malformed `SensitiveSpan` offsets is implemented in PR #19 and is currently under validation; B2/vault/reconstruction/FakeProvider remain pending. B2 must not start until PR #19 is merged and Issue #17 is closed.
 
 See [`docs/implementation-status.md`](docs/implementation-status.md) for the live engineering status, current blockers and recommended execution order. Architectural decisions are recorded separately in [`docs/adr/0001-milestone-1-architecture.md`](docs/adr/0001-milestone-1-architecture.md).
 
