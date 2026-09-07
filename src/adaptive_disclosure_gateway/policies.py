@@ -150,6 +150,24 @@ class PolicyRepository:
     def resolve_pseudonym_scope(self, context: GovernanceContext) -> PseudonymScope:
         policy = self._policies.get(context.policy_version)
         if policy is None or policy.domain != context.domain:
+            # Fail-closed default: REQUEST is the narrowest scope, so an
+            # unresolvable policy falls back to the shortest-lived partition
+            # rather than an unbounded one.
+            #
+            # Deliberate decision (issue #23 / T16's named trap): before this
+            # issue, REQUEST, DOCUMENT and SESSION all keyed the vault on
+            # requester identity, so defaulting to REQUEST here behaved
+            # exactly like defaulting to SESSION -- harmless either way.
+            # Now that REQUEST genuinely demands `context.request_id`
+            # (`_scope_key` in transformations/reversible_pseudonymization.py
+            # no longer falls back to requester identity), a caller that hits
+            # this branch *and* has no request_id will be blocked outright
+            # instead of silently resolving some other partition. That is
+            # fail-closed twice for two independent reasons -- an
+            # unresolvable policy, and a missing identifier -- and is kept
+            # as-is rather than weakened to dodge it. Covered by
+            # tests/test_reversible_pseudonymization.py::
+            # test_unresolvable_policy_defaults_to_request_scope_and_blocks_without_a_request_id.
             return PseudonymScope.REQUEST
 
         scope_policy = policy.pseudonym_scope

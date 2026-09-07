@@ -14,7 +14,7 @@ from adaptive_disclosure_gateway.domain import (
     Transformation,
     Treatment,
 )
-from adaptive_disclosure_gateway.observability import get_tracer
+from adaptive_disclosure_gateway.observability import elapsed_ms_since, get_tracer
 from adaptive_disclosure_gateway.policies import PolicyRepository
 from adaptive_disclosure_gateway.transformations.span_validation import spans_are_valid
 from adaptive_disclosure_gateway.vault import Vault
@@ -95,28 +95,42 @@ def _resolve_actions_and_generalized_values(
     return actions, generalized_values
 
 
-def _scope_key(scope: PseudonymScope, context: GovernanceContext) -> str:
+_SCOPE_IDENTIFIER_ATTR: dict[PseudonymScope, str] = {
+    PseudonymScope.REQUEST: "request_id",
+    PseudonymScope.DOCUMENT: "document_id",
+    PseudonymScope.SESSION: "session_id",
+}
+
+
+def _scope_key(scope: PseudonymScope, context: GovernanceContext) -> str | None:
     """Deterministically derive a vault partition key from governance
     context alone, so a later, separate call to ``reconstruct()`` with an
     equal context recomputes the identical key used during ``sanitize()``
     without needing extra state threaded through ``DisclosureResult`` (whose
     shape must stay identical across every treatment).
 
-    Known Milestone 1 simplification: ``GovernanceContext`` does not yet
-    model an explicit per-request or per-document identifier (no session or
-    document orchestration layer exists yet -- see
-    docs/implementation-status.md). REQUEST and DOCUMENT scope therefore key
-    on the same requester identity as SESSION scope; only ORGANIZATION scope
-    (shared by every requester in a domain) is actually distinguishable from
-    the others today. All four remain mutually isolated in the vault because
-    the scope name itself is folded into the key, so this simplification
-    never lets two *different* scopes share a mapping -- it only means
-    REQUEST/DOCUMENT are, for now, as durable as SESSION.
+    Issue #23 / T16: each scope now keys on the lifecycle identifier its name
+    actually promises, not on requester identity --
+    REQUEST -> ``request_id``, DOCUMENT -> ``document_id``,
+    SESSION -> ``session_id``, ORGANIZATION -> the domain alone (shared by
+    every requester in the domain, unchanged from before). There is no
+    fallback to ``requester_id``/``requester_role``: a partition durable
+    beyond its scope's intended lifetime, or shared by two different users
+    who happen to lack an identifier, is exactly the defect this closes.
+
+    Returns ``None`` -- rather than inventing or falling back to a weaker
+    key -- when the resolved scope needs an identifier that ``context`` does
+    not carry. Callers must treat ``None`` as "fail closed": block the
+    request in ``sanitize()``, return nothing reconstructed in
+    ``reconstruct()``. Never let a missing identifier silently resolve some
+    other partition.
     """
-    requester_key = context.requester_id or context.requester_role or "anonymous"
     if scope is PseudonymScope.ORGANIZATION:
         return f"organization:{context.domain}"
-    return f"{scope.value}:{context.domain}:{requester_key}"
+    identifier = getattr(context, _SCOPE_IDENTIFIER_ATTR[scope])
+    if identifier is None:
+        return None
+    return f"{scope.value}:{context.domain}:{identifier}"
 
 
 class ReversiblePseudonymizer:
@@ -169,7 +183,7 @@ class ReversiblePseudonymizer:
             if blocked:
                 otel_span.set_attribute(
                     "reversible_pseudonymization.duration_ms",
-                    (time.perf_counter() - started) * 1000,
+                    elapsed_ms_since(started),
                 )
                 return self._blocked_result(ordered, actions)
 
@@ -177,11 +191,23 @@ class ReversiblePseudonymizer:
             scope_key = _scope_key(scope, request.context)
             otel_span.set_attribute("reversible_pseudonymization.pseudonym_scope", scope.value)
 
+            if scope_key is None:
+                # Fail closed (issue #23 / T16): the resolved scope requires
+                # a lifecycle identifier the governance context does not
+                # carry. Block the whole request rather than resolving some
+                # other, weaker partition -- see _scope_key's docstring.
+                otel_span.set_attribute("reversible_pseudonymization.blocked", True)
+                otel_span.set_attribute(
+                    "reversible_pseudonymization.duration_ms",
+                    elapsed_ms_since(started),
+                )
+                return self._missing_scope_identifier_result(ordered)
+
             result = self._allowed_result(
                 request.text, ordered, actions, generalized_values, scope, scope_key
             )
             otel_span.set_attribute(
-                "reversible_pseudonymization.duration_ms", (time.perf_counter() - started) * 1000
+                "reversible_pseudonymization.duration_ms", elapsed_ms_since(started)
             )
             return result
 
@@ -216,6 +242,12 @@ class ReversiblePseudonymizer:
 
             scope = self._policies.resolve_pseudonym_scope(context)
             scope_key = _scope_key(scope, context)
+            if scope_key is None:
+                # Fail closed (issue #23 / T16): the resolved scope requires
+                # a lifecycle identifier ``context`` does not carry. Return
+                # nothing reconstructed rather than falling back to another
+                # partition -- never substitute in an original value here.
+                return response_text
 
             # Longest pseudonym first: defensive against one pseudonym
             # string happening to be a substring of another, which would
@@ -252,6 +284,34 @@ class ReversiblePseudonymizer:
                 allowed_actions=[DisclosureAction.BLOCK_REQUEST],
             )
             for category in blocking_categories
+        ]
+        return DisclosureResult(
+            external_payload="",
+            decisions=decisions,
+            transformations=[],
+            status="blocked",
+        )
+
+    @staticmethod
+    def _missing_scope_identifier_result(ordered: list[SensitiveSpan]) -> DisclosureResult:
+        """Fail-closed result for issue #23 / T16: the resolved pseudonym
+        scope needs a lifecycle identifier (``request_id``, ``document_id``
+        or ``session_id``) that the governance context does not carry.
+        Blocks the whole request rather than resolving some other,
+        unintended partition -- see ``_scope_key``.
+        """
+        categories = sorted({span.category for span in ordered})
+        decisions = [
+            PolicyDecision(
+                category=category,
+                action=DisclosureAction.BLOCK_REQUEST,
+                reason=(
+                    "B2 reversible pseudonymization blocks: the resolved pseudonym scope "
+                    "requires a lifecycle identifier the governance context does not provide"
+                ),
+                allowed_actions=[DisclosureAction.BLOCK_REQUEST],
+            )
+            for category in categories
         ]
         return DisclosureResult(
             external_payload="",

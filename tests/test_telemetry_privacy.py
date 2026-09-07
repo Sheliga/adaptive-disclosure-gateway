@@ -9,7 +9,9 @@ from adaptive_disclosure_gateway.detection import Detector
 from adaptive_disclosure_gateway.domain import DisclosureRequest, GovernanceContext
 from adaptive_disclosure_gateway.policies import PolicyRepository
 from adaptive_disclosure_gateway.transformations import ReversiblePseudonymizer, StaticSanitizer
+from adaptive_disclosure_gateway.transformations.direct_disclosure import DirectDiscloser
 from adaptive_disclosure_gateway.vault import InMemoryVault
+from tests import telemetry_assertions
 
 POLICY_DIR = Path(__file__).parents[1] / "configs" / "policies"
 
@@ -22,18 +24,32 @@ SECRET_TEXT = (
 # telemetry either -- not just through the external payload.
 UNPARSEABLE_SALARY_TEXT = "Salary: to be negotiated later\n"
 
+# The substring-leak scan itself now lives in tests/telemetry_assertions.py
+# (hardened to skip numeric/boolean attributes -- see that module's
+# docstring): aliased here under the previous private name so every call
+# site below is unchanged.
+_assert_span_attributes_never_leak = telemetry_assertions.assert_span_attributes_never_leak
 
-def _assert_span_attributes_never_leak(spans, *forbidden_values: str) -> None:
-    assert spans, "expected at least one recorded span"
-    for span in spans:
-        for key, value in span.attributes.items():
-            serialized = str(value)
-            for forbidden in forbidden_values:
-                if not forbidden:
-                    continue
-                assert forbidden not in serialized, (
-                    f"span attribute {key}={serialized!r} leaked forbidden value {forbidden!r}"
-                )
+
+def test_b0_span_attributes_never_contain_the_raw_text_even_though_it_is_the_payload(
+    recorded_spans,
+):
+    # B0's external payload *is* the raw input text (issue #25) -- the one
+    # treatment where the usual "don't log the payload" span rule and "don't
+    # log the raw text" span rule are the same rule, checked against the
+    # same string. A naive implementation logging e.g. the payload "for
+    # debugging" would be an actual leak here, not a false positive.
+    request = DisclosureRequest(
+        text=SECRET_TEXT,
+        task="summarize",
+        context=GovernanceContext(domain="hr", purpose="team_summary", policy_version="hr-v1"),
+    )
+
+    result = DirectDiscloser().sanitize(request, spans=[])
+
+    finished = recorded_spans.get_finished_spans()
+    _assert_span_attributes_never_leak(finished, "Ana Souza", "123.456.789-09", "8500", SECRET_TEXT)
+    assert result.external_payload == SECRET_TEXT
 
 
 def test_detector_span_attributes_never_contain_detected_values_or_raw_text(recorded_spans):
@@ -67,7 +83,11 @@ def test_b2_span_attributes_never_contain_detected_values_payload_or_pseudonym_m
         text=SECRET_TEXT,
         task="summarize",
         context=GovernanceContext(
-            domain="hr", purpose="team_summary", requester_id="u1", policy_version="hr-v1"
+            domain="hr",
+            purpose="team_summary",
+            requester_id="u1",
+            policy_version="hr-v1",
+            session_id="s1",
         ),
     )
     spans = Detector().detect(SECRET_TEXT)
@@ -142,7 +162,11 @@ def test_b2_reconstruct_span_attributes_never_contain_original_values(recorded_s
         text=SECRET_TEXT,
         task="summarize",
         context=GovernanceContext(
-            domain="hr", purpose="team_summary", requester_id="u1", policy_version="hr-v1"
+            domain="hr",
+            purpose="team_summary",
+            requester_id="u1",
+            policy_version="hr-v1",
+            session_id="s1",
         ),
     )
     spans = Detector().detect(SECRET_TEXT)

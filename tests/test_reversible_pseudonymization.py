@@ -12,6 +12,7 @@ from adaptive_disclosure_gateway.domain import (
     DisclosureAction,
     DisclosureRequest,
     GovernanceContext,
+    PseudonymScope,
     SensitiveSpan,
 )
 from adaptive_disclosure_gateway.policies import PolicyRepository
@@ -28,9 +29,20 @@ def _request(text: str, **context_overrides) -> DisclosureRequest:
         "requester_role": "hr_analyst",
         "requester_id": "u1",
         "policy_version": "hr-v1",
+        # hr_analyst's ceiling is SESSION (configs/policies/hr-v1.yaml) and
+        # the model default requested scope is also SESSION, so most cases
+        # below resolve to SESSION and therefore need a session_id (issue
+        # #23 / T16 removed the old requester-identity fallback). Tests that
+        # exercise a different resolved scope, or the missing-identifier
+        # fail-closed path, override this explicitly.
+        "session_id": "s1",
     }
     values.update(context_overrides)
     return DisclosureRequest(text=text, task="summarize", context=GovernanceContext(**values))
+
+
+def _employee_name_pseudonym(result) -> str:
+    return next(t.transformed for t in result.transformations if t.category == "employee_name")
 
 
 def _pseudonymizer() -> ReversiblePseudonymizer:
@@ -135,20 +147,24 @@ def test_pseudonyms_are_stable_for_the_same_value_within_the_same_scope():
     assert first_pseudonym == second_pseudonym
 
 
-def test_different_requesters_do_not_share_pseudonym_mappings():
+def test_two_users_sharing_a_role_no_longer_share_a_partition():
+    # Before issue #23 / T16, a missing requester_id fell back to
+    # requester_role, so two different users sharing a role and both lacking
+    # a requester_id collapsed onto the very same vault partition. Both
+    # requesters below share a role and omit requester_id entirely; only
+    # their session identifier differs, exactly as two genuinely distinct
+    # users' sessions would.
     pseudonymizer = _pseudonymizer()
     text = "Employee: Ana Souza\n"
 
-    from_u1 = pseudonymizer.sanitize(_request(text, requester_id="u1"), Detector().detect(text))
-    from_u2 = pseudonymizer.sanitize(_request(text, requester_id="u2"), Detector().detect(text))
+    alice = pseudonymizer.sanitize(
+        _request(text, requester_id=None, session_id="alice-session"), Detector().detect(text)
+    )
+    bob = pseudonymizer.sanitize(
+        _request(text, requester_id=None, session_id="bob-session"), Detector().detect(text)
+    )
 
-    pseudonym_u1 = next(
-        t.transformed for t in from_u1.transformations if t.category == "employee_name"
-    )
-    pseudonym_u2 = next(
-        t.transformed for t in from_u2.transformations if t.category == "employee_name"
-    )
-    assert pseudonym_u1 != pseudonym_u2
+    assert _employee_name_pseudonym(alice) != _employee_name_pseudonym(bob)
 
 
 def test_round_trip_reconstruction_recovers_the_original_value():
@@ -268,3 +284,223 @@ def test_external_payload_never_contains_original_values():
     assert (
         "Engineering" in result.external_payload
     )  # PRESERVE still discloses non-sensitive-mapped fields
+
+
+# --- Issue #23 / T16: real REQUEST/DOCUMENT/SESSION lifecycle semantics ----
+#
+# Below, "scope" always means the *resolved* scope (PolicyRepository.
+# resolve_pseudonym_scope's output), not merely the requested one -- the
+# hr_viewer-ceiling test specifically pins that a policy ceiling narrowing
+# the requested scope changes the *identifier* the partition key uses, and
+# therefore actually changes cross-request linkability, not only a label.
+
+
+def test_request_scope_produces_different_pseudonyms_across_distinct_requests():
+    pseudonymizer = _pseudonymizer()
+    text = "Employee: Ana Souza\n"
+
+    first = pseudonymizer.sanitize(
+        _request(text, requested_pseudonym_scope=PseudonymScope.REQUEST, request_id="req-1"),
+        Detector().detect(text),
+    )
+    second = pseudonymizer.sanitize(
+        _request(text, requested_pseudonym_scope=PseudonymScope.REQUEST, request_id="req-2"),
+        Detector().detect(text),
+    )
+
+    assert _employee_name_pseudonym(first) != _employee_name_pseudonym(second)
+
+
+def test_document_scope_is_stable_within_a_document_and_differs_across_documents():
+    pseudonymizer = _pseudonymizer()
+    text = "Employee: Ana Souza\n"
+
+    doc1_first = pseudonymizer.sanitize(
+        _request(text, requested_pseudonym_scope=PseudonymScope.DOCUMENT, document_id="doc-1"),
+        Detector().detect(text),
+    )
+    doc1_second = pseudonymizer.sanitize(
+        _request(text, requested_pseudonym_scope=PseudonymScope.DOCUMENT, document_id="doc-1"),
+        Detector().detect(text),
+    )
+    doc2 = pseudonymizer.sanitize(
+        _request(text, requested_pseudonym_scope=PseudonymScope.DOCUMENT, document_id="doc-2"),
+        Detector().detect(text),
+    )
+
+    assert _employee_name_pseudonym(doc1_first) == _employee_name_pseudonym(doc1_second)
+    assert _employee_name_pseudonym(doc1_first) != _employee_name_pseudonym(doc2)
+
+
+def test_session_scope_is_stable_within_a_session_and_differs_across_sessions():
+    pseudonymizer = _pseudonymizer()
+    text = "Employee: Ana Souza\n"
+
+    session1_first = pseudonymizer.sanitize(
+        _request(text, session_id="sess-1"), Detector().detect(text)
+    )
+    session1_second = pseudonymizer.sanitize(
+        _request(text, session_id="sess-1"), Detector().detect(text)
+    )
+    session2 = pseudonymizer.sanitize(_request(text, session_id="sess-2"), Detector().detect(text))
+
+    assert _employee_name_pseudonym(session1_first) == _employee_name_pseudonym(session1_second)
+    assert _employee_name_pseudonym(session1_first) != _employee_name_pseudonym(session2)
+
+
+def test_organization_scope_pseudonyms_are_shared_across_requesters_and_sessions():
+    # ORGANIZATION remains keyed at organization/domain scope, unchanged by
+    # this issue -- it is shared by every requester in the domain regardless
+    # of any per-request/document/session identifier.
+    pseudonymizer = _pseudonymizer()
+    text = "Employee: Ana Souza\n"
+
+    first = pseudonymizer.sanitize(
+        _request(
+            text,
+            requester_role="hr_admin",
+            requester_id="u1",
+            requested_pseudonym_scope=PseudonymScope.ORGANIZATION,
+            session_id="s1",
+        ),
+        Detector().detect(text),
+    )
+    second = pseudonymizer.sanitize(
+        _request(
+            text,
+            requester_role="hr_admin",
+            requester_id="u2",
+            requested_pseudonym_scope=PseudonymScope.ORGANIZATION,
+            session_id="s2",
+        ),
+        Detector().detect(text),
+    )
+
+    assert _employee_name_pseudonym(first) == _employee_name_pseudonym(second)
+
+
+def test_missing_request_id_blocks_when_request_scope_is_resolved():
+    pseudonymizer = _pseudonymizer()
+    text = "Employee: Ana Souza\n"
+    request = _request(text, requested_pseudonym_scope=PseudonymScope.REQUEST, request_id=None)
+
+    result = pseudonymizer.sanitize(request, Detector().detect(text))
+
+    assert result.status == "blocked"
+    assert result.external_payload == ""
+    assert "Ana Souza" not in result.external_payload
+
+
+def test_missing_document_id_blocks_when_document_scope_is_resolved():
+    pseudonymizer = _pseudonymizer()
+    text = "Employee: Ana Souza\n"
+    request = _request(text, requested_pseudonym_scope=PseudonymScope.DOCUMENT, document_id=None)
+
+    result = pseudonymizer.sanitize(request, Detector().detect(text))
+
+    assert result.status == "blocked"
+    assert result.external_payload == ""
+    assert "Ana Souza" not in result.external_payload
+
+
+def test_missing_session_id_blocks_when_session_scope_is_resolved():
+    pseudonymizer = _pseudonymizer()
+    text = "Employee: Ana Souza\n"
+    # Default requested scope is SESSION and hr_analyst's ceiling is SESSION.
+    request = _request(text, session_id=None)
+
+    result = pseudonymizer.sanitize(request, Detector().detect(text))
+
+    assert result.status == "blocked"
+    assert result.external_payload == ""
+    assert "Ana Souza" not in result.external_payload
+
+
+def test_unresolvable_policy_defaults_to_request_scope_and_blocks_without_a_request_id():
+    # Trap named in issue #23: PolicyRepository.resolve_pseudonym_scope's
+    # fail-closed default for a missing/mismatched policy is REQUEST. That
+    # was harmless while REQUEST behaved like SESSION; now it demands
+    # request_id, so an unresolvable policy combined with no request_id
+    # blocks -- fail closed twice, deliberately, rather than silently
+    # resolving some other partition.
+    pseudonymizer = _pseudonymizer()
+    text = "Employee: Ana Souza\n"
+    request = _request(text, policy_version="does-not-exist", request_id=None)
+
+    result = pseudonymizer.sanitize(request, Detector().detect(text))
+
+    assert result.status == "blocked"
+    assert result.external_payload == ""
+
+
+def test_hr_viewer_request_ceiling_actually_limits_cross_request_linkability():
+    # This is the point of the whole issue: configs/policies/hr-v1.yaml caps
+    # hr_viewer at REQUEST while the default scope is SESSION. That ceiling
+    # must change which identifier partitions the vault -- and therefore
+    # actual cross-request linkability -- not just the scope's label.
+    pseudonymizer = _pseudonymizer()
+    text = "Employee: Ana Souza\n"
+
+    # hr_viewer requests the default SESSION scope but is capped to REQUEST,
+    # so it must key on request_id and therefore differ across two requests
+    # even though both belong to the same session.
+    viewer_first = pseudonymizer.sanitize(
+        _request(
+            text,
+            requester_role="hr_viewer",
+            requester_id=None,
+            request_id="req-1",
+            session_id="sess-shared",
+        ),
+        Detector().detect(text),
+    )
+    viewer_second = pseudonymizer.sanitize(
+        _request(
+            text,
+            requester_role="hr_viewer",
+            requester_id=None,
+            request_id="req-2",
+            session_id="sess-shared",
+        ),
+        Detector().detect(text),
+    )
+
+    # hr_analyst is permitted SESSION scope -- across the same two "requests"
+    # (the same session), its pseudonym must stay stable, in contrast to
+    # hr_viewer above.
+    analyst_first = pseudonymizer.sanitize(
+        _request(
+            text,
+            requester_role="hr_analyst",
+            requester_id=None,
+            request_id="req-1",
+            session_id="sess-shared",
+        ),
+        Detector().detect(text),
+    )
+    analyst_second = pseudonymizer.sanitize(
+        _request(
+            text,
+            requester_role="hr_analyst",
+            requester_id=None,
+            request_id="req-2",
+            session_id="sess-shared",
+        ),
+        Detector().detect(text),
+    )
+
+    assert _employee_name_pseudonym(viewer_first) != _employee_name_pseudonym(viewer_second)
+    assert _employee_name_pseudonym(analyst_first) == _employee_name_pseudonym(analyst_second)
+
+
+def test_request_scope_round_trip_reconstruction_recomputes_the_same_partition_key():
+    pseudonymizer = _pseudonymizer()
+    text = "Employee: Ana Souza\n"
+    request = _request(text, requested_pseudonym_scope=PseudonymScope.REQUEST, request_id="req-1")
+    result = pseudonymizer.sanitize(request, Detector().detect(text))
+    pseudonym = _employee_name_pseudonym(result)
+
+    response_text = f"Please contact {pseudonym} today."
+    reconstructed = pseudonymizer.reconstruct(response_text, result, request.context)
+
+    assert reconstructed == "Please contact Ana Souza today."

@@ -46,6 +46,17 @@ class GovernanceContext(BaseModel):
     provider_class: str = "external_llm"
     policy_version: str
     requested_pseudonym_scope: PseudonymScope = PseudonymScope.SESSION
+    # Optional lifecycle identifiers for pseudonym-scope partitioning
+    # (issue #23 / T16). Left optional on the model itself -- B0 Direct and
+    # B1 Static Sanitization never touch the vault and must not be forced to
+    # invent an identifier, and every existing construction site would break
+    # for no safety gain. Enforcement lives where the scope is actually
+    # resolved and used: see `_scope_key` in
+    # transformations/reversible_pseudonymization.py, which fails closed if
+    # the resolved scope's required identifier is absent.
+    request_id: str | None = None
+    document_id: str | None = None
+    session_id: str | None = None
 
 
 class SensitiveSpan(BaseModel):

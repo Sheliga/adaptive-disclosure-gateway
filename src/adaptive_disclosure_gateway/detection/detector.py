@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 
 from adaptive_disclosure_gateway.domain import SensitiveSpan
-from adaptive_disclosure_gateway.observability import get_tracer
+from adaptive_disclosure_gateway.observability import elapsed_ms_since, get_tracer
 
 from .overlap import resolve_overlaps
 from .rules import BUILT_IN_RULES, DetectionRule
@@ -32,7 +32,7 @@ class Detector:
             for rule in self._rules:
                 raw_spans.extend(rule.find(text))
             resolved = resolve_overlaps(raw_spans)
-            elapsed_ms = (time.perf_counter() - started) * 1000
+            elapsed_ms = elapsed_ms_since(started)
 
             # Metadata only: categories, counts and timing -- never the
             # detected value, the raw text, or the payload.

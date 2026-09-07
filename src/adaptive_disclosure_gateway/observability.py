@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
@@ -33,3 +34,20 @@ def configure_telemetry(
 
 def get_tracer() -> trace.Tracer:
     return trace.get_tracer(SERVICE_NAME)
+
+
+def elapsed_ms_since(started: float) -> float:
+    """Elapsed milliseconds since ``started`` (a ``time.perf_counter()`` reading),
+    rounded to microsecond precision for use as a span attribute.
+
+    ``time.perf_counter()`` deltas are binary floats whose ``str()`` can carry
+    ~17 significant digits of measurement noise. Left unrounded, that noise is
+    effectively random digits and can -- purely by coincidence -- contain the
+    same digit sequence as an unrelated sensitive value (e.g. a duration of
+    ``0.0850000069476664`` ms contains the substring "8500"), which is not an
+    actual leak but will intermittently trip a naive "value not in span" check.
+    Rounding to 3 decimal places keeps millisecond timing useful while
+    guaranteeing no 4-digit run can appear on either side of the decimal
+    point for any realistic (sub-second) duration.
+    """
+    return round((time.perf_counter() - started) * 1000, 3)
