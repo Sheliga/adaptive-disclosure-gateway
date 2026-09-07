@@ -60,10 +60,37 @@ mentioned anywhere else in the task (e.g. "salary" in a later sentence) to
 ``RELEVANT_WITH_EXACT_VALUE`` -- a false positive strictly worse than the
 false negatives this docstring already discusses, because it silently
 increases disclosure for a category the task never asked to have exactly.
-``_exact_value_bound_categories`` below closes this by scoping both of its
-binding mechanisms (a simple cue and a two-sided "wrapper" cue) to a single
-clause (``_split_into_clauses``) rather than the whole task -- see that
-function's docstring for the exact rule and its documented limitations.
+That round scoped the simple-cue mechanism to a single clause
+(``_split_into_clauses``), but within that clause still bound the cue to
+*every* category the clause positively mentioned -- literally the same
+"distribute the cue to every present category" behavior, just with a
+smaller blast radius. Trivial rewordings that keep two categories in one
+clause instead of splitting them across sentences (joined by "and", by a
+comma, or by "then") reproduced the identical leak: "Use the exact employee
+name and summarize the salary band." still escalated "salary" to
+``RELEVANT_WITH_EXACT_VALUE`` even though the cue plainly modifies
+"employee name". A third review round replaced whole-clause binding with
+nearest-mention binding: within a clause, a cue binds only the category
+mention closest to it in token distance, and only when that distance is
+within a small, fixed window and unambiguous (no tie with another
+category's mention at the same distance) -- see
+``_nearest_bound_categories`` below for the exact rule, its window and the
+tie-break, and its documented limitations.
+
+An earlier version of this docstring justified the whole-clause mechanism's
+residual imprecision as "inert" against the pilot's action spaces, reasoning
+that only ``salary`` has a third action tier
+(``transformations/task_aware.py``'s ``TASK_AWARE_ACTION_SPACES``) where
+``RELEVANT_WITH_EXACT_VALUE`` and ``RELEVANT_WITHOUT_EXACT_VALUE`` resolve
+to *different* actions. That reasoning had the direction backwards: it is
+exactly *because* ``salary`` is the one category whose action actually
+changes with this bit that a cue belonging to some other category
+incidentally binding ``salary`` too is not inert -- it is the defect. The
+"inert" framing was only ever true for the mirror direction (a cue
+genuinely bound to ``salary`` incidentally also binding a two-tier category
+like ``department`` alongside it, which cannot change that category's
+resolved action either way); it never covered a two-tier category's cue
+leaking into ``salary``.
 """
 
 from __future__ import annotations
@@ -318,6 +345,101 @@ def _wrapper_bound_categories(clause: str, categories: Collection[str]) -> set[s
     return bound
 
 
+# Maximum token distance (tokens strictly between a cue occurrence and a
+# category mention, in the same clause) at which the simple-cue mechanism in
+# ``_nearest_bound_categories`` will still bind them. Calibrated against
+# this module's own positive controls, all of which need a window no wider
+# than this to bind (an adjacent cue and category term is distance 0; "the
+# salary value precisely" -- one word, "value", between them -- is distance
+# 1); the mandatory negative controls never need the window at all, because
+# in every one of them the unrelated category the old whole-clause mechanism
+# incorrectly bound sits several tokens further from the cue than the
+# category actually being addressed, so nearest-mention binding already
+# picks the right one regardless of how wide this window is. Kept small and
+# fixed, like ``_WRAPPER_MAX_SPAN`` above, so this stays a narrow, local
+# pattern rather than a search over the whole clause.
+_EXACT_VALUE_WINDOW = 3
+
+
+def _token_distance(cue_span: tuple[int, int], term_span: tuple[int, int]) -> int:
+    """Number of tokens strictly between two non-overlapping, inclusive
+    ``(start, end)`` token-index spans -- 0 when they are adjacent.
+    """
+    cue_start, cue_end = cue_span
+    term_start, term_end = term_span
+    if term_end < cue_start:
+        return cue_start - term_end - 1
+    return term_start - cue_end - 1
+
+
+def _nearest_bound_categories(clause: str, categories: Collection[str]) -> set[str]:
+    """Categories whose own indicator mention in ``clause`` is the single
+    nearest one, in token distance, to an ``EXACT_VALUE_INDICATORS`` cue
+    occurrence in that same clause -- and only when that distance is within
+    ``_EXACT_VALUE_WINDOW``.
+
+    This is the simple-cue binding mechanism, replacing the "a cue anywhere
+    in the clause binds every category the clause mentions" rule the third
+    review round closed (see the module docstring). Per cue occurrence:
+
+    - compute the token distance (``_token_distance``) from the cue to the
+      nearest mention of each category present in ``categories`` and
+      mentioned in this clause;
+    - if exactly one category achieves the minimum distance, and that
+      distance is at most ``_EXACT_VALUE_WINDOW``, the cue binds that
+      category, and only that one;
+    - if two or more categories tie for the minimum distance, or the
+      minimum exceeds the window, the cue binds nothing. Per this module's
+      default-to-least-revealing rule, an unresolvable or too-distant cue
+      must never guess -- see ``test_task_analysis_deterministic.py``'s
+      dedicated tie-break test for a constructed case where a cue sits
+      exactly equidistant between two categories.
+
+    Deliberately not a syntactic/grammatical attribution (no parsing of
+    which noun phrase a cue's adjective or adverb actually modifies) --
+    this module stays a fixed, token-distance heuristic, not a
+    general-purpose NLP component. A cue whose true grammatical target is
+    farther, in raw token count, from the cue than an unrelated category's
+    incidental mention (e.g. a category name embedded inside a compound
+    noun the cue does not actually describe) will not bind its true target;
+    this is a documented, accepted utility cost of the same kind as this
+    module's other heuristics, not a defect to chase with deeper parsing.
+    """
+    tokens = _tokenize(clause)
+    cue_spans = [span for cue in EXACT_VALUE_INDICATORS for span in _phrase_positions(tokens, cue)]
+    if not cue_spans:
+        return set()
+
+    category_spans: dict[str, list[tuple[int, int]]] = {}
+    for category in categories:
+        indicators = CATEGORY_INDICATORS.get(category)
+        if not indicators:
+            continue
+        spans = [span for term in indicators for span in _phrase_positions(tokens, term)]
+        if spans:
+            category_spans[category] = spans
+
+    bound: set[str] = set()
+    for cue_span in cue_spans:
+        distances = {
+            category: min(_token_distance(cue_span, span) for span in spans)
+            for category, spans in category_spans.items()
+        }
+        if not distances:
+            continue
+        nearest_distance = min(distances.values())
+        if nearest_distance > _EXACT_VALUE_WINDOW:
+            continue
+        nearest_categories = [
+            category for category, distance in distances.items() if distance == nearest_distance
+        ]
+        if len(nearest_categories) == 1:
+            bound.add(nearest_categories[0])
+        # len(nearest_categories) > 1: a genuine tie -- deliberately bound
+        # to neither category, not a guess.
+    return bound
+
+
 def _exact_value_bound_categories(task: str, categories: Collection[str]) -> set[str]:
     """Categories for which ``task``'s positive text carries narrow,
     explicit evidence, deterministically scoped to a single clause (see
@@ -325,30 +447,10 @@ def _exact_value_bound_categories(task: str, categories: Collection[str]) -> set
 
     Two clause-local binding mechanisms:
 
-    - simple cue: an ``EXACT_VALUE_INDICATORS`` term anywhere in a clause
-      binds every category that same clause also positively mentions. This
-      replaces the defect this function was introduced to close (T07/#6,
-      PR #33 second review round): the previous implementation searched
-      the cue across the task's *entire* positive text, so a cue that
-      plainly modified one category's mention (e.g. "the exact CPF") also
-      escalated an unrelated category mentioned in a different sentence
-      (e.g. "salary"). Scoping the search to one clause is enough to close
-      that gap: every mandatory negative-control case in the review round
-      is a cue and the unrelated category in two different sentences.
-
-      Known, accepted limitation: within a single clause, this mechanism
-      does not further attribute a trailing cue to the specific category it
-      grammatically modifies when the clause positively mentions more than
-      one category (e.g. "salary matches ... policy exactly" also
-      incidentally "binds" the co-mentioned "department"). This residual
-      imprecision is accepted rather than chased with clause-internal
-      heuristics because it is inert in the pilot's current action spaces:
-      see ``transformations/task_aware.py``'s ``TASK_AWARE_ACTION_SPACES``
-      docstring -- only ``salary`` has a third action tier where
-      RELEVANT_WITH_EXACT_VALUE and RELEVANT_WITHOUT_EXACT_VALUE resolve to
-      a *different* action, so this collateral binding can only ever change
-      a resolved action when ``salary`` itself is the category being
-      (correctly) bound in that same clause;
+    - simple cue: see ``_nearest_bound_categories`` above -- an
+      ``EXACT_VALUE_INDICATORS`` term binds only the nearest category
+      mention in the same clause, within a small token window, and only
+      when that nearest mention is unambiguous (no tie);
     - wrapper cue: see ``_wrapper_bound_categories`` above, for phrasings
       where the category term sits grammatically inside the exactness
       expression itself (e.g. "specific salary figure").
@@ -362,12 +464,7 @@ def _exact_value_bound_categories(task: str, categories: Collection[str]) -> set
     for clause, is_positive in _split_into_clauses(task):
         if not is_positive:
             continue
-        has_simple_cue = any(_contains(term, clause) for term in EXACT_VALUE_INDICATORS)
-        if has_simple_cue:
-            for category in categories:
-                indicators = CATEGORY_INDICATORS.get(category)
-                if indicators and any(_contains(term, clause) for term in indicators):
-                    bound.add(category)
+        bound |= _nearest_bound_categories(clause, categories)
         bound |= _wrapper_bound_categories(clause, categories)
     return bound
 

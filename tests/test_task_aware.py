@@ -126,10 +126,11 @@ def test_different_tasks_over_the_same_text_and_context_yield_different_decision
     # mention with no explicit exact-value evidence now defaults to
     # RELEVANT_WITHOUT_EXACT_VALUE (GENERALIZE), not PRESERVE -- see
     # task_analysis/deterministic.py's EXACT_VALUE_INDICATORS. This task
-    # genuinely wants the exact figure, so it says so explicitly.
-    exact_salary_task = (
-        "Confirm whether this employee's salary matches Finance department policy exactly."
-    )
+    # genuinely wants the exact figure, so it says so explicitly. "company
+    # policy" (not "department policy" -- PR #33 third review round): the
+    # nearest-mention binding must not have a closer, unrelated category
+    # sitting between "salary" and the cue.
+    exact_salary_task = "Confirm whether this employee's salary matches company policy exactly."
     no_salary_task = "Write a one-sentence summary of this employee's role. Salary is not needed."
 
     with_salary = _discloser().sanitize(_request(TEXT, exact_salary_task), Detector().detect(TEXT))
@@ -157,7 +158,7 @@ def test_different_tasks_over_the_same_text_and_context_yield_different_decision
 # outcome, not a task-awareness one) would masquerade as a decision change.
 
 _TASK_FOR_DIMENSION_TESTS = (
-    "Confirm whether this employee's salary matches Finance department policy exactly. "
+    "Confirm whether this employee's salary matches company policy exactly. "
     "The employee's name and CPF are not required for this review."
 )
 
@@ -264,7 +265,7 @@ def test_task_explicitly_not_needing_a_category_selects_its_least_disclosing_act
 
 
 def test_task_needing_the_exact_numeric_value_selects_preserve():
-    task = "Confirm whether this employee's salary matches Finance department policy exactly."
+    task = "Confirm whether this employee's salary matches company policy exactly."
     result = _discloser().sanitize(_request(TEXT, task), Detector().detect(TEXT))
 
     assert _actions_by_category(result)["salary"] is DisclosureAction.PRESERVE
@@ -469,7 +470,13 @@ def test_long_division_does_not_escalate_department_disclosure():
 
 
 def test_pay_band_positive_control_still_selects_preserve_for_salary():
-    task = "Confirm this employee's pay band for their current role exactly."
+    # The cue sits right after "pay band" (PR #33 third review round): the
+    # previous phrasing put "exactly" at the very end of the sentence, many
+    # tokens past "pay band", which the nearest-mention binding's window no
+    # longer reaches -- this is the same genuine-need positive control, not
+    # a weaker one, just phrased so the cue is close enough to the category
+    # it is actually meant to modify.
+    task = "Confirm this employee's pay band precisely for their current role."
     result = _discloser().sanitize(_request(TEXT, task), Detector().detect(TEXT))
     assert _actions_by_category(result)["salary"] is DisclosureAction.PRESERVE
 
@@ -512,6 +519,66 @@ def test_department_exactly_cue_never_escalates_salary_to_preserve():
 
 def test_exact_cpf_cue_never_escalates_salary_to_preserve():
     task = "Report the exact CPF. Summarize the salary."
+    result = _discloser().sanitize(_request(TEXT, task), Detector().detect(TEXT))
+
+    assert _actions_by_category(result)["salary"] is DisclosureAction.GENERALIZE
+    assert "8500" not in result.external_payload
+
+
+# --- Negative control: the same defect, same-clause (PR #33 third review
+# round). The previous fix only scoped the simple cue to one *sentence*; a
+# trivial rewording that keeps the unrelated category in the *same* clause
+# (joined by "and", by a comma, or by "then", instead of split across
+# sentences) reproduced the identical leak all the way to PRESERVE. Asserted
+# at the action level, like the cross-sentence negative controls above,
+# because the action -- not the relevance label -- is what the external
+# payload actually exposes.
+
+
+def test_exact_employee_name_cue_never_escalates_salary_to_preserve_joined_by_and():
+    task = "Use the exact employee name and summarize the salary band."
+    result = _discloser().sanitize(_request(TEXT, task), Detector().detect(TEXT))
+
+    assert _actions_by_category(result)["salary"] is DisclosureAction.GENERALIZE
+    assert "8500" not in result.external_payload
+
+
+def test_department_exactly_cue_never_escalates_salary_to_preserve_joined_by_and():
+    task = "Return the department exactly and provide the salary range."
+    result = _discloser().sanitize(_request(TEXT, task), Detector().detect(TEXT))
+
+    assert _actions_by_category(result)["salary"] is DisclosureAction.GENERALIZE
+    assert "8500" not in result.external_payload
+
+
+def test_exact_cpf_cue_never_escalates_salary_to_preserve_joined_by_and():
+    task = "Report the exact CPF and summarize the salary."
+    result = _discloser().sanitize(_request(TEXT, task), Detector().detect(TEXT))
+
+    assert _actions_by_category(result)["salary"] is DisclosureAction.GENERALIZE
+    assert "8500" not in result.external_payload
+
+
+def test_exact_employee_name_cue_never_escalates_salary_to_preserve_joined_by_comma_then():
+    task = "Use the exact employee name, then summarize the salary band."
+    result = _discloser().sanitize(_request(TEXT, task), Detector().detect(TEXT))
+
+    assert _actions_by_category(result)["salary"] is DisclosureAction.GENERALIZE
+    assert "8500" not in result.external_payload
+
+
+# --- Ambiguity: a cue exactly equidistant between two co-mentioned
+# categories in the same clause must escalate neither -- the simple-cue
+# path's own tie-break, mirroring the wrapper tie-break below. Asserted only
+# on "salary": "department"'s action space is binary (REMOVE/PRESERVE), so
+# RELEVANT_WITH_EXACT_VALUE and RELEVANT_WITHOUT_EXACT_VALUE already resolve
+# to the same PRESERVE action for it regardless of this tie -- "salary" is
+# the category whose 3-tier space (REMOVE/GENERALIZE/PRESERVE) actually
+# exposes whether the tie-break holds.
+
+
+def test_cue_equidistant_between_two_categories_never_escalates_salary_to_preserve():
+    task = "State the salary or precisely the department for this record."
     result = _discloser().sanitize(_request(TEXT, task), Detector().detect(TEXT))
 
     assert _actions_by_category(result)["salary"] is DisclosureAction.GENERALIZE

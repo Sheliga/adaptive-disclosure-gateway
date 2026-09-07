@@ -110,7 +110,18 @@ def test_aggregate_wording_marks_a_numeric_category_relevant_without_exact_value
 
 
 def test_comparison_wording_marks_a_numeric_category_relevant_with_exact_value():
-    task = "Confirm whether this employee's salary matches Finance department policy exactly."
+    # "company policy" (not "department policy"): the exactness cue must
+    # bind to "salary" alone. An earlier version of this task said "Finance
+    # department policy" instead, which happened to also plant "department"
+    # a single token away from the cue -- closer to it than "salary" is.
+    # See this module's docstring and deterministic.py's module docstring
+    # for why that phrasing is no longer used: the third review round's
+    # nearest-mention binding would otherwise bind the cue to the *nearer*,
+    # unrelated "department" instead of "salary", which is the same
+    # least-disclosure-preferred outcome this whole round exists to enforce
+    # -- not a defect, but it means this task can no longer double as
+    # positive-control text for salary specifically.
+    task = "Confirm whether this employee's salary matches company policy exactly."
     relevance = _relevance(task)
 
     assert relevance["salary"] is TaskRelevance.RELEVANT_WITH_EXACT_VALUE
@@ -312,3 +323,65 @@ def test_wrapper_cue_enclosing_two_categories_escalates_neither():
 
     assert relevance["salary"] is TaskRelevance.RELEVANT_WITHOUT_EXACT_VALUE
     assert relevance["cpf"] is TaskRelevance.RELEVANT_WITHOUT_EXACT_VALUE
+
+
+# --- Negative control: a same-clause exactness cue belonging to one category
+# must not escalate a *different* category also mentioned in that same
+# clause (PR #33 third review round). The prior fix only scoped the simple
+# cue to one *sentence*; within that sentence it still bound the cue to
+# EVERY positively mentioned category, so trivial rewordings that keep two
+# categories in one clause -- joined by "and", by a comma, or by "then",
+# rather than split across sentences -- reproduce the exact same leak the
+# second review round was supposed to have closed. These are same-clause
+# siblings of the cross-sentence tests above; the cue and its true target
+# are adjacent (distance 0), while the unrelated category sits many tokens
+# away, well outside ``_EXACT_VALUE_WINDOW`` -- see
+# ``_nearest_bound_categories`` in deterministic.py.
+
+
+def test_exact_employee_name_cue_does_not_escalate_salary_joined_by_and():
+    task = "Use the exact employee name and summarize the salary band."
+    relevance = _relevance(task)
+
+    assert relevance["employee_name"] is TaskRelevance.RELEVANT_WITH_EXACT_VALUE
+    assert relevance["salary"] is TaskRelevance.RELEVANT_WITHOUT_EXACT_VALUE
+
+
+def test_department_exactly_cue_does_not_escalate_salary_joined_by_and():
+    task = "Return the department exactly and provide the salary range."
+    relevance = _relevance(task)
+
+    assert relevance["department"] is TaskRelevance.RELEVANT_WITH_EXACT_VALUE
+    assert relevance["salary"] is TaskRelevance.RELEVANT_WITHOUT_EXACT_VALUE
+
+
+def test_exact_cpf_cue_does_not_escalate_salary_joined_by_and():
+    task = "Report the exact CPF and summarize the salary."
+    relevance = _relevance(task)
+
+    assert relevance["cpf"] is TaskRelevance.RELEVANT_WITH_EXACT_VALUE
+    assert relevance["salary"] is TaskRelevance.RELEVANT_WITHOUT_EXACT_VALUE
+
+
+def test_exact_employee_name_cue_does_not_escalate_salary_joined_by_comma_then():
+    task = "Use the exact employee name, then summarize the salary band."
+    relevance = _relevance(task)
+
+    assert relevance["employee_name"] is TaskRelevance.RELEVANT_WITH_EXACT_VALUE
+    assert relevance["salary"] is TaskRelevance.RELEVANT_WITHOUT_EXACT_VALUE
+
+
+# --- Ambiguity: a cue exactly equidistant (in tokens) between two co-mentioned
+# categories in the same clause must escalate neither -- the mirror of the
+# wrapper tie-break above, for the simple-cue path's own nearest-mention
+# binding. "salary" sits one token before the cue ("or precisely"); "the
+# department" sits one token after it ("precisely the") -- a genuine tie,
+# not resolvable without guessing which the cue actually modifies.
+
+
+def test_cue_equidistant_between_two_categories_escalates_neither():
+    task = "State the salary or precisely the department for this record."
+    relevance = _relevance(task)
+
+    assert relevance["salary"] is TaskRelevance.RELEVANT_WITHOUT_EXACT_VALUE
+    assert relevance["department"] is TaskRelevance.RELEVANT_WITHOUT_EXACT_VALUE
