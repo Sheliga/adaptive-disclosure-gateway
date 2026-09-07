@@ -68,8 +68,8 @@ oracle:
   expected_block_request: false
   expected_answer: >-
     After authorized pseudonym reconstruction, the response opens by
-    addressing the employee by name, "Helena Vasquez", and confirms she is
-    joining the Research department. The payload sent to the provider
+    addressing the employee by name, "Helena Vasquez", and confirms they
+    are joining the Research department. The payload sent to the provider
     carries only a pseudonym for the employee name; the literal name
     reappears solely in the reconstructed output returned to the
     authorized requester, never in the payload itself.
