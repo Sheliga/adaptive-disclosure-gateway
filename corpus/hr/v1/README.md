@@ -43,6 +43,35 @@ punctuated format (`###.###.###-##`) but are not validated check digits --
 consistent with `detection/rules.py`, which does not validate CPF/CNPJ
 check digits either.
 
+## Limitations and threats to validity
+
+### Detection is near-perfect by construction
+
+Every case in v1 presents sensitive values in the same labeled-line format
+(`Employee:`, `CPF:`, `Salary:`, `Department:`, `Medical notes:`), and
+`detection/rules.py` keys on exactly those labels. Measured against this
+corpus, the current detector finds 67 of 67 annotated spans with no false
+positives.
+
+That figure is a property of the corpus format, not evidence about detector
+quality. It has two consequences, and they pull in opposite directions:
+
+- **It does not confound the treatment comparisons.** Detection is held
+  constant across B0-B4, so the adjacent comparisons B0->B1, B1->B2,
+  B2->B3 and B3->B4 still isolate their intended variable.
+- **It does inflate absolute figures.** Any absolute claim about exposure
+  reduction, detector recall or residual sensitive content measured on this
+  corpus is optimistic. Such figures must be reported as an upper bound
+  obtained under a structured-input assumption, never as a general-case
+  detection result.
+
+v1 deliberately contains no free-prose sensitive values: no unlabeled name,
+no CPF embedded mid-sentence, no salary stated in natural language.
+Robustness to unstructured input is out of scope for the pilot gate and is
+deferred to a later corpus version, alongside real document ingestion
+(T12 / Issue #9). Under the freeze rule below, that work creates
+`corpus/hr/v2/` rather than editing v1 in place.
+
 ## Freeze rule
 
 **v1 is immutable once merged to `master`.** This includes the schema
