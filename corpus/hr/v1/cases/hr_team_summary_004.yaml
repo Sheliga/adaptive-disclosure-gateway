@@ -1,0 +1,79 @@
+input:
+  sample_id: hr_team_summary_004
+  task_family: team_summary_without_salary
+  text: |
+    Employee: Helena Vasquez
+    CPF: 766.877.988-00
+    Salary: R$ 8100.00
+    Department: Research
+  task: >-
+    Draft the opening line of an internal announcement addressed by name to
+    this employee, confirming which department they are joining. Do not
+    mention salary or CPF.
+  domain: hr
+  purpose: team_summary
+  requester_role: hr_analyst
+  policy_version: hr-v1
+  requested_pseudonym_scope: request
+  request_id: req-hr-2004
+
+oracle:
+  sample_id: hr_team_summary_004
+  # Unlike hr_team_summary_001/002/003, this case's task genuinely requires
+  # the employee's identity: an announcement addressed "by name" cannot be
+  # drafted without it, and answer_depends_on_categories below records that
+  # dependency (checked against this span by
+  # tests/test_corpus_task_necessity_coherence.py). It exists to fix the
+  # discrimination defect tests/test_corpus_necessity_discrimination.py
+  # pins: without it, employee_name was task_necessity: not_required in all
+  # 16 of its occurrences across the corpus, so a strategy that constantly
+  # suppresses identity -- doing no task analysis at all -- would satisfy
+  # that category's oracle perfectly.
+  #
+  # expected_actions is [pseudonymize] and only pseudonymize:
+  # - `preserve` would violate configs/policies/hr-v1.yaml, whose
+  #   employee_name.default is `pseudonymize` -- preserve is not an
+  #   authorized action for this category under hr-v1;
+  # - `remove` would destroy the information the task actually needs.
+  # This is the one case in the corpus where B2 -- Reversible
+  # Pseudonymization's reversibility is load-bearing: utility is only
+  # reached by the pair pseudonymize (in the payload sent to the provider)
+  # + authorized reconstruction (in the answer returned to the requester),
+  # never by suppression alone.
+  expected_spans:
+    - category: employee_name
+      value: Helena Vasquez
+      start: 10
+      end: 24
+      task_necessity: required
+      expected_actions: [pseudonymize]
+    - category: cpf
+      value: 766.877.988-00
+      start: 30
+      end: 44
+      task_necessity: not_required
+      expected_actions: [remove]
+    - category: salary
+      value: R$ 8100.00
+      start: 53
+      end: 63
+      task_necessity: not_required
+      expected_actions: [remove, generalize]
+    - category: department
+      value: Research
+      start: 76
+      end: 84
+      task_necessity: required
+      expected_actions: [preserve]
+  expected_block_request: false
+  expected_answer: >-
+    After authorized pseudonym reconstruction, the response opens by
+    addressing the employee by name, "Helena Vasquez", and confirms they
+    are joining the Research department. The payload sent to the provider
+    carries only a pseudonym for the employee name; the literal name
+    reappears solely in the reconstructed output returned to the
+    authorized requester, never in the payload itself.
+  answer_depends_on_categories: [employee_name, department]
+  reconstruction:
+    - category: employee_name
+      expected_reconstructable: true

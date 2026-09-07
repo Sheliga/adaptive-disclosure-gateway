@@ -1,0 +1,49 @@
+input:
+  sample_id: hr_team_summary_001
+  task_family: team_summary_without_salary
+  text: |
+    Employee: Renata Farias
+    CPF: 444.555.666-77
+    Salary: R$ 7600.00
+    Department: Marketing
+  task: >-
+    Write a one-sentence role summary stating which department this
+    employee belongs to. Salary and CPF are not needed for this summary.
+  domain: hr
+  purpose: team_summary
+  requester_role: hr_analyst
+  policy_version: hr-v1
+
+oracle:
+  sample_id: hr_team_summary_001
+  expected_spans:
+    - category: employee_name
+      value: Renata Farias
+      start: 10
+      end: 23
+      task_necessity: not_required
+      expected_actions: [remove, pseudonymize]
+    - category: cpf
+      value: 444.555.666-77
+      start: 29
+      end: 43
+      task_necessity: not_required
+      expected_actions: [remove]
+    - category: salary
+      value: R$ 7600.00
+      start: 52
+      end: 62
+      task_necessity: not_required
+      expected_actions: [remove, generalize]
+    - category: department
+      value: Marketing
+      start: 75
+      end: 84
+      task_necessity: required
+      expected_actions: [preserve]
+  expected_block_request: false
+  expected_answer: "The response identifies the employee's department as 'Marketing'."
+  answer_depends_on_categories: [department]
+  reconstruction:
+    - category: employee_name
+      expected_reconstructable: true
