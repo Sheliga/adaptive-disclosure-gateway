@@ -4,18 +4,21 @@ Frozen for T09 / GitHub Issue #4, Phase A. This document describes the case
 file schema in prose. The schema is also enforced in code by
 `src/adaptive_disclosure_gateway/corpus/` (`CorpusCaseInput`, `CaseOracle`,
 `ExpectedSpan`, `ReconstructionExpectation`, `TaskNecessity`, `TaskFamily`)
-and by `tests/test_corpus_schema.py`, `tests/test_corpus_span_consistency.py`
-and `tests/test_corpus_coverage.py`. If this document and the code ever
-disagree, the code (and its tests) win; update this document to match.
+and by `tests/test_corpus_schema.py`, `tests/test_corpus_span_consistency.py`,
+`tests/test_corpus_coverage.py`, `tests/test_corpus_task_necessity_coherence.py`
+and `tests/test_corpus_answer_grounded_in_input.py`. If this document and
+the code ever disagree, the code (and its tests) win; update this document
+to match.
 
 ## File layout
 
-One YAML file per case, at `corpus/hr/v1/cases/<sample_id>.yaml` -- the
-file's base name should match `input.sample_id` by convention, for easy
-review/diffing, though the loader does not hard-fail on a mismatch there.
-What the loader does enforce: `input.sample_id` must equal `oracle.sample_id`
-within a file, and no two files in the same corpus directory may declare
-the same `sample_id` (`tests/test_corpus_schema.py`).
+One YAML file per case, at `corpus/hr/v1/cases/<sample_id>.yaml`. The
+file's base name **must** equal `input.sample_id` -- this is validated and
+enforced by the loader (`CorpusLoadError` on a mismatch), not just a
+review/diffing convention. The loader also enforces that `input.sample_id`
+must equal `oracle.sample_id` within a file, and that no two files in the
+same corpus directory may declare the same `sample_id`
+(`tests/test_corpus_schema.py`).
 
 Each file has exactly two top-level keys: `input` and `oracle`. Both are
 required. No other top-level key is permitted.
@@ -66,6 +69,7 @@ Any key other than the ones listed above fails schema validation
 | `expected_spans` | non-empty list of expected-span objects (below) | yes | Every sensitive information unit annotated in `input.text`. |
 | `expected_block_request` | boolean | yes | Whether the case must produce `DisclosureResult.status == "blocked"`. |
 | `expected_answer` | string or absent | conditionally | **Required** when `expected_block_request` is `false` (the objectively verifiable property/answer a correct treatment's output should satisfy). **Must be absent** when `expected_block_request` is `true` -- a blocked request never produces an answer to score. |
+| `answer_depends_on_categories` | list of the five frozen categories, or absent | conditionally | **Required** (non-null) when `expected_block_request` is `false`: every category `expected_answer` actually depends on. **Must be absent** when `expected_block_request` is `true`. The loader validates the values are known categories. See "Task-necessity/answer coherence" below. |
 | `reconstruction` | list of reconstruction-expectation objects (below) | no (default empty) | **Must be empty** when `expected_block_request` is `true`. |
 
 ### Expected-span object
@@ -105,6 +109,32 @@ Primary oracle, binary only:
 
 `helpful` (see above) is never a third value of `task_necessity` and must
 never be read as part of it.
+
+## Task-necessity/answer coherence
+
+A span may only be annotated `task_necessity: required` if the case's own
+`expected_answer` actually depends on that category -- otherwise the
+`required` label is unfalsifiable annotation drift, not a real oracle. This
+is enforced two ways:
+
+- schema level: `oracle.answer_depends_on_categories` lists every category
+  `expected_answer` depends on, and is required exactly when
+  `expected_answer` is (never present on a blocked case);
+- corpus level: `tests/test_corpus_task_necessity_coherence.py` checks, for
+  every non-blocked case, that the set of categories with at least one
+  `required` span equals `answer_depends_on_categories` exactly. A
+  mismatch fails the suite.
+
+`oracle.expected_answer` itself must also be checkable purely from
+`input.text` -- never from a compensation band, department policy or wage
+floor known only to a scoring model or to
+`transformations/generalization.py`'s bucket configuration, since neither
+is input common to every treatment B0-B4. When a task requires comparing
+against such a reference, the case's `input.text` states that reference
+explicitly (as an appended line that the detector does not match against
+any of the five frozen categories); `tests/test_corpus_answer_grounded_in_input.py`
+pins that every monetary figure an `expected_answer` cites is a verbatim
+substring of `input.text`.
 
 ## Task families
 

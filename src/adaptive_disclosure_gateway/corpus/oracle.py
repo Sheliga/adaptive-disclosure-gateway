@@ -13,20 +13,36 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from adaptive_disclosure_gateway.corpus.models import ExpectedSpan, ReconstructionExpectation
+from adaptive_disclosure_gateway.corpus.models import (
+    ExpectedSpan,
+    HrCategory,
+    ReconstructionExpectation,
+)
 from adaptive_disclosure_gateway.domain import DisclosureAction
 
 
 class CaseOracle(BaseModel):
     """Ground truth used for scoring one corpus case.
 
-    ``expected_block_request`` and ``expected_answer``/``reconstruction``
-    are mutually constrained (see ``_check_block_consistency``): a case
-    that must ``BLOCK_REQUEST`` never executes far enough to have an
-    expected answer or a reconstruction expectation, and every blocked
-    case must name at least one span whose acceptable action set is
-    exactly ``BLOCK_REQUEST`` -- otherwise the annotation is internally
-    inconsistent about *why* the case blocks.
+    ``expected_block_request`` and ``expected_answer``/``reconstruction``/
+    ``answer_depends_on_categories`` are mutually constrained (see
+    ``_check_block_consistency``): a case that must ``BLOCK_REQUEST`` never
+    executes far enough to have an expected answer, a reconstruction
+    expectation, or an answer dependency list, and every blocked case must
+    name at least one span whose acceptable action set is exactly
+    ``BLOCK_REQUEST`` -- otherwise the annotation is internally inconsistent
+    about *why* the case blocks.
+
+    ``answer_depends_on_categories`` names every category ``expected_answer``
+    actually depends on. It exists so a span can never be annotated
+    ``task_necessity: required`` without the case's own answer oracle
+    depending on it -- see ``tests/test_corpus_task_necessity_coherence.py``,
+    which pins that the set of categories with at least one `required` span
+    equals this field exactly, for every non-blocked case. This is the
+    structural check that would have caught PR #31 review round 2's
+    `hr_team_summary_001/002/003` defect (`employee_name` marked `required`
+    even though those cases' `expected_answer` only ever names the
+    department).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -36,6 +52,7 @@ class CaseOracle(BaseModel):
     expected_block_request: bool
     expected_answer: str | None = None
     reconstruction: list[ReconstructionExpectation] = Field(default_factory=list)
+    answer_depends_on_categories: list[HrCategory] | None = None
 
     @model_validator(mode="after")
     def _check_block_consistency(self) -> CaseOracle:
@@ -52,6 +69,13 @@ class CaseOracle(BaseModel):
                     "oracle.expected_block_request is true -- a blocked "
                     "request never reaches reconstruction"
                 )
+            if self.answer_depends_on_categories is not None:
+                raise ValueError(
+                    "oracle.answer_depends_on_categories must be absent when "
+                    "oracle.expected_block_request is true -- a blocked "
+                    "request never produces an answer for anything to "
+                    "depend on"
+                )
             if not any(
                 DisclosureAction.BLOCK_REQUEST in span.expected_actions
                 for span in self.expected_spans
@@ -62,8 +86,15 @@ class CaseOracle(BaseModel):
                     "acceptable action -- annotate which category forces "
                     "the block"
                 )
-        elif self.expected_answer is None:
-            raise ValueError(
-                "oracle.expected_answer is required when oracle.expected_block_request is false"
-            )
+        else:
+            if self.expected_answer is None:
+                raise ValueError(
+                    "oracle.expected_answer is required when oracle.expected_block_request is false"
+                )
+            if self.answer_depends_on_categories is None:
+                raise ValueError(
+                    "oracle.answer_depends_on_categories is required when "
+                    "oracle.expected_block_request is false -- name every "
+                    "category the expected_answer actually depends on"
+                )
         return self

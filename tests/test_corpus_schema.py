@@ -61,6 +61,7 @@ def _minimal_valid_case(sample_id: str = "hr_schema_fixture_case") -> dict[str, 
             ],
             "expected_block_request": False,
             "expected_answer": "The response names the department 'Engineering'.",
+            "answer_depends_on_categories": ["employee_name", "department"],
         },
     }
 
@@ -169,6 +170,10 @@ def test_expected_answer_forbidden_when_blocked(tmp_path: Path):
     case["oracle"]["expected_block_request"] = True
     case["oracle"]["expected_spans"][0]["expected_actions"] = ["block_request"]
     case["oracle"]["expected_spans"][1]["expected_actions"] = ["block_request"]
+    # answer_depends_on_categories is nulled so this test isolates the
+    # expected_answer defect specifically, rather than also tripping the
+    # separate answer_depends_on_categories-forbidden-when-blocked rule.
+    case["oracle"]["answer_depends_on_categories"] = None
     # expected_answer is still set from the base fixture -- this must be
     # rejected, not silently ignored.
     path = _write_case(tmp_path, case)
@@ -181,6 +186,7 @@ def test_blocked_case_requires_a_block_request_expected_action(tmp_path: Path):
     case = _minimal_valid_case()
     case["oracle"]["expected_block_request"] = True
     case["oracle"]["expected_answer"] = None
+    case["oracle"]["answer_depends_on_categories"] = None
     # Neither span names block_request as acceptable -- inconsistent with a
     # case-level expected_block_request of true.
     path = _write_case(tmp_path, case)
@@ -193,12 +199,63 @@ def test_reconstruction_forbidden_when_blocked(tmp_path: Path):
     case = _minimal_valid_case()
     case["oracle"]["expected_block_request"] = True
     case["oracle"]["expected_answer"] = None
+    case["oracle"]["answer_depends_on_categories"] = None
     case["oracle"]["expected_spans"][0]["expected_actions"] = ["block_request"]
     case["oracle"]["expected_spans"][1]["expected_actions"] = ["block_request"]
     case["oracle"]["reconstruction"] = [
         {"category": "employee_name", "expected_reconstructable": True}
     ]
     path = _write_case(tmp_path, case)
+
+    with pytest.raises(CorpusLoadError):
+        load_case(path)
+
+
+def test_answer_depends_on_categories_required_when_not_blocked(tmp_path: Path):
+    # This is the concrete regression Correction 3 (PR #31 review round 2)
+    # exists to prevent: nothing previously forced an annotator to name
+    # which categories an expected_answer actually depends on, which is
+    # exactly how hr_team_summary_001/002/003 could mark employee_name
+    # `required` even though no expected_answer ever depended on it.
+    case = _minimal_valid_case()
+    case["oracle"]["answer_depends_on_categories"] = None
+    path = _write_case(tmp_path, case)
+
+    with pytest.raises(CorpusLoadError):
+        load_case(path)
+
+
+def test_answer_depends_on_categories_forbidden_when_blocked(tmp_path: Path):
+    case = _minimal_valid_case()
+    case["oracle"]["expected_block_request"] = True
+    case["oracle"]["expected_answer"] = None
+    case["oracle"]["expected_spans"][0]["expected_actions"] = ["block_request"]
+    case["oracle"]["expected_spans"][1]["expected_actions"] = ["block_request"]
+    # answer_depends_on_categories is still set from the base fixture -- a
+    # blocked case never produces an expected_answer, so nothing can
+    # legitimately depend on it either.
+    path = _write_case(tmp_path, case)
+
+    with pytest.raises(CorpusLoadError):
+        load_case(path)
+
+
+def test_answer_depends_on_categories_rejects_unknown_category(tmp_path: Path):
+    case = _minimal_valid_case()
+    case["oracle"]["answer_depends_on_categories"] = ["birth_date"]
+    path = _write_case(tmp_path, case)
+
+    with pytest.raises(CorpusLoadError):
+        load_case(path)
+
+
+def test_file_name_not_matching_sample_id_raises(tmp_path: Path):
+    # SCHEMA.md's "File layout" section used to say this was a convention
+    # the loader does not enforce, while its field table said the opposite
+    # ("Must equal the file's base name") -- a direct self-contradiction.
+    # The decision is that filename == sample_id is mandatory and validated.
+    case = _minimal_valid_case(sample_id="hr_schema_fixture_case")
+    path = _write_case(tmp_path, case, file_name="a_completely_different_file_name.yaml")
 
     with pytest.raises(CorpusLoadError):
         load_case(path)

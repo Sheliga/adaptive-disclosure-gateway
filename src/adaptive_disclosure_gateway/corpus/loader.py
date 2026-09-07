@@ -1,7 +1,8 @@
 """Fail-closed YAML loading for the HR pilot corpus (T09 / issue #4, Phase A).
 
 Every failure mode here -- unreadable file, invalid YAML, an unknown or
-missing field, a mismatched ``sample_id`` -- raises ``CorpusLoadError``
+missing field, a mismatched ``sample_id``, a file name that disagrees with
+its own ``input.sample_id`` -- raises ``CorpusLoadError``
 rather than falling back to a default or skipping the offending case. Per
 CLAUDE.md's no-leak invariant, ``CorpusLoadError`` messages never embed the
 case's text, a span's value, or any other oracle/input content -- only the
@@ -112,6 +113,12 @@ def load_case(path: Path) -> CorpusCase:
     if case_input.sample_id != oracle.sample_id:
         raise CorpusLoadError(
             f"corpus case file {path.name}: input.sample_id and oracle.sample_id do not match"
+        )
+
+    if path.stem != case_input.sample_id:
+        raise CorpusLoadError(
+            f"corpus case file {path.name} does not match its own input.sample_id "
+            f"{case_input.sample_id!r} -- the file's base name and sample_id must be identical"
         )
 
     return CorpusCase(input=case_input, oracle=oracle)
