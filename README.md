@@ -8,29 +8,36 @@ The project investigates a local trust boundary that applies explicit organizati
 
 This repository supports a candidate master's research proposal for UTFPR PPGCA 2027. It is a research prototype, not a finished dissertation implementation and not evidence that B4 outperforms existing approaches.
 
-## Current implementation status
+**Milestone 1 and Milestone 2 are complete on `master`.** The project is now in post-pilot methodology freeze and confirmatory-readiness.
 
-**Milestone 1 is complete on `master`.**
+See [`docs/implementation-status.md`](docs/implementation-status.md) for the live execution plan, [`docs/experimental-design.md`](docs/experimental-design.md) for the B0–B4 comparison design and [`docs/milestone-2-pilot.md`](docs/milestone-2-pilot.md) for the factual first-pilot record.
+
+## Current implementation status
 
 Implemented:
 
 - **B0 — Direct**;
 - **B1 — Static Sanitization**;
 - **B2 — Reversible Pseudonymization**;
+- **B3 — Task-aware**;
+- **B4 — Policy-governed**;
 - deterministic HR detector;
+- frozen `corpus/hr/v1` with 13 controlled cases and scoring oracle;
 - fail-closed span validation/generalization;
 - local vault + authorized reconstruction;
 - opaque guessing-resistant pseudonyms;
 - REQUEST / DOCUMENT / SESSION / ORGANIZATION pseudonym lifecycles;
 - shared provider boundary + deterministic `FakeProvider`;
-- shared B0/B1/B2 execution path;
 - metadata-only structural audit by default;
 - OpenTelemetry metadata-only observability;
-- no-leak security invariants across payload, task/prompt, provider request, exceptions, logs, telemetry, audit and derived identifiers.
+- no-leak security invariants across payload, task/prompt, provider request, exceptions, logs, telemetry, audit and derived identifiers;
+- versioned contextual HR policy matrix (`hr-v2` / `hr-v3`);
+- reproducible B0–B4 experiment runner;
+- machine-readable conformance, exposure, utility, reconstruction, detector, timing, resource and volume metrics;
+- B3/B4 implementation provenance and B4 policy/matrix-cell provenance;
+- cross-process deterministic result comparison without weakening audit HMAC security.
 
-PR #27 completed Milestone 1 and was merged at `28fe292cf1e7cb1dfccb999c3f04aed1016f5d8e`.
-
-See [`docs/implementation-status.md`](docs/implementation-status.md) for the live execution plan and [`docs/experimental-design.md`](docs/experimental-design.md) for the frozen B0–B4 comparison design.
+Milestone 2 closed via PR #35 / merge `027a2baead4a3cee35db23cb8d4b79005a3a75d0`.
 
 ## Runtime
 
@@ -73,15 +80,15 @@ local authorized reconstruction
 structural audit + experiment metrics
 ```
 
-Document ingestion via Docling is planned after the first controlled B0–B4 HR pilot. Direct text remains the canonical controlled-experiment input.
+Document ingestion via Docling is a Milestone 3 infrastructure task. Direct normalized text remains the canonical controlled-experiment path.
 
 ## Experimental treatments
 
 - **B0 — Direct** — direct/full external disclosure.
 - **B1 — Static Sanitization** — static task-independent sanitization.
 - **B2 — Reversible Pseudonymization** — static reversible pseudonymization with local vault/reconstruction.
-- **B3 — Task-aware** — deterministic task-aware minimization in the pilot, using a generic fixed action space rather than contextual organizational policy.
-- **B4 — Policy-governed** — proposed treatment: explicit contextual policy constrains the action space first; task-awareness minimizes only within that space while retaining B3/B2 reversibility.
+- **B3 — Task-aware** — deterministic task-aware minimization using a generic fixed action space rather than contextual organizational policy.
+- **B4 — Policy-governed** — explicit contextual policy constrains the action space first; task-awareness minimizes only within that space while retaining B3/B2 reversibility.
 
 Pairwise design:
 
@@ -92,31 +99,47 @@ B2 → B3 : task-awareness
 B3 → B4 : explicit contextual policy governance
 ```
 
-## Current engineering gate
+## Milestone 2 pilot
 
-The immediate next research task is **T09 / Issue #4**: build and freeze a controlled HR pilot corpus/ground truth of approximately **12–20 cases**.
+The first controlled HR run is stored under:
 
-Primary task-necessity labels are:
+`artifacts/experiments/hr/v1/13198a3b95bd49b88a62f591f3da1224/`
 
-- `REQUIRED`;
-- `NOT_REQUIRED`.
+It executed the same 13 frozen HR cases under B0–B4 and produced versioned machine-readable outputs.
 
-Ground truth is used only for scoring and must never be privileged treatment input.
+The run is classified as **`pilot_development`**, not held-out confirmatory evidence.
 
-Once T09 Phase A is versioned/frozen, **T07/B3** is released.
+Factual highlights include:
 
-## Next research path
+- detector: 71 TP / 0 FP / 0 FN on the frozen HR spans;
+- known B3 divergence `hr_salary_analysis_003/salary` remains visible rather than tuned away;
+- FakeProvider supports deterministic pipeline/metric validation but not authoritative real-LLM utility/token/cost claims.
 
-1. **T09 / Issue #4** — HR pilot corpus + ground truth.
-2. **T07 / Issue #6** — B3 Task-aware.
-3. **T08 / Issue #7** — B4 Policy-governed.
-4. **T10 / Issue #8** — controlled B0–B4 pilot + runner/metrics.
-5. Freeze utility/overhead interpretation thresholds from the pilot.
-6. **T12 / Issue #9** — Docling + Contracts as second-domain validation.
-7. **T22 / Issue #30** — at least one real provider before authoritative utility/token/cost claims.
-8. Main experiment.
+The pilot also surfaced methodological choices that must be frozen before authoritative analysis; see `docs/milestone-2-pilot.md` and T23 / Issue #36.
 
-The PPGCA line/advisor task (**T01**) is a parallel academic track and does **not** block implementation.
+## Current research gate — Milestone 3
+
+Milestone 3 tracker: **Issue #38 — Post-pilot protocol freeze and confirmatory-readiness**.
+
+Critical path:
+
+1. **T23 / Issue #36** — freeze post-pilot methodology, metrics, thresholds and confirmatory protocol.
+2. In parallel: **T22 / Issue #30** — real provider, and **T12 / Issue #9** — Docling/normalized document ingestion.
+3. **T24 / Issue #37** — freeze Contracts v1 second-domain corpus/oracle.
+4. Verify confirmatory-readiness.
+5. Launch the next frozen B0–B4 validation batch.
+
+The main/confirmatory experiment must not be analyzed under rules selected after its results are seen.
+
+## Post-pilot methodological questions
+
+M2 intentionally leaves three questions for T23 rather than resolving them post hoc:
+
+- how the binary unnecessary-disclosure rate and ordered representation exposure should be treated as primary/secondary metrics, especially for `PSEUDONYMIZE`;
+- which frozen contextual `hr-v2/hr-v3` comparison defines the primary B3→B4 governance effect, since the original HR corpus uses `hr-v1`;
+- which real provider/model/configuration and provider-class semantics are frozen for authoritative runs.
+
+These are research-design decisions, not reasons to rewrite the completed M2 results.
 
 ## Integration/product surfaces
 
@@ -129,9 +152,9 @@ Python application/core
 └── MCP
 ```
 
-Tracked in **T20 / Issue #28**. These adapters must stay thin and must not duplicate policy, task-awareness, pseudonymization, reconstruction or scoring logic.
+Tracked in **T20 / Issue #28**. M2 now provides stable safe result concepts that these adapters may reuse. T20 remains non-blocking for Milestone 3.
 
-A simplified **Next.js** audit/experiment UI is tracked in **T21 / Issue #29**. It may start now from versioned synthetic fixtures and later consume the Python HTTP API. The UI is explicitly non-blocking and does not define scientific metrics/treatment semantics.
+A simplified **Next.js** audit/experiment UI is tracked in **T21 / Issue #29**. Its fixtures should now be based on the versioned safe T10 artifact schema rather than frontend-defined experiment semantics. It remains non-blocking.
 
 ## Provider strategy
 
@@ -139,27 +162,29 @@ A simplified **Next.js** audit/experiment UI is tracked in **T21 / Issue #29**. 
 
 At least one real provider/model is required before authoritative claims about real-LLM task utility, provider tokens and external API cost. Real adapters must preserve the existing narrow provider contract, fail-closed behavior, safe error handling and native transport timeout/cancellation.
 
-## Planned metrics
+## Metrics available from the runner
 
-- policy violation rate;
-- unnecessary/sensitive disclosure;
+- policy/conformance;
+- ordered representation exposure;
+- binary unnecessary disclosure;
 - detector precision/recall/F1;
-- task utility / task success;
+- utility information-sufficiency proxy for FakeProvider pilots;
 - reconstruction accuracy;
-- latency;
-- CPU/memory;
-- transmitted data/tokens;
-- estimated external API cost.
+- policy-restricted / impossible-under-policy / hard-block outcomes;
+- treatment/provider/total pipeline latency;
+- process CPU time / peak Python traced memory;
+- disclosure-controlled payload and total provider-request bytes;
+- versioned run/provenance metadata.
 
-Performance measurements are stage-aware. Detector/scoring work around B0 must not be silently attributed to B0 treatment latency. Disclosure-controlled payload volume is reported separately from task/prompt scaffolding.
+Real-provider token usage and external API cost remain T22-phase measurements.
 
 ## Validation domains
 
-Current planned order:
+Current order:
 
-1. **Human Resources** — controlled pilot and first B0–B4 validation;
-2. **Contracts** — second priority, especially semantic relationships between parties/obligations;
-3. **Accounting/Finance** — optional third domain if the pilot shows it fits the schedule.
+1. **Human Resources** — first controlled B0–B4 pilot ✅;
+2. **Contracts** — second-domain validation, with T12 ingestion infrastructure separated from T24 evaluation corpus/oracle;
+3. **Accounting/Finance** — optional third domain if justified by time/evidence.
 
 Primary datasets are synthetic/public-derived. Confidential employer data is not required and must not be committed.
 

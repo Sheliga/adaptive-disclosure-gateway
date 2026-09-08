@@ -4,7 +4,7 @@ This document defines the controlled comparison across the frozen treatment sequ
 
 **B0 — Direct → B1 — Static Sanitization → B2 — Reversible Pseudonymization → B3 — Task-aware → B4 — Policy-governed.**
 
-The identifiers `b0`–`b4` are frozen. Implementation status is tracked in [`implementation-status.md`](implementation-status.md).
+The identifiers `b0`–`b4` are frozen. Implementation status is tracked in [`implementation-status.md`](implementation-status.md). Factual M2 pilot results are recorded separately in [`milestone-2-pilot.md`](milestone-2-pilot.md).
 
 ## Treatment definitions
 
@@ -24,23 +24,26 @@ Retains B1's task-independent/static behavior while adding reversible local pseu
 
 Adds task-aware minimization while retaining B2's reversible mechanism.
 
-For the pilot:
+Frozen pilot semantics:
 
 - task analysis is deterministic and implemented behind a replaceable interface;
-- the analyzer receives only the case/task, never ground-truth labels;
+- the analyzer receives only the task/case input, never ground-truth labels;
 - B3 uses a **generic fixed action space per category/type**;
 - that generic action space is independent of `domain`, `purpose`, `requester_role`, `provider_class` and contextual `policy_version`;
-- task relevance chooses the least-disclosing useful action inside that generic space.
+- task relevance chooses the least-disclosing useful action inside that generic space;
+- ambiguous exact-value binding is conservative and must not widen disclosure.
+
+B3 frozen implementation commit: `31bce08b7ea6a5c905f7a20bbb4bb99a05682bab`.
 
 This design allows B2→B3 to isolate task-awareness.
 
 ### B4 — Policy-governed
 
-Proposed treatment. B4 retains B3's task analyzer, reversible pseudonymization, vault, reconstruction and provider boundary, but adds explicit contextual organizational policy constraints.
+B4 retains B3's task analyzer, reversible pseudonymization, vault, reconstruction and provider boundary, but adds explicit contextual organizational policy constraints.
 
 Policy resolves the permitted action space first. Task-awareness may then minimize only within that space and can never expand permission.
 
-Primary contextual dimensions varied by the experiment are:
+Primary contextual dimensions available to the experiment are:
 
 - `domain`;
 - `purpose`;
@@ -49,6 +52,10 @@ Primary contextual dimensions varied by the experiment are:
 - `policy_version`.
 
 Requester-specific overrides remain supported by the architecture but are outside the initial primary matrix. Pseudonym scope remains governed separately.
+
+The frozen HR contextual policy matrix is versioned through `hr-v2` / `hr-v3`; the original HR corpus remains on frozen `hr-v1`.
+
+B4 frozen implementation commit: `5abea8514fa10ac64b9bc3714bbfd3f18682f713`.
 
 ## Pairwise causal comparisons
 
@@ -59,13 +66,15 @@ Requester-specific overrides remain supported by the architecture but are outsid
 | B2 → B3 | Addition of task-aware action selection while the reversible mechanism remains constant. |
 | B3 → B4 | Addition of explicit contextual organizational policy constraints while task-awareness/reversibility remain constant. |
 
+For B3→B4, a claim about a contextual dimension is only valid when the compared cells actually change the resolved policy permission/action while all other relevant dimensions are held constant.
+
 ## Controlled corpus and ground truth
 
 ### Phase A — HR pilot
 
-Before B3 implementation, version and freeze an HR pilot corpus of approximately **12–20 cases**.
+Completed and frozen as `corpus/hr/v1/` with 13 controlled cases.
 
-Each case must contain at least:
+Each case includes:
 
 - `sample_id`;
 - controlled text/document input;
@@ -78,6 +87,8 @@ Each case must contain at least:
 - expected answer or objectively verifiable property;
 - expected `BLOCK_REQUEST` behavior where applicable;
 - pseudonym/reconstruction expectation where applicable.
+
+Any future modification to the frozen HR v1 schema/cases/labels must create a new corpus version rather than editing v1 in place.
 
 ### Task necessity oracle
 
@@ -92,23 +103,36 @@ Ground truth is strictly an evaluation oracle. Treatments do not receive it as p
 
 ### Minimum HR task families
 
-The pilot must include at least:
+The frozen HR pilot includes:
 
 1. authorized salary analysis;
 2. team summary/description where salary is not required;
 3. aggregation by department without individual identity;
-4. a request containing medical/prohibited information that should block.
+4. medical/prohibited-data cases that should block.
 
-Each family must use a response or property that can be scored without relying only on subjective judgment whenever feasible.
+Each family uses a response or property that can be scored without relying only on subjective judgment whenever feasible.
 
 ### Phase B — broader validation
 
-After the first B0–B4 HR pilot:
+After the completed HR pilot:
 
 1. **Contracts** is the second priority domain, especially for party-role, obligation, deadline, penalty and semantic-relation preservation;
-2. **Accounting/Finance** is an optional third domain if the pilot indicates it fits the schedule.
+2. **Accounting/Finance** is an optional third domain if the evidence and schedule justify it.
 
-Docling/document parsing is not introduced before the first controlled HR pilot.
+T12 / Issue #9 owns document-ingestion/normalization infrastructure. T24 / Issue #37 separately owns the Contracts evaluation corpus/oracle. Parser infrastructure must not be conflated with evaluation evidence.
+
+## Development vs confirmatory evidence
+
+The runner supports explicit run classification:
+
+- `pilot_development`;
+- `held_out_confirmatory`.
+
+The completed HR M2 run is `pilot_development` because `corpus/hr/v1` was used while B3/B4 were developed and reviewed.
+
+A later run may be labeled `held_out_confirmatory` only if its dataset/domain exposure, metric definitions, thresholds, provider configuration and analysis procedure were frozen before the comparative treatment results were inspected.
+
+If a new domain requires treatment/category/policy/generalization extensions after cases have already been inspected at result level, that run must remain development evidence unless a fresh held-out corpus is created after those extensions are frozen.
 
 ## Held constant across treatments
 
@@ -132,13 +156,16 @@ The evaluation harness must not introduce treatment-specific integration paths t
 
 `FakeProvider` remains the deterministic default for TDD, offline integration and core reproducibility.
 
+The M2 pilot uses FakeProvider and therefore measures a utility **information-sufficiency proxy**, not actual LLM answer correctness. That limitation is preserved rather than hidden.
+
 ### Authoritative utility/token/cost results
 
 At least one real provider/model is required before making authoritative claims about:
 
 - task utility with an actual LLM;
 - provider tokens;
-- external API cost.
+- external API cost;
+- genuine provider/provider-class behavior.
 
 For comparable B0–B4 batches, freeze and record:
 
@@ -146,10 +173,13 @@ For comparable B0–B4 batches, freeze and record:
 - snapshot/version when available;
 - decoding configuration;
 - task/prompt scaffolding;
+- provider class;
 - date/run metadata;
 - transmitted bytes/tokens where measurable.
 
 Real network adapters must use native client/transport timeout or cancellation in addition to the caller-side deadline already present in the shared boundary.
+
+T22 / Issue #30 implements the real adapter. T23 / Issue #36 freezes the provider/model/configuration used for confirmatory analysis.
 
 ## Metrics
 
@@ -164,22 +194,28 @@ A task that cannot be executed externally because required information is forbid
 
 ### Exposure
 
-- sensitive information exposure;
-- unnecessary disclosure;
-- transmitted controlled-content bytes/tokens;
+Available runner outputs include:
+
+- representation exposure level (`REMOVE < PSEUDONYMIZE < GENERALIZE < PRESERVE`);
+- binary unnecessary disclosure;
+- transmitted controlled-content bytes;
 - detector precision/recall/F1.
 
-Primary unnecessary-disclosure metric:
+The M2 pilot used the binary unnecessary-disclosure rate:
 
 > transmitted sensitive units labeled `NOT_REQUIRED` / total sensitive units labeled `NOT_REQUIRED` present in the case.
 
-Also report absolute count and associated bytes/tokens. Exposure must account for representation level (preserved/generalized/pseudonymized/removed), not only binary presence.
+This binary rate treats `PSEUDONYMIZE` as transmitted. The pilot showed that this can penalize B2 relative to B1 even when the representation is less revealing.
+
+**Post-pilot rule:** do not change the M2 metric retrospectively. T23 must freeze whether the binary rate remains primary, becomes secondary, or is paired with a level-sensitive primary metric before confirmatory results are inspected. Ordered exposure levels are already retained, so this decision does not require re-running or rewriting M2.
 
 ### Utility
 
 - task success rate;
 - objective accuracy/error metrics where applicable;
 - verifiable properties/rubrics for outputs that cannot be reduced to a single scalar automatically.
+
+For FakeProvider M2 runs, utility is an information-sufficiency proxy based on whether the controlled payload retains the information required for the answer. Real-provider runs must score actual provider output under the frozen T23 procedure.
 
 ### Reconstruction
 
@@ -191,14 +227,20 @@ Also report absolute count and associated bytes/tokens. Exposure must account fo
 
 ### Performance/cost
 
+Available from M2:
+
 - treatment latency;
 - provider latency;
 - total pipeline latency;
-- CPU/memory;
-- disclosure-controlled transmitted volume;
-- total provider-request volume when useful;
+- process CPU time;
+- peak Python traced memory;
+- disclosure-controlled transmitted bytes;
+- total provider-request bytes.
+
+Deferred to real-provider runs:
+
 - provider tokens;
-- estimated API cost.
+- estimated/actual external API cost.
 
 ## Measurement boundaries
 
@@ -210,17 +252,38 @@ If detector/scoring is run around B0 for comparable exposure measurement, it mus
 
 Report disclosure-controlled payload contribution separately from task/prompt scaffolding. Total provider request volume may also be reported so absolute provider cost is not understated.
 
-### Pilot calibration
+### CPU/memory
 
-No numeric utility-loss or overhead threshold is selected in advance at this stage.
+M2 records process CPU time and peak Python-traced allocation across the documented whole-pipeline measurement scope. These are lightweight portable proxies, not OS-level profiling/RSS claims.
 
-The controlled pilot is used to observe realistic scale and then freeze:
+## M2 pilot calibration and T23 freeze
 
+No numeric utility-loss or overhead threshold was selected before M2.
+
+That pilot has now occurred. Its observations may inform, but must not determine post hoc from desired treatment outcomes, the protocol frozen by T23.
+
+T23 must freeze before confirmatory result inspection:
+
+- metric primary/secondary roles;
 - interpretation/acceptance thresholds;
-- measurement procedure;
-- any statistical choices that depend on the final design.
+- B3→B4 primary contextual comparison procedure;
+- provider/model/configuration;
+- dataset/run classification rules;
+- statistical/descriptive analysis procedure.
 
-Those choices must be fixed **before** the main experiment results are analyzed and must not be tuned post hoc.
+Once frozen, later results must be interpreted under that protocol rather than re-optimizing the rules.
+
+## M2 methodological findings carried forward
+
+The first pilot surfaced three explicit design decisions:
+
+1. binary unnecessary disclosure vs representation-sensitive exposure;
+2. main frozen `hr-v1` B3→B4 pairwise vs targeted `hr-v2/hr-v3` contextual governance comparisons;
+3. FakeProvider development evidence vs real-provider authoritative measurement.
+
+These findings do **not** invalidate M2 and must not trigger retroactive tuning of B3/B4 or the frozen HR corpus/policies.
+
+The known B3 `hr_salary_analysis_003/salary` divergence also remains visible by design: conformance and utility are separate dimensions, and the analyzer is not tuned to the oracle after the fact.
 
 ## Non-scientific integration surfaces
 
@@ -231,10 +294,20 @@ The following are product/integration surfaces, not experimental treatments:
 - MCP server;
 - simplified Next.js audit/experiment UI.
 
-They must call/consume the same core contracts and cannot define policy logic, treatment semantics or scientific metrics independently. The UI may begin from versioned synthetic fixtures and later consume the HTTP API; no research-core task depends on the UI.
+They must call/consume the same core contracts and cannot define policy logic, treatment semantics or scientific metrics independently. M2's versioned safe result schema may be reused by these surfaces.
 
-## Current implementation status
+## Current implementation / planning status
 
-Milestone 1 is complete: B0/B1/B2, shared provider boundary, vault/reconstruction, real pseudonym-scope lifecycles, safe audit and end-to-end shared pipeline are on `master`.
+Milestone 2 is complete. The next research phase is Milestone 3 / Issue #38.
 
-The immediate gate is T09/Issue #4 Phase A. Once the HR corpus and ground truth are versioned/frozen, T07/B3 can start. T01 line/advisor selection runs independently as an academic track.
+Immediate methodological gate:
+
+- T23 / Issue #36 — freeze post-pilot methodology and confirmatory protocol.
+
+Parallel M3 readiness tasks:
+
+- T22 / Issue #30 — real provider;
+- T12 / Issue #9 — Docling/normalized document ingestion;
+- T24 / Issue #37 — Contracts v1 evaluation corpus/oracle after T23's labeling/freeze rules are defined.
+
+T01 line/advisor selection remains a parallel academic track. T20/T21 remain non-blocking integration/product work.
