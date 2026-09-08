@@ -117,6 +117,21 @@ class PolicyDecision(BaseModel):
     task_required: bool | None = None
     allowed_actions: list[DisclosureAction] = Field(default_factory=list)
     policy_version: str | None = None
+    # B4 -- Policy-governed only (T08 / issue #7): both stay ``None`` for
+    # every other treatment, which never sets them. ``policy_restricted`` is
+    # ``True`` when the policy-permitted action space forced a *more*
+    # disclosing-conservative choice than B3's identical task-relevance
+    # judgement would have picked from the full, unconstrained canonical
+    # action space -- i.e. policy actually bound the outcome, not just
+    # happened to agree with it. ``impossible_under_policy`` is ``True``
+    # specifically when the task genuinely needed the exact original value
+    # (``TaskRelevance.RELEVANT_WITH_EXACT_VALUE``) but the policy-permitted
+    # space did not include PRESERVE -- the structural signal T10 needs to
+    # separate this outcome from an ordinary utility failure, an ambiguous
+    # analyzer read, a hard BLOCK_REQUEST, or a provider failure. Neither
+    # field ever carries a sensitive value -- both are booleans.
+    policy_restricted: bool | None = None
+    impossible_under_policy: bool | None = None
 
 
 class Transformation(BaseModel):
