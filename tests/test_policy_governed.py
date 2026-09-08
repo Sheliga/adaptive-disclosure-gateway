@@ -158,6 +158,21 @@ def test_b3_and_b4_produce_identical_results_when_policy_matches_b3s_generic_spa
         (t.category, t.action, t.transformed) for t in b4_result.transformations
     ]
 
+    # T08 review round (Blocker 1): a policy cell that is byte-for-byte
+    # equivalent to B3's own generic action space must produce *zero*
+    # policy effect -- not just the same action (already checked above via
+    # `.transformations`), but `policy_restricted=False` and
+    # `impossible_under_policy=False` for every category. This is the test
+    # that actually proves "policy equivalent to B3 => zero policy effect",
+    # since matching actions alone cannot distinguish a correct comparison
+    # from one that happens to agree by coincidence.
+    b3_decisions = _decisions_by_category(b3_result)
+    b4_decisions = _decisions_by_category(b4_result)
+    for category, b4_decision in b4_decisions.items():
+        assert b4_decision.action is b3_decisions[category].action, category
+        assert b4_decision.policy_restricted is False, category
+        assert b4_decision.impossible_under_policy is False, category
+
     b3_pseudonym = next(
         t.transformed for t in b3_result.transformations if t.category == "employee_name"
     )
@@ -170,6 +185,125 @@ def test_b3_and_b4_produce_identical_results_when_policy_matches_b3s_generic_spa
     assert b3.reconstruct(response, b3_result, request.context) == b4.reconstruct(
         response, b4_result, request.context
     )
+
+
+# --- 1b. B3-baseline correctness (T08 review round, Blocker 1) -------------
+#
+# The B3->B4 counterfactual must be B3's own frozen per-category action
+# space (`TASK_AWARE_ACTION_SPACES`), never the global four-action ladder
+# (`CANONICAL_DISCLOSURE_ORDER`). Comparing against the global ladder
+# produces a false `policy_restricted`/`impossible_under_policy` signal
+# whenever B3's own space for a category excludes an action the ladder has
+# -- PSEUDONYMIZE is not in `salary`'s B3 space, and PRESERVE is not in any
+# identifier category's B3 space -- so a policy that changes nothing B3
+# already enforces on its own was being flagged as if it had.
+
+
+def test_department_relevant_without_exact_value_under_b3_equivalent_policy_has_no_policy_effect():
+    policy_repository = _b3_equivalent_policy_repository()
+    stub = _StubAnalyzer(TaskRelevance.RELEVANT_WITHOUT_EXACT_VALUE)
+    request = _request(TEXT, "irrelevant", policy_version="b3-equivalent")
+    spans = Detector().detect(TEXT)
+
+    b3_decision = _decisions_by_category(
+        TaskAwareDiscloser(
+            vault=InMemoryVault(), policy_repository=policy_repository, task_analyzer=stub
+        ).sanitize(request, spans)
+    )["department"]
+    b4_decision = _decisions_by_category(
+        PolicyGovernedDiscloser(
+            vault=InMemoryVault(), policy_repository=policy_repository, task_analyzer=stub
+        ).sanitize(request, spans)
+    )["department"]
+
+    assert b3_decision.action is DisclosureAction.PRESERVE
+    assert b4_decision.action is DisclosureAction.PRESERVE
+    assert b4_decision.policy_restricted is False
+    assert b4_decision.impossible_under_policy is False
+
+
+def test_employee_name_relevant_with_exact_value_under_b3_equivalent_policy_has_no_policy_effect():
+    policy_repository = _b3_equivalent_policy_repository()
+    stub = _StubAnalyzer(TaskRelevance.RELEVANT_WITH_EXACT_VALUE)
+    request = _request(TEXT, "irrelevant", policy_version="b3-equivalent")
+    spans = Detector().detect(TEXT)
+
+    b3_decision = _decisions_by_category(
+        TaskAwareDiscloser(
+            vault=InMemoryVault(), policy_repository=policy_repository, task_analyzer=stub
+        ).sanitize(request, spans)
+    )["employee_name"]
+    b4_decision = _decisions_by_category(
+        PolicyGovernedDiscloser(
+            vault=InMemoryVault(), policy_repository=policy_repository, task_analyzer=stub
+        ).sanitize(request, spans)
+    )["employee_name"]
+
+    # Identifiers never reach PRESERVE in B3's own generic space -- even
+    # RELEVANT_WITH_EXACT_VALUE only gets PSEUDONYMIZE. An equivalent policy
+    # must not be flagged as if it had foreclosed PRESERVE.
+    assert b3_decision.action is DisclosureAction.PSEUDONYMIZE
+    assert b4_decision.action is DisclosureAction.PSEUDONYMIZE
+    assert b4_decision.policy_restricted is False
+    assert b4_decision.impossible_under_policy is False
+
+
+def test_salary_under_b3_equivalent_policy_has_no_policy_effect_across_relevance_levels():
+    policy_repository = _b3_equivalent_policy_repository()
+    for relevance in (
+        TaskRelevance.NOT_RELEVANT,
+        TaskRelevance.RELEVANT_WITHOUT_EXACT_VALUE,
+        TaskRelevance.RELEVANT_WITH_EXACT_VALUE,
+    ):
+        stub = _StubAnalyzer(relevance)
+        request = _request(TEXT, "irrelevant", policy_version="b3-equivalent")
+        spans = Detector().detect(TEXT)
+
+        b3_decision = _decisions_by_category(
+            TaskAwareDiscloser(
+                vault=InMemoryVault(), policy_repository=policy_repository, task_analyzer=stub
+            ).sanitize(request, spans)
+        )["salary"]
+        b4_decision = _decisions_by_category(
+            PolicyGovernedDiscloser(
+                vault=InMemoryVault(), policy_repository=policy_repository, task_analyzer=stub
+            ).sanitize(request, spans)
+        )["salary"]
+
+        assert b4_decision.action is b3_decision.action, relevance
+        assert b4_decision.policy_restricted is False, relevance
+        assert b4_decision.impossible_under_policy is False, relevance
+
+
+def test_salary_generalize_under_real_hr_v2_policy_is_not_falsely_flagged_restricted():
+    """Reproduces the exact T08 review false positive: hr-v2's
+    `salary_analysis` purpose_actions is [remove, generalize, preserve] --
+    *exactly* B3's own generic salary action space -- so a
+    RELEVANT_WITHOUT_EXACT_VALUE task must resolve identically to B3
+    (GENERALIZE) with zero policy effect, not a false
+    `policy_restricted=True` from comparing against the global ladder
+    (which would insert PSEUDONYMIZE ahead of GENERALIZE, making
+    GENERALIZE look like a restriction of something B3 never offered).
+    """
+    task = "Determine whether the salary falls within the compensation band."
+    stub = _StubAnalyzer(TaskRelevance.RELEVANT_WITHOUT_EXACT_VALUE)
+
+    b3_result = TaskAwareDiscloser(
+        vault=InMemoryVault(),
+        policy_repository=PolicyRepository.from_directory(POLICY_DIR),
+        task_analyzer=stub,
+    ).sanitize(_request(TEXT, task, policy_version="hr-v1"), Detector().detect(TEXT))
+    b4_result = _discloser(task_analyzer=stub).sanitize(
+        _request(TEXT, task, purpose="salary_analysis", requester_role="hr_analyst"),
+        Detector().detect(TEXT),
+    )
+
+    b3_decision = _decisions_by_category(b3_result)["salary"]
+    b4_decision = _decisions_by_category(b4_result)["salary"]
+    assert b3_decision.action is DisclosureAction.GENERALIZE
+    assert b4_decision.action is DisclosureAction.GENERALIZE
+    assert b4_decision.policy_restricted is False
+    assert b4_decision.impossible_under_policy is False
 
 
 # --- 2. Task never expands the policy-permitted space ----------------------
@@ -221,6 +355,57 @@ def test_medical_block_request_is_unaffected_by_every_relevance_level():
             _request(text, "Summarize this employee's medical leave."), Detector().detect(text)
         )
         assert result.status == "blocked", f"expected block for relevance={relevance}"
+
+
+# --- 3b. Hard (non-BLOCK_REQUEST) policy actions still carry a real
+# B3-baseline comparison (T08 review round, Blocker 2) -----------------------
+#
+# A hard policy action (task relevance never picks it) previously returned
+# before `policy_restricted`/`impossible_under_policy` were ever computed,
+# silently losing a real policy effect whenever the hard action actually
+# forced something less disclosing than B3 would have chosen.
+
+
+def test_hard_remove_for_hr_viewer_records_real_policy_restriction_and_impossibility():
+    # hr-v2's `salary` rule has a hard REMOVE override for hr_viewer,
+    # matching every purpose -- not TASK_DEPENDENT, so task relevance never
+    # touches it. B3's own baseline for an exact-value task is PRESERVE, so
+    # this override is a real restriction that also forecloses the exact
+    # value the task needs.
+    exact_relevance = _StubAnalyzer(TaskRelevance.RELEVANT_WITH_EXACT_VALUE)
+    result = _discloser(task_analyzer=exact_relevance).sanitize(
+        _request(
+            TEXT,
+            "Return the salary exactly.",
+            purpose="salary_analysis",
+            requester_role="hr_viewer",
+        ),
+        Detector().detect(TEXT),
+    )
+    decisions = _decisions_by_category(result)
+
+    assert decisions["salary"].action is DisclosureAction.REMOVE
+    assert decisions["salary"].policy_restricted is True
+    assert decisions["salary"].impossible_under_policy is True
+
+
+def test_hard_action_that_does_not_degrade_relative_to_b3_is_not_flagged():
+    # department's hard default is PRESERVE for hr_analyst (no override
+    # match). B3's own generic space for department is (REMOVE, PRESERVE);
+    # NOT_RELEVANT resolves to its least-disclosing member, REMOVE. PRESERVE
+    # is *more* disclosing than that baseline, never less -- a hard policy
+    # action is free to resolve to something more permissive than B3
+    # without that being a "restriction" of anything.
+    not_relevant = _StubAnalyzer(TaskRelevance.NOT_RELEVANT)
+    result = _discloser(task_analyzer=not_relevant).sanitize(
+        _request(TEXT, "irrelevant", purpose="team_summary", requester_role="hr_analyst"),
+        Detector().detect(TEXT),
+    )
+    decisions = _decisions_by_category(result)
+
+    assert decisions["department"].action is DisclosureAction.PRESERVE
+    assert decisions["department"].policy_restricted is False
+    assert decisions["department"].impossible_under_policy is False
 
 
 # --- 4. purpose varies the resolved action -----------------------------
@@ -471,6 +656,10 @@ def test_hard_block_category_is_not_conflated_with_impossible_under_policy():
     medical_decision = next(d for d in result.decisions if d.category == "medical_data")
     assert medical_decision.action is DisclosureAction.BLOCK_REQUEST
     assert not medical_decision.impossible_under_policy
+    # T08 review round (Blocker 2): BLOCK_REQUEST stays its own outcome
+    # class -- never auto-flagged as a policy restriction either, since
+    # "restricted" implies a disclosure-level action was chosen at all.
+    assert not medical_decision.policy_restricted
 
 
 def test_exact_value_satisfied_by_policy_is_not_flagged_impossible():
@@ -498,6 +687,100 @@ def test_no_task_phrasing_bypasses_the_medical_data_block():
     for task in tasks:
         result = _discloser().sanitize(_request(text, task), Detector().detect(text))
         assert result.status == "blocked", f"expected block for task={task!r}"
+
+
+# --- 10b. matrix_cell identifies the real experimental cell (T08 review
+# round, Blocker 3) ----------------------------------------------------------
+#
+# The matrix-cell telemetry identifier used to collapse every contextually
+# distinct cell sharing a (policy_version, category) pair into one string
+# (e.g. `team_summary/hr_analyst`, `salary_analysis/hr_analyst` and
+# `salary_analysis/hr_viewer` for `hr-v2:salary` all became the identical
+# `"hr-v2:salary"`), making it impossible for T10 to reproduce which cell
+# produced a given decision. The identifier now also carries purpose,
+# requester_role and provider_class -- but never requester_id, task text or
+# any sensitive value.
+
+
+def _matrix_cells_from_spans(finished_spans) -> set[str]:
+    span = next(s for s in finished_spans if s.name == "policy_governed.sanitize")
+    return set(span.attributes["policy_governed.matrix_cells"])
+
+
+def test_matrix_cell_distinguishes_purpose_and_role_for_the_same_policy_version_and_category(
+    recorded_spans,
+):
+    exact_relevance = _StubAnalyzer(TaskRelevance.RELEVANT_WITH_EXACT_VALUE)
+
+    _discloser(task_analyzer=exact_relevance).sanitize(
+        _request(TEXT, "irrelevant", purpose="team_summary", requester_role="hr_analyst"),
+        Detector().detect(TEXT),
+    )
+    team_summary_analyst = _matrix_cells_from_spans(recorded_spans.get_finished_spans())
+    recorded_spans.clear()
+
+    _discloser(task_analyzer=exact_relevance).sanitize(
+        _request(TEXT, "irrelevant", purpose="salary_analysis", requester_role="hr_analyst"),
+        Detector().detect(TEXT),
+    )
+    salary_analyst = _matrix_cells_from_spans(recorded_spans.get_finished_spans())
+    recorded_spans.clear()
+
+    _discloser(task_analyzer=exact_relevance).sanitize(
+        _request(TEXT, "irrelevant", purpose="salary_analysis", requester_role="hr_viewer"),
+        Detector().detect(TEXT),
+    )
+    salary_viewer = _matrix_cells_from_spans(recorded_spans.get_finished_spans())
+
+    def _salary_cell(cells: set[str]) -> str:
+        return next(cell for cell in cells if "category=salary" in cell)
+
+    three_cells = {
+        _salary_cell(team_summary_analyst),
+        _salary_cell(salary_analyst),
+        _salary_cell(salary_viewer),
+    }
+    assert len(three_cells) == 3, three_cells
+
+
+def test_matrix_cell_is_deterministic_for_the_same_context(recorded_spans):
+    exact_relevance = _StubAnalyzer(TaskRelevance.RELEVANT_WITH_EXACT_VALUE)
+    request = _request(TEXT, "irrelevant", purpose="salary_analysis", requester_role="hr_analyst")
+    spans = Detector().detect(TEXT)
+
+    _discloser(task_analyzer=exact_relevance).sanitize(request, spans)
+    first_cells = _matrix_cells_from_spans(recorded_spans.get_finished_spans())
+    recorded_spans.clear()
+
+    _discloser(task_analyzer=exact_relevance).sanitize(request, spans)
+    second_cells = _matrix_cells_from_spans(recorded_spans.get_finished_spans())
+
+    assert first_cells == second_cells
+
+
+def test_matrix_cell_never_leaks_requester_id_or_a_sensitive_value(recorded_spans):
+    exact_relevance = _StubAnalyzer(TaskRelevance.RELEVANT_WITH_EXACT_VALUE)
+    request = _request(
+        TEXT,
+        "irrelevant",
+        purpose="salary_analysis",
+        requester_role="hr_analyst",
+        requester_id="requester-should-never-appear",
+    )
+    _discloser(task_analyzer=exact_relevance).sanitize(request, Detector().detect(TEXT))
+
+    cells = _matrix_cells_from_spans(recorded_spans.get_finished_spans())
+    joined = " ".join(cells)
+    assert "requester-should-never-appear" not in joined
+    for value in ("Ana Souza", "123.456.789-09", "8500", "Engineering"):
+        assert value not in joined
+    for cell in cells:
+        assert "domain=" in cell
+        assert "policy=" in cell
+        assert "category=" in cell
+        assert "purpose=" in cell
+        assert "role=" in cell
+        assert "provider=" in cell
 
 
 # --- 11. Reconstruction reuses B2/B3's vault/scope mechanism ---------------

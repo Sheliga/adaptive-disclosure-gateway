@@ -118,15 +118,29 @@ class PolicyDecision(BaseModel):
     allowed_actions: list[DisclosureAction] = Field(default_factory=list)
     policy_version: str | None = None
     # B4 -- Policy-governed only (T08 / issue #7): both stay ``None`` for
-    # every other treatment, which never sets them. ``policy_restricted`` is
-    # ``True`` when the policy-permitted action space forced a *more*
-    # disclosing-conservative choice than B3's identical task-relevance
-    # judgement would have picked from the full, unconstrained canonical
-    # action space -- i.e. policy actually bound the outcome, not just
-    # happened to agree with it. ``impossible_under_policy`` is ``True``
-    # specifically when the task genuinely needed the exact original value
-    # (``TaskRelevance.RELEVANT_WITH_EXACT_VALUE``) but the policy-permitted
-    # space did not include PRESERVE -- the structural signal T10 needs to
+    # every other treatment, which never sets them, and also stay ``None``
+    # (not ``False``) whenever B4 has no comparable B3 baseline to compare
+    # against at all (see ``transformations.policy_governed._b3_baseline_
+    # action``) -- a non-comparison is not evidence of zero policy effect.
+    # Both are computed against the SAME counterfactual: the action B3 --
+    # Task-aware would have picked for this category at this task
+    # relevance, using B3's own frozen per-category action space
+    # (``transformations.task_aware.TASK_AWARE_ACTION_SPACES``) -- never
+    # the global four-action ladder, which contains actions a given
+    # category's B3 space may not (see
+    # ``transformations/policy_governed.py``'s module docstring for why
+    # that distinction matters).
+    #
+    # ``policy_restricted`` is ``True`` only when the policy-resolved action
+    # is *strictly* less disclosing than that B3 baseline -- never a bare
+    # "differs from" comparison, since policy is free to resolve to
+    # something *more* disclosing than B3 without that being a restriction
+    # of anything. ``impossible_under_policy`` is ``True`` only in the
+    # narrower case where the task genuinely needed the exact original
+    # value (``TaskRelevance.RELEVANT_WITH_EXACT_VALUE``), B3's own
+    # baseline for this category at that relevance *is* PRESERVE, and the
+    # policy-resolved action is something else -- a strict subset of
+    # ``policy_restricted``, and the structural signal T10 needs to
     # separate this outcome from an ordinary utility failure, an ambiguous
     # analyzer read, a hard BLOCK_REQUEST, or a provider failure. Neither
     # field ever carries a sensitive value -- both are booleans.
