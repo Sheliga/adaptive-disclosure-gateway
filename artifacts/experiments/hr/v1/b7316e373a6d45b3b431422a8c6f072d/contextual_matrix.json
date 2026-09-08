@@ -1,0 +1,155 @@
+[
+  {
+    "action_a": "generalize",
+    "action_b": "generalize",
+    "allowed_actions_a": [
+      "remove",
+      "generalize"
+    ],
+    "allowed_actions_b": [
+      "remove",
+      "generalize",
+      "preserve"
+    ],
+    "permission_changed": true,
+    "spec": {
+      "base_sample_id": "hr_salary_analysis_001",
+      "category": "salary",
+      "context_a": {
+        "document_id": "ctxmatrix-doc-1",
+        "policy_version": "hr-v2",
+        "purpose": "team_summary",
+        "request_id": "ctxmatrix-req-1"
+      },
+      "context_b": {
+        "document_id": "ctxmatrix-doc-1",
+        "policy_version": "hr-v2",
+        "purpose": "salary_analysis",
+        "request_id": "ctxmatrix-req-1"
+      },
+      "dimension": "purpose",
+      "name": "purpose_salary"
+    }
+  },
+  {
+    "action_a": "remove",
+    "action_b": "generalize",
+    "allowed_actions_a": [
+      "remove"
+    ],
+    "allowed_actions_b": [
+      "remove",
+      "generalize",
+      "preserve"
+    ],
+    "permission_changed": true,
+    "spec": {
+      "base_sample_id": "hr_salary_analysis_001",
+      "category": "salary",
+      "context_a": {
+        "document_id": "ctxmatrix-doc-1",
+        "policy_version": "hr-v2",
+        "purpose": "salary_analysis",
+        "request_id": "ctxmatrix-req-1",
+        "requester_role": "hr_viewer"
+      },
+      "context_b": {
+        "document_id": "ctxmatrix-doc-1",
+        "policy_version": "hr-v2",
+        "purpose": "salary_analysis",
+        "request_id": "ctxmatrix-req-1",
+        "requester_role": "hr_analyst"
+      },
+      "dimension": "requester_role",
+      "name": "requester_role_salary"
+    }
+  },
+  {
+    "action_a": "remove",
+    "action_b": "preserve",
+    "allowed_actions_a": [
+      "remove"
+    ],
+    "allowed_actions_b": [
+      "preserve"
+    ],
+    "permission_changed": true,
+    "spec": {
+      "base_sample_id": "hr_department_aggregation_001",
+      "category": "department",
+      "context_a": {
+        "document_id": "ctxmatrix-doc-1",
+        "policy_version": "hr-v2",
+        "request_id": "ctxmatrix-req-1",
+        "requester_role": "hr_viewer"
+      },
+      "context_b": {
+        "document_id": "ctxmatrix-doc-1",
+        "policy_version": "hr-v2",
+        "request_id": "ctxmatrix-req-1",
+        "requester_role": "hr_analyst"
+      },
+      "dimension": "requester_role",
+      "name": "requester_role_department"
+    }
+  },
+  {
+    "action_a": "pseudonymize",
+    "action_b": "remove",
+    "allowed_actions_a": [
+      "pseudonymize"
+    ],
+    "allowed_actions_b": [
+      "remove"
+    ],
+    "permission_changed": true,
+    "spec": {
+      "base_sample_id": "hr_team_summary_001",
+      "category": "employee_name",
+      "context_a": {
+        "document_id": "ctxmatrix-doc-1",
+        "policy_version": "hr-v2",
+        "provider_class": "internal_llm",
+        "request_id": "ctxmatrix-req-1"
+      },
+      "context_b": {
+        "document_id": "ctxmatrix-doc-1",
+        "policy_version": "hr-v2",
+        "provider_class": "external_llm",
+        "request_id": "ctxmatrix-req-1"
+      },
+      "dimension": "provider_class",
+      "name": "provider_class_employee_name"
+    }
+  },
+  {
+    "action_a": "generalize",
+    "action_b": "generalize",
+    "allowed_actions_a": [
+      "remove",
+      "generalize",
+      "preserve"
+    ],
+    "allowed_actions_b": [
+      "remove",
+      "generalize"
+    ],
+    "permission_changed": true,
+    "spec": {
+      "base_sample_id": "hr_salary_analysis_002",
+      "category": "salary",
+      "context_a": {
+        "document_id": "ctxmatrix-doc-1",
+        "policy_version": "hr-v2",
+        "request_id": "ctxmatrix-req-1"
+      },
+      "context_b": {
+        "document_id": "ctxmatrix-doc-1",
+        "policy_version": "hr-v3",
+        "request_id": "ctxmatrix-req-1"
+      },
+      "dimension": "policy_version",
+      "name": "policy_version_compensation_review"
+    }
+  }
+]

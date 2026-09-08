@@ -1,0 +1,20 @@
+{
+  "case_counts": {
+    "b0": 13,
+    "b1": 13,
+    "b2": 13,
+    "b3": 13,
+    "b4": 13
+  },
+  "corpus_version": "hr/v1",
+  "run_classification": "pilot_development",
+  "run_id": "b7316e373a6d45b3b431422a8c6f072d",
+  "schema_version": "t10-experiment-runner-v1",
+  "treatments": [
+    "b0",
+    "b1",
+    "b2",
+    "b3",
+    "b4"
+  ]
+}
