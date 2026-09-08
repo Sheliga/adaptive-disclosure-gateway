@@ -54,6 +54,9 @@ from adaptive_disclosure_gateway.observability import elapsed_ms_since, get_trac
 from adaptive_disclosure_gateway.policies import PolicyRepository
 from adaptive_disclosure_gateway.task_analysis import DeterministicTaskAnalyzer, TaskAnalyzer
 from adaptive_disclosure_gateway.task_analysis.base import TaskRelevance
+from adaptive_disclosure_gateway.transformations.relevance_selection import (
+    select_action_for_relevance,
+)
 from adaptive_disclosure_gateway.transformations.span_validation import spans_are_valid
 from adaptive_disclosure_gateway.vault import Vault
 
@@ -96,40 +99,6 @@ TASK_AWARE_ACTION_SPACES: dict[str, tuple[DisclosureAction, ...]] = {
     "department": (DisclosureAction.REMOVE, DisclosureAction.PRESERVE),
     "medical_data": (DisclosureAction.BLOCK_REQUEST,),
 }
-
-
-def _select_action(
-    level: TaskRelevance, action_space: tuple[DisclosureAction, ...]
-) -> DisclosureAction:
-    """Pick the first action in ``action_space`` (already ordered
-    least-to-most disclosing) that satisfies ``level``. Never returns an
-    action outside ``action_space``.
-
-    - NOT_RELEVANT: the least disclosing action in the space.
-    - RELEVANT_WITHOUT_EXACT_VALUE: the least disclosing action that still
-      carries usable information -- the first action that is not REMOVE
-      (REMOVE carries none).
-    - RELEVANT_WITH_EXACT_VALUE: PRESERVE if and only if PRESERVE is in the
-      space; otherwise the most disclosing action available (never invents
-      an action outside the generic space).
-
-    ``TaskRelevance.AMBIGUOUS`` is handled by the caller before this
-    function is reached (see ``TaskAwareDiscloser.sanitize``'s ``decide``
-    closure) -- ambiguity resolves to the space's least disclosing action,
-    same as NOT_RELEVANT, but is recorded with its own audit reason.
-    """
-    if level is TaskRelevance.NOT_RELEVANT:
-        return action_space[0]
-    if level is TaskRelevance.RELEVANT_WITHOUT_EXACT_VALUE:
-        for action in action_space:
-            if action is not DisclosureAction.REMOVE:
-                return action
-        return action_space[0]
-    if level is TaskRelevance.RELEVANT_WITH_EXACT_VALUE:
-        if DisclosureAction.PRESERVE in action_space:
-            return DisclosureAction.PRESERVE
-        return action_space[-1]
-    raise AssertionError(f"unreachable task relevance level: {level!r}")
 
 
 _REASONS = TreatmentReasons(
@@ -267,7 +236,7 @@ class TaskAwareDiscloser:
                     task_required=None,
                 )
 
-            action = _select_action(level, action_space)
+            action = select_action_for_relevance(level, action_space)
             return ActionDecision(
                 action=action,
                 reason=f"B3 task-aware: task relevance resolved to {level.value}",
