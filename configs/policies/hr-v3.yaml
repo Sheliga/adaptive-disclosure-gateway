@@ -1,0 +1,62 @@
+# hr-v3 (T08 / issue #7, Phase A): a documented, deliberately small variant
+# of hr-v2 -- identical in every cell except one, so a `policy_version`
+# comparison (hr-v2 vs. hr-v3) can be run holding the same case/context
+# constant and observing only the one policy-authored delta. See
+# docs/hr-policy-matrix.md for the full diff and rationale.
+#
+# The one difference from hr-v2: `salary`'s `compensation_review` purpose no
+# longer includes PRESERVE. Governance rationale: hr-v3 represents a
+# tightened compensation-review policy (e.g. following an internal audit)
+# that still allows a banded/generalized view of compensation for that
+# purpose, but no longer allows the exact figure to leave the boundary --
+# `salary_analysis` is intentionally left unchanged, so the two purposes
+# diverge from each other under hr-v3 in a way they did not under hr-v2.
+version: hr-v3
+domain: hr
+pseudonym_scope:
+  default: session
+  role_max:
+    hr_viewer: request
+    hr_analyst: session
+    hr_admin: organization
+rules:
+  employee_name:
+    default: pseudonymize
+    overrides:
+      - action: remove
+        provider_class: external_llm
+        allowed_actions:
+          - remove
+  cpf:
+    default: remove
+  medical_data:
+    default: block_request
+  department:
+    default: preserve
+    overrides:
+      - action: remove
+        requester_role: hr_viewer
+        allowed_actions:
+          - remove
+  salary:
+    default: task_dependent
+    allowed_actions:
+      - remove
+      - generalize
+    purpose_actions:
+      salary_analysis:
+        - remove
+        - generalize
+        - preserve
+      # The one documented delta from hr-v2: PRESERVE removed here.
+      compensation_review:
+        - remove
+        - generalize
+      headcount_planning:
+        - remove
+        - generalize
+    overrides:
+      - action: remove
+        requester_role: hr_viewer
+        allowed_actions:
+          - remove
