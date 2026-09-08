@@ -8,9 +8,11 @@ The project investigates a local trust boundary that applies explicit organizati
 
 This repository supports a candidate master's research proposal for UTFPR PPGCA 2027. It is a research prototype, not a finished dissertation implementation and not evidence that B4 outperforms existing approaches.
 
+The Python implementation also serves as the **reference application core for an advisor-facing interactive demonstration**. The demo track exposes the same implemented B0–B4 mechanisms through HTTP + Next.js; it is not a second/simplified anonymization implementation and does not change the scientific Milestone 3 gates. See [`docs/advisor-demo.md`](docs/advisor-demo.md).
+
 **Milestone 1 and Milestone 2 are complete on `master`.** The project is now in post-pilot methodology freeze and confirmatory-readiness.
 
-See [`docs/implementation-status.md`](docs/implementation-status.md) for the live execution plan, [`docs/experimental-design.md`](docs/experimental-design.md) for the B0–B4 comparison design and [`docs/milestone-2-pilot.md`](docs/milestone-2-pilot.md) for the factual first-pilot record.
+See [`docs/implementation-status.md`](docs/implementation-status.md) for the live execution plan, [`docs/experimental-design.md`](docs/experimental-design.md) for the B0–B4 comparison design, [`docs/milestone-2-pilot.md`](docs/milestone-2-pilot.md) for the factual first-pilot record and [`docs/advisor-demo.md`](docs/advisor-demo.md) for the parallel application/demo track.
 
 ## Current implementation status
 
@@ -141,6 +143,38 @@ M2 intentionally leaves three questions for T23 rather than resolving them post 
 
 These are research-design decisions, not reasons to rewrite the completed M2 results.
 
+## Advisor-facing demo application — parallel track
+
+The project also has a parallel goal: make the current reference implementation directly testable by prospective advisors through a hosted web application.
+
+Target path:
+
+```text
+browser
+  ↓
+Next.js
+  ↓
+HTTP API
+  ↓
+Python application/core
+  ↓
+B0–B4 → provider → local reconstruction
+```
+
+The first demo intentionally uses the deterministic mechanisms already implemented by the research prototype. **Agentic anonymization is not part of the first advisor-facing route.**
+
+Tracking:
+
+1. **Demo Track / Issue #41** — overall advisor-facing application objective.
+2. **T20 / Issue #28** — shared application boundary + HTTP API first; CLI/MCP share the boundary but do not block the first hosted URL.
+3. **T21 / Issue #29** — interactive Next.js surface over the real Python core.
+4. **T25 / Issue #42** — containerized API + web deployment suitable for sharing a URL.
+5. **T22 / Issue #30** — real-provider mode consumed by the demo when available; FakeProvider remains useful for deterministic demonstrations.
+
+The current root `compose.yaml` remains a development/test harness. T25 owns a distinct deploy/demo topology using the supported Python 3.13 runtime rather than silently repurposing the test compose.
+
+This track is explicitly **non-blocking for Milestone 3** and must not drive treatment/policy/metric tuning.
+
 ## Integration/product surfaces
 
 The Python core is planned to expose:
@@ -152,9 +186,11 @@ Python application/core
 └── MCP
 ```
 
-Tracked in **T20 / Issue #28**. M2 now provides stable safe result concepts that these adapters may reuse. T20 remains non-blocking for Milestone 3.
+Tracked in **T20 / Issue #28**. M2 now provides stable safe result concepts that these adapters may reuse. For the advisor demo, HTTP is the first required adapter.
 
-A simplified **Next.js** audit/experiment UI is tracked in **T21 / Issue #29**. Its fixtures should now be based on the versioned safe T10 artifact schema rather than frontend-defined experiment semantics. It remains non-blocking.
+A simplified **Next.js** audit/experiment UI is tracked in **T21 / Issue #29**. It is now also the human-facing surface of the advisor demo. Its fixtures/read model should be based on the versioned safe T10 artifact schema rather than frontend-defined experiment semantics.
+
+See [`docs/advisor-demo.md`](docs/advisor-demo.md) for the complete demo boundary, scope and deployment stance.
 
 ## Provider strategy
 
