@@ -82,6 +82,21 @@ def test_production_source_files_actually_cover_the_new_b3_modules():
     assert task_analysis_files <= files
 
 
+def test_production_source_files_actually_cover_the_new_b4_modules():
+    """Mirrors ``test_production_source_files_actually_cover_the_new_b3_modules``
+    for T08/B4 (issue #7): ``transformations/policy_governed.py`` and the
+    shared ``transformations/relevance_selection.py`` it uses alongside B3
+    must both be reachable by ``_production_source_files()``'s glob -- and
+    therefore already covered by
+    ``test_no_production_module_imports_the_corpus_package`` above -- so B4
+    gets the exact same frozen-corpus/oracle isolation guarantee every other
+    treatment has, not weaker.
+    """
+    files = {path.name for path in _production_source_files()}
+    assert "policy_governed.py" in files
+    assert "relevance_selection.py" in files
+
+
 def _functions_constructing_disclosure_request(path: Path) -> list[str]:
     """Names of every function/method in ``path`` whose body calls
     ``DisclosureRequest(...)`` directly.

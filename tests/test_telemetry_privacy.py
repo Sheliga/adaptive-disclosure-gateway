@@ -9,6 +9,7 @@ from adaptive_disclosure_gateway.detection import Detector
 from adaptive_disclosure_gateway.domain import DisclosureRequest, GovernanceContext
 from adaptive_disclosure_gateway.policies import PolicyRepository
 from adaptive_disclosure_gateway.transformations import (
+    PolicyGovernedDiscloser,
     ReversiblePseudonymizer,
     StaticSanitizer,
     TaskAwareDiscloser,
@@ -217,6 +218,113 @@ def test_b3_reconstruct_span_attributes_never_contain_original_values(recorded_s
     )
     spans = Detector().detect(request.text)
     discloser = TaskAwareDiscloser(
+        vault=InMemoryVault(), policy_repository=PolicyRepository.from_directory(POLICY_DIR)
+    )
+    result = discloser.sanitize(request, spans)
+    pseudonym = next(t.transformed for t in result.transformations if t.category == "employee_name")
+    recorded_spans.clear()  # isolate reconstruct()'s own span
+
+    response_text = f"Hello {pseudonym}, welcome to the team."
+    reconstructed = discloser.reconstruct(response_text, result, request.context)
+
+    finished = recorded_spans.get_finished_spans()
+    _assert_span_attributes_never_leak(finished, "Ana Souza", request.text, reconstructed)
+
+
+def test_b4_span_attributes_never_contain_detected_values_payload_or_pseudonym_mapping(
+    recorded_spans,
+):
+    request = DisclosureRequest(
+        text=SECRET_TEXT,
+        task=(
+            "Determine whether this employee's salary falls within the standard "
+            "compensation band for their department. You do not need the employee's "
+            "name or CPF to answer."
+        ),
+        context=GovernanceContext(
+            domain="hr",
+            purpose="salary_analysis",
+            requester_role="hr_analyst",
+            requester_id="u1",
+            policy_version="hr-v2",
+            session_id="s1",
+        ),
+    )
+    spans = Detector().detect(SECRET_TEXT)
+    recorded_spans.clear()  # isolate B4's own spans from the detector's
+
+    discloser = PolicyGovernedDiscloser(
+        vault=InMemoryVault(), policy_repository=PolicyRepository.from_directory(POLICY_DIR)
+    )
+    result = discloser.sanitize(request, spans)
+
+    pseudonym = next(t.transformed for t in result.transformations if t.category == "employee_name")
+    pseudonym_mapping = f"Ana Souza:{pseudonym}"
+
+    finished = recorded_spans.get_finished_spans()
+    _assert_span_attributes_never_leak(
+        finished,
+        "Ana Souza",
+        "123.456.789-09",
+        "8500",
+        SECRET_TEXT,
+        result.external_payload,
+        pseudonym_mapping,
+        request.task,
+    )
+
+
+def test_b4_span_attributes_never_leak_when_policy_blocks_a_category(recorded_spans):
+    # A hard-blocked policy path (medical_data) is exactly the case where a
+    # naive implementation might be tempted to log "why" using the detected
+    # value -- confirms it still doesn't.
+    text = SECRET_TEXT + "Medical notes: Reports chronic migraine and requested leave.\n"
+    request = DisclosureRequest(
+        text=text,
+        task="Summarize this employee's medical leave.",
+        context=GovernanceContext(
+            domain="hr",
+            purpose="team_summary",
+            policy_version="hr-v2",
+            session_id="s1",
+        ),
+    )
+    spans = Detector().detect(text)
+    recorded_spans.clear()
+
+    discloser = PolicyGovernedDiscloser(
+        vault=InMemoryVault(), policy_repository=PolicyRepository.from_directory(POLICY_DIR)
+    )
+    result = discloser.sanitize(request, spans)
+
+    assert result.status == "blocked"
+    finished = recorded_spans.get_finished_spans()
+    _assert_span_attributes_never_leak(
+        finished,
+        "Ana Souza",
+        "123.456.789-09",
+        "8500",
+        "chronic migraine",
+        text,
+        request.task,
+    )
+
+
+def test_b4_reconstruct_span_attributes_never_contain_original_values(recorded_spans):
+    request = DisclosureRequest(
+        text="Employee: Ana Souza\n",
+        task="Draft the opening line of an internal announcement addressed by name to this employee.",
+        context=GovernanceContext(
+            domain="hr",
+            purpose="team_summary",
+            provider_class="internal_llm",
+            requester_id="u1",
+            policy_version="hr-v2",
+            session_id="s1",
+        ),
+    )
+    spans = Detector().detect(request.text)
+    discloser = PolicyGovernedDiscloser(
         vault=InMemoryVault(), policy_repository=PolicyRepository.from_directory(POLICY_DIR)
     )
     result = discloser.sanitize(request, spans)

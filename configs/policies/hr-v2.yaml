@@ -1,0 +1,101 @@
+# hr-v2 (T08 / issue #7, Phase A): the controlled contextual-governance
+# matrix for the HR pilot's B4 -- Policy-governed treatment.
+#
+# hr-v1 remains untouched and frozen (the corpus and B2/B3 baselines depend
+# on it -- see CLAUDE.md's hard restriction). hr-v2 is a separate, versioned
+# policy document exercising the contextual dimensions hr-v1 never varied on
+# disclosure action: requester_role and provider_class, on top of purpose
+# (which hr-v1 already varied for `salary`). See
+# docs/hr-policy-matrix.md for the full cell-by-cell rationale and which
+# cells do/do not change the resolved action space.
+#
+# Design rules followed throughout (per T08's brief): every rule below is a
+# plausible governance scenario, not derived from corpus/oracle content;
+# `requester_id` overrides are out of scope; `domain` stays `hr` for both
+# hr-v2 and hr-v3 (no cross-domain substitute for a within-domain effect).
+version: hr-v2
+domain: hr
+pseudonym_scope:
+  # Pseudonym-scope policy is a separate governance axis from per-category
+  # disclosure action (CLAUDE.md's explicit requirement to keep the two
+  # distinct). Reused verbatim from hr-v1 so hr-v2/hr-v3 do not confound the
+  # B4 disclosure-action matrix with an unrelated pseudonym-lifecycle change.
+  default: session
+  role_max:
+    hr_viewer: request
+    hr_analyst: session
+    hr_admin: organization
+rules:
+  # --- Governance scenario: an external LLM provider is a stricter data
+  # boundary than one hosted inside the organization's own network. A
+  # provider_class distinction is the one dimension that changes NOTHING in
+  # hr-v1 (T08 Phase A inventory) -- here it demotes employee_name from
+  # PSEUDONYMIZE (still reversible, still useful) to REMOVE (no local
+  # reference at all) whenever the destination is external_llm. This is a
+  # hard-action override (not TASK_DEPENDENT), so it can never be
+  # overwritten by a purpose_actions resolution -- see
+  # docs/hr-policy-matrix.md's "engine trap" section.
+  employee_name:
+    default: pseudonymize
+    overrides:
+      - action: remove
+        provider_class: external_llm
+        allowed_actions:
+          - remove
+  cpf:
+    default: remove
+  medical_data:
+    default: block_request
+  # --- Governance scenario: a read-only viewer role should not receive even
+  # non-financial org-structure detail (department) that an analyst or admin
+  # performing a legitimate HR review may see. Also a hard-action override,
+  # for the same "never overwritten by purpose_actions" reason.
+  department:
+    default: preserve
+    overrides:
+      - action: remove
+        requester_role: hr_viewer
+        allowed_actions:
+          - remove
+  # --- Governance scenario: salary combines two contextual dimensions in one
+  # category, on purpose (T08's "engine trap" section requires demonstrating
+  # the fix, not just avoiding the combination):
+  #
+  # 1. purpose (kept from hr-v1's own precedent, re-declared here since
+  #    hr-v2 is a separate document): a generic purpose (team_summary,
+  #    department_aggregation, ...) may only REMOVE/GENERALIZE; a
+  #    compensation-focused purpose may additionally PRESERVE.
+  # 2. requester_role, expressed as a HARD-action override matching only
+  #    `requester_role: hr_viewer` (no `purpose` key, so it matches every
+  #    purpose): a viewer never receives salary in any form, regardless of
+  #    purpose -- including salary_analysis/compensation_review, which would
+  #    otherwise permit PRESERVE. Because this override's action is REMOVE
+  #    (not TASK_DEPENDENT), `PolicyRepository.decide()`'s
+  #    `purpose_actions.get(context.purpose, allowed_actions)` step -- which
+  #    only ever fires when `action is DisclosureAction.TASK_DEPENDENT` --
+  #    never runs for this override, so it is never silently replaced by the
+  #    purpose-keyed allowed_actions below. An hr_analyst/hr_admin requester
+  #    (no override match) still resolves through the ordinary
+  #    default/purpose_actions path.
+  salary:
+    default: task_dependent
+    allowed_actions:
+      - remove
+      - generalize
+    purpose_actions:
+      salary_analysis:
+        - remove
+        - generalize
+        - preserve
+      compensation_review:
+        - remove
+        - generalize
+        - preserve
+      headcount_planning:
+        - remove
+        - generalize
+    overrides:
+      - action: remove
+        requester_role: hr_viewer
+        allowed_actions:
+          - remove

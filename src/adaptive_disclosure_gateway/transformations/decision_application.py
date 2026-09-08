@@ -82,19 +82,38 @@ def scope_key(scope: PseudonymScope, context: GovernanceContext) -> str | None:
 class ActionDecision:
     """One span's already-decided outcome, handed to :func:`apply` by a
     caller that has already resolved *which* action a category maps to
-    (statically for B2, via task analysis for B3).
+    (statically for B2, via task analysis for B3, via policy-constrained
+    task analysis for B4).
 
     ``reason`` is treatment-specific, human-readable audit text -- it must
     never embed the span's ``value`` (only categories/levels/flags, per
     CLAUDE.md's no-leak invariant). ``task_required`` mirrors
     ``domain.PolicyDecision.task_required``: ``None`` when the deciding
     treatment has no notion of task necessity (B2), ``True``/``False`` when
-    it does (B3), left ``None`` for a genuinely undetermined case.
+    it does (B3/B4), left ``None`` for a genuinely undetermined case.
+
+    The remaining four fields are B4 -- Policy-governed only (T08 / issue
+    #7): B2 and B3 never set them, so they keep their defaults and
+    ``_allowed_result`` below falls back to exactly its pre-T08 behavior for
+    both -- this is what keeps the extension backward-compatible/neutral for
+    B2/B3. ``allowed_actions``, left ``None``, means "this decision's action
+    *is* the whole space" (true for every B2/B3 decision and every B4 hard
+    policy action); B4 sets it explicitly for a ``TASK_DEPENDENT`` category
+    to the full policy-permitted, canonically ordered space it minimized
+    within, so the audit trail can distinguish "the only action available"
+    from "the least-disclosing action inside a wider permitted space".
+    ``policy_version``/``policy_restricted``/``impossible_under_policy``
+    mirror the identically-named fields on ``domain.PolicyDecision`` (see
+    that model's docstring) and are threaded through verbatim.
     """
 
     action: DisclosureAction
     reason: str
     task_required: bool | None = None
+    allowed_actions: list[DisclosureAction] | None = None
+    policy_version: str | None = None
+    policy_restricted: bool | None = None
+    impossible_under_policy: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -289,7 +308,14 @@ def _allowed_result(
                     action=action,
                     reason=decision.reason,
                     task_required=decision.task_required,
-                    allowed_actions=[action],
+                    allowed_actions=(
+                        list(decision.allowed_actions)
+                        if decision.allowed_actions is not None
+                        else [action]
+                    ),
+                    policy_version=decision.policy_version,
+                    policy_restricted=decision.policy_restricted,
+                    impossible_under_policy=decision.impossible_under_policy,
                 )
             )
 
