@@ -2,36 +2,37 @@
 
 ## Status and purpose
 
-This document defines a **parallel demonstration/application track** for the Adaptive Disclosure Gateway.
+This document defines the **parallel demonstration/application track** for the Adaptive Disclosure Gateway.
 
-It does **not** change the scientific Milestone 3 ordering, gates or closure criteria.
+It does **not** change Milestone 3 scientific ordering, gates or closure criteria.
 
-The current Python implementation is not only experimental machinery: it is the **reference application/core that will demonstrate the research concept**. The advisor-facing demo must expose this implementation directly rather than recreate simplified B0–B4 logic in a separate web application.
+The current Python implementation is the **reference application/core** used by the demo. The web application exposes this implementation; it must not recreate simplified B0–B4 logic in Next.js.
 
-The intended audience is prospective PPGCA advisors and other technical reviewers who should be able to receive a URL, open the application and understand/test the core disclosure-governance concept without cloning the repository.
+The intended audience is a prospective advisor or technical reviewer who may understand AI/software but **does not know this project's vocabulary, treatments, policy matrix, runner or audit schema**.
+
+The UX must therefore explain the concept while the reviewer uses it.
 
 Tracking:
 
 - Demo Track: Issue #41
-- T20 application/CLI/HTTP/MCP: Issue #28
-- T21 Next.js UI: Issue #29
-- T25 container/deploy infrastructure: Issue #42
+- T20 application/HTTP boundary: Issue #28
+- T21 guided Next.js UI: Issue #29
+- T12 normalized document ingestion: Issue #9
 - T22 real provider: Issue #30
+- T25 container/deploy infrastructure: Issue #42
 
 ## Architectural boundary
-
-The target application path is:
 
 ```text
 browser
   ↓
-Next.js demo
+Next.js
   ↓
 HTTP API
   ↓
 shared Python application boundary
   ↓
-B0 / B1 / B2 / B3 / B4
+disclosure treatment / policy / task analysis
   ↓
 provider boundary
   ↓
@@ -40,170 +41,247 @@ local authorized reconstruction
 safe result / metrics
 ```
 
-The web layer must not independently implement:
+The web layer must not independently implement detection, B3 task analysis, B4 policy resolution, disclosure transformations, reconstruction or scientific scoring semantics.
 
-- sensitive-data detection;
-- B3 task analysis;
-- B4 policy resolution;
-- pseudonymization/generalization/removal;
-- reconstruction;
-- scientific scoring semantics.
+## UX strategy
 
-Those remain owned by the Python core.
+### Default language
+
+- **Português (Brasil)** is the default locale.
+- English is available through an explicit language control.
+- User preference should persist.
+- Scientific/internal identifiers remain stable; only presentation copy is localized.
+
+### Light and dark themes
+
+Both themes are required from the MVP.
+
+- initial theme follows system preference;
+- explicit user override is supported and persisted;
+- semantic tokens are shared across themes;
+- both themes must meet accessible contrast requirements;
+- color is never the only indicator of disclosure action/state.
+
+### Novice-first progressive disclosure
+
+The interface uses three information layers:
+
+1. **plain language** — what stayed local, what was sent, what was removed/substituted/generalized;
+2. **explanation** — why the system made each decision;
+3. **technical/research details** — B0–B4, policy version/matrix cell, exposure, conformance, utility, audit, timings/resources and provider metadata.
+
+Technical details are available through actions such as `Ver detalhes técnicos`; they do not dominate the default workflow.
 
 ## No agents in the first demo
 
-The first advisor-facing application uses the deterministic/frozen mechanisms already implemented by the research prototype.
+The first demo uses the deterministic/versioned mechanisms already implemented by the research prototype:
 
-No agentic anonymization or autonomous policy-planning layer is required.
-
-The first demo therefore exercises:
-
-- the deterministic detector;
-- the frozen B3 task analyzer/action spaces;
-- the B4 contextual policy mechanism;
+- detector;
+- B3 task analyzer/action spaces;
+- B4 contextual policy mechanism;
 - explicit disclosure actions;
 - local vault/reconstruction;
-- the existing provider boundary.
+- provider boundary.
 
-Agentic variants may be studied later as separately versioned extensions. They are not part of the first demonstration path and must not silently change the B0–B4 experimental treatments.
+Agentic variants may be studied later as separately versioned extensions.
 
-## Minimum advisor-facing experience
+## MVP v2 experience
 
-A reviewer should be able to:
+### 1. Boas-vindas / Como funciona
 
-1. open a hosted URL;
-2. choose a prepared synthetic HR case or provide explicitly controlled demo text;
-3. enter/select a task;
-4. select B0–B4 or request a comparison;
-5. execute the actual Python gateway;
-6. inspect what stays local and what crosses the local-cloud boundary;
-7. inspect transformation/policy decisions;
-8. inspect the provider response;
-9. inspect the authorized locally reconstructed response;
-10. inspect selected safe metrics and provenance.
+The first screen explains the concept in three short steps:
 
-The UI should make the trust-boundary effect visually obvious.
+1. **Análise local** — the document is inspected before anything leaves the trusted environment.
+2. **Divulgação controlada** — only the allowed/transformed representation is sent to the external provider.
+3. **Reconstrução local** — authorized pseudonyms can be reconstructed after inference.
 
-A minimal result view should expose, when safe/applicable:
+Primary CTA: **`Testar agora`**.
 
-- treatment and version;
-- policy version/contextual cell for B4;
-- original/control representation for synthetic demo cases;
-- provider-bound representation;
-- per-category/span action;
-- policy/task reason;
-- provider mode/model metadata;
+An optional **`Como funciona a pesquisa?`** path can explain B0–B4 and the experiment design.
+
+### 2. Novo teste
+
+The reviewer chooses one of three entry modes:
+
+- **Usar um exemplo**;
+- **Enviar meu arquivo** (drag-and-drop / file picker);
+- **Colar texto**.
+
+Then the reviewer states in natural language what the model should do with the content.
+
+The default experience uses the recommended policy-governed strategy. Treatment/provider selection belongs under advanced controls; a new user should not need to know B0–B4 to execute a test.
+
+### 3. Revisão antes do envio
+
+Before the provider call, the application explains:
+
+- what was detected;
+- what stays local;
+- what is removed;
+- what is pseudonymized/substituted;
+- what is generalized;
+- what is preserved because it is required for the task;
+- why each decision occurred.
+
+Human-facing labels are primary; internal action codes remain available in technical details.
+
+This screen makes the trust boundary explicit **before** external disclosure occurs.
+
+### 4. Resultado
+
+The primary output is the **final locally reconstructed answer**.
+
+The result also shows a simple visual path:
+
+```text
+Local → Provider externo → Local
+```
+
+The reviewer sees a short summary of protections applied and can optionally choose:
+
+- **`Comparar estratégias`** — B0–B4 educational/research comparison;
+- **`Ver detalhes técnicos`** — policy/audit/metrics/provenance.
+
+### 5. Comparar estratégias
+
+B0–B4 are a **secondary explanatory surface**, not the landing experience.
+
+Each treatment receives a short human-readable description before codes/metrics are shown. The comparison should make the disclosure/utility trade-off understandable without assuming project vocabulary.
+
+### 6. Detalhes técnicos
+
+Expose safe technical information when requested:
+
+- treatment/version;
+- B4 policy version/matrix cell;
+- provider/model mode;
+- exposure/conformance/utility summaries;
 - reconstruction outcome;
-- conformance/exposure/utility/timing summary.
+- timing/resource/volume fields;
+- safe audit/provenance.
 
-## Provider modes
+## File upload as a primary capability
 
-Two provider modes are useful:
+Upload is central to the advisor demo, not a deferred convenience.
 
-### FakeProvider
+### Supported path
 
-The deterministic provider remains valuable for:
+- direct text remains supported;
+- `.txt` / `.md` may be normalized without Docling through the same application boundary;
+- PDF/DOCX/XLSX/image-oriented content uses the normalized ingestion boundary from T12 / Issue #9 when available;
+- Next.js must not depend directly on Docling-specific output structures.
 
-- reproducible demonstration;
-- offline/local development;
-- showing B0–B4 transformation/reconstruction behavior without external dependencies.
+### Upload UX
 
-### Real provider
+Show:
 
-T22 adds the mode that is most useful for an interactive advisor demo:
+- filename;
+- file type;
+- size;
+- processing status;
+- clear parsing/validation errors;
+- a concise privacy/trust-boundary explanation.
 
-- a reviewer asks a real task;
-- the gateway controls what leaves the local boundary;
-- an external LLM produces a real response;
-- reconstruction happens locally.
+Processing states should describe the current step, for example:
 
-T22 is not required to build the demo shell, but a real-provider mode is the preferred state before broadly sharing the URL with prospective advisors.
+- `Lendo o arquivo`;
+- `Detectando dados sensíveis`;
+- `Aplicando política de divulgação`;
+- `Consultando o modelo`;
+- `Reconstruindo a resposta`.
+
+Advisor-uploaded source documents should **not be persistently stored by default** in the demo.
+
+Uploaded/free-form input remains subject to metadata-only logging, safe error handling and existing no-leak guarantees.
+
+## Provider UX
+
+The primary flow should not require a reviewer to select provider/model.
+
+- use the configured recommended mode by default;
+- provider/model selection is an advanced control;
+- FakeProvider is clearly identified as deterministic/reproducible demonstration mode;
+- T22 real-provider mode is preferred before broadly sharing the demo URL;
+- provider credentials never reach the browser.
+
+## Final application direction
+
+The final application retains the same guided test flow as the main entry point.
+
+Primary navigation:
+
+- **Início**;
+- **Testar documento**;
+- **Histórico**;
+- **Experimentos**;
+- **Sobre o método**.
+
+Operational/advanced surfaces such as Policies, Providers and infrastructure/debug belong under **Configurações**, not the primary homepage/navigation.
+
+The final application may add:
+
+- run history;
+- document/test history where retention is explicitly enabled;
+- experiment dashboards;
+- richer B0–B4 comparison;
+- provider health/configuration;
+- policy inspection;
+- audit/provenance exploration.
+
+It must not regress into a console that requires internal project knowledge for basic use.
 
 ## Demo work sequence
 
-The demo has its own parallel sequence:
+The parallel demo track remains:
 
-1. **T20 / Issue #28 — application boundary + HTTP API.**
-   - HTTP is the first demo-facing adapter.
-   - CLI and MCP share the same application boundary but do not have to block the first hosted URL.
-2. **T21 / Issue #29 — Next.js interactive UI.**
-   - Start from the safe T10 read model/artifacts.
-   - Integrate the real HTTP API without redefining scientific semantics in the frontend.
-3. **T25 / Issue #42 — containerized demo/deploy infrastructure.**
-   - Package API and web application into reproducible images and a simple hosted topology.
-4. **T22 / Issue #30 — real-provider mode.**
-   - Can proceed independently under M3 and is consumed by the demo when available.
+1. **T20 / Issue #28 — application boundary + HTTP API**;
+2. **T21 / Issue #29 — guided Next.js UI**;
+3. **T25 / Issue #42 — containerized demo/deploy infrastructure**;
+4. consume **T22 / Issue #30** real-provider mode when available;
+5. consume **T12 / Issue #9** structured ingestion for richer file formats.
 
-This sequence is parallel to M3. It does not become a prerequisite for T23/T12/T24 or confirmatory-readiness.
+This sequence remains parallel to M3.
 
 ## Container/deployment objective
 
-The application is not intended for mass distribution or desktop installation. The deployment objective is a small, reproducible research-demo stack that can be hosted and shared by URL.
-
-Target topology:
+The goal is a small reproducible research-demo stack shared by URL, not mass distribution.
 
 ```text
 browser -> web container -> API container -> external provider
                            -> optional OTEL/Jaeger
 ```
 
-The current root `compose.yaml` is a development/test harness, not the final demo topology. It mounts the repository and runs the test suite. T25 therefore owns a distinct demo/deploy configuration.
+T25 owns:
 
-T25 must provide at least:
-
-- Python API image on the supported Python 3.13 runtime;
+- Python API image on supported Python 3.13 runtime;
 - Next.js image;
-- explicit internal networking;
+- explicit networking;
 - health/readiness checks;
 - deployment-safe API origin/CORS configuration;
 - server-side-only provider secrets;
 - one-command local startup;
-- a documented hosted deployment path suitable for sharing a URL;
-- core/application version provenance.
-
-Observability services such as Jaeger may remain optional for the lightweight hosted demo.
+- documented hosted deployment path;
+- application/core version provenance.
 
 ## Security stance
 
-The demo remains subject to the same trust-boundary guarantees as the research core.
-
 - provider credentials never reach the browser;
-- vault mappings remain local to the Python trust boundary;
+- vault mappings remain inside the Python trust boundary;
 - logs/audit remain metadata-only by default;
-- raw/synthetic views are explicit;
-- prepared examples use synthetic data;
-- free-form input, if enabled, must not weaken logging/error/no-leak guarantees;
-- frontend-visible configuration contains no secrets/private policy state.
+- raw/source views are explicit rather than default;
+- uploaded/free-form input must not weaken logging/error/no-leak guarantees;
+- frontend-visible configuration contains no secrets/private policy state;
+- the UI cannot override frozen scientific treatment/policy/scoring semantics.
 
-## Explicit non-goals
+## Success criterion
 
-The first advisor demo does not require:
+A prospective advisor unfamiliar with the project should be able to receive a URL and, without external instructions:
 
-- agentic anonymization;
-- multi-user SaaS accounts;
-- policy editing in the browser;
-- billing;
-- desktop installer/executable;
-- persistent shared vault;
-- arbitrary document upload before T12;
-- multi-turn experiments;
-- production-scale orchestration;
-- a polished general-purpose audit platform.
+1. understand the concept in roughly two minutes;
+2. use a prepared example or upload/provide supported content;
+3. ask a task in natural language;
+4. understand what remains local and what crosses the external boundary;
+5. receive the final answer;
+6. optionally discover B0–B4 and deeper research/technical details.
 
-## Relationship to the scientific project
-
-The demo exists to make the research implementation inspectable and testable by humans.
-
-It must therefore **consume scientific capabilities without driving them**.
-
-A UI/deployment concern must never be used as a reason to alter frozen corpus cases, treatments, policies or metrics to make the demonstration look better.
-
-As M3 capabilities arrive, the application can expose them:
-
-- T22 adds real LLM inference;
-- T12 adds structured document ingestion;
-- T24/Contracts adds a second demonstrable domain;
-- later scientific versions can add new explicitly versioned treatments.
-
-The first completion criterion remains deliberately narrower: a prospective advisor can open a URL and execute the controlled HR B0–B4 concept through the actual Python core without local setup.
+The demo exists to make the research implementation understandable, inspectable and testable. It consumes the scientific project; it must not drive post-hoc tuning of scientific results.
