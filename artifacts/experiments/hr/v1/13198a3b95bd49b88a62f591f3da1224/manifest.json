@@ -1,0 +1,66 @@
+{
+  "artifact_format_version": "t10-pilot-artifact-bundle-v2",
+  "case_counts": {
+    "b0": 13,
+    "b1": 13,
+    "b2": 13,
+    "b3": 13,
+    "b4": 13
+  },
+  "corpus_version": "hr/v1",
+  "experiment_run_id": "13198a3b95bd49b88a62f591f3da1224",
+  "reproducibility": {
+    "artifact_format_version": "t10-pilot-artifact-bundle-v2",
+    "b3_treatment_version": "31bce08b7ea6a5c905f7a20bbb4bb99a05682bab",
+    "b4_contextual_matrix_versions": [
+      "hr-v2",
+      "hr-v3"
+    ],
+    "b4_task_aware_baseline_version": "31bce08b7ea6a5c905f7a20bbb4bb99a05682bab",
+    "b4_treatment_version": "5abea8514fa10ac64b9bc3714bbfd3f18682f713",
+    "contextual_comparison_matrix_version": "hr-policy-matrix-v1",
+    "contextual_comparison_specs": [
+      "purpose_salary",
+      "requester_role_salary",
+      "requester_role_department",
+      "provider_class_employee_name",
+      "policy_version_compensation_review"
+    ],
+    "decoding_config": {
+      "max_tokens": 512,
+      "sampling": "greedy",
+      "temperature": 0.0
+    },
+    "policy_versions_available": [
+      "accounting-v1",
+      "contracts-v1",
+      "hr-v1",
+      "hr-v2",
+      "hr-v3"
+    ],
+    "policy_versions_used": [
+      "hr-v1"
+    ],
+    "provider_class_behavior_config": "not_applicable",
+    "provider_model_id": "fake-provider",
+    "provider_model_snapshot": "fake-provider-2026-09-07",
+    "provider_name": "FakeProvider",
+    "schema_version": "t10-experiment-runner-v2",
+    "treatment_chain": [
+      "b0",
+      "b1",
+      "b2",
+      "b3",
+      "b4"
+    ]
+  },
+  "run_classification": "pilot_development",
+  "schema_version": "t10-experiment-runner-v2",
+  "treatments": [
+    "b0",
+    "b1",
+    "b2",
+    "b3",
+    "b4"
+  ]
+}

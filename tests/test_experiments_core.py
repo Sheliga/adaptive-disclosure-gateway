@@ -26,6 +26,7 @@ from adaptive_disclosure_gateway.experiments.corpus_source import build_request,
 from adaptive_disclosure_gateway.experiments.execution import execute_case
 from adaptive_disclosure_gateway.experiments.run_identity import (
     B3_TASK_AWARE_BASELINE_COMMIT,
+    B4_POLICY_GOVERNED_COMMIT,
     PILOT_DEVELOPMENT,
 )
 from adaptive_disclosure_gateway.experiments.stage_timing import (
@@ -207,10 +208,11 @@ def test_b0_isolation_proof_is_false_for_a_span_list_missing_the_treatment_span(
     assert b0_treatment_span_is_isolated_from_detection([]) is False
 
 
-# --- 4. B3 baseline recorded -------------------------------------------------
+# --- 4. B3/B4 implementation version vs. B3-baseline dependency, kept
+# unambiguously separate (PR #35 review, blocker 1) --------------------------
 
 
-def test_b3_and_b4_results_record_the_frozen_baseline_commit_explicitly():
+def test_b3_and_b4_results_record_their_own_treatment_version_and_the_b3_baseline_they_depend_on():
     case = _one_case("hr_team_summary_001")
     policy_repo = _policy_repo()
 
@@ -236,11 +238,39 @@ def test_b3_and_b4_results_record_the_frozen_baseline_commit_explicitly():
         policy_repository=policy_repo,
     )
 
-    assert b3.identity.treatment_baseline == B3_TASK_AWARE_BASELINE_COMMIT
-    assert b4.identity.treatment_baseline == B3_TASK_AWARE_BASELINE_COMMIT
+    # B3's own implementation version *is* the B3 baseline -- it depends on
+    # itself.
+    assert b3.identity.treatment_version == B3_TASK_AWARE_BASELINE_COMMIT
+    assert b3.identity.task_aware_baseline_version == B3_TASK_AWARE_BASELINE_COMMIT
+
+    # B4 has its own, later, different frozen commit as its treatment_version
+    # -- never B3's -- while still recording that it depends on B3's baseline
+    # for its analyzer/action-space machinery.
+    assert b4.identity.treatment_version == B4_POLICY_GOVERNED_COMMIT
+    assert b4.identity.task_aware_baseline_version == B3_TASK_AWARE_BASELINE_COMMIT
+    assert b4.identity.treatment_version != b3.identity.treatment_version
+
     # Never left implicit in the bare code alone for B0-B2, which have no
     # comparable baseline-version concept.
-    assert b2.identity.treatment_baseline is None
+    assert b2.identity.treatment_version is None
+    assert b2.identity.task_aware_baseline_version is None
+
+
+def test_b4_treatment_version_is_never_b3s_baseline_commit():
+    """Direct regression pin for the confirmed defect: every B4 result must
+    never present B3's frozen commit as if it were B4's own implementation
+    version.
+    """
+    case = _one_case("hr_salary_analysis_001")
+    b4 = execute_case(
+        case_input=case.input,
+        treatment=Treatment.POLICY_GOVERNED,
+        corpus_version="hr/v1",
+        run_classification=PILOT_DEVELOPMENT,
+        policy_repository=_policy_repo(),
+    )
+    assert b4.identity.treatment_version != B3_TASK_AWARE_BASELINE_COMMIT
+    assert b4.identity.treatment_version == B4_POLICY_GOVERNED_COMMIT
 
 
 # --- 5. B4 policy metadata, including the reused matrix-cell identifier -----

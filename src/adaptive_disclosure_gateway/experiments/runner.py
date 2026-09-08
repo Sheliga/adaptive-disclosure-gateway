@@ -20,7 +20,12 @@ from adaptive_disclosure_gateway.policies import PolicyRepository
 from .case_result import CaseResult
 from .corpus_source import load_hr_v1_cases
 from .execution import execute_case
-from .run_identity import PILOT_DEVELOPMENT, RunClassification, new_run_metadata
+from .run_identity import (
+    PILOT_DEVELOPMENT,
+    RunClassification,
+    new_experiment_run_id,
+    new_run_metadata,
+)
 from .scoring import score_case
 
 ALL_TREATMENTS: tuple[Treatment, ...] = (
@@ -39,10 +44,16 @@ def run_case_for_treatment(
     corpus_version: str,
     run_classification: RunClassification,
     policy_repository: PolicyRepository,
+    experiment_run_id: str,
 ) -> CaseResult:
     """Execute one case through one treatment (ground-truth-isolated --
     ``case.oracle`` is read only *after* ``execute_case`` returns, by
     ``score_case``) and return the combined, scored, serializable result.
+
+    ``experiment_run_id`` (PR #35 review, blocker 5) must be the *same*
+    value for every case/treatment call belonging to one pilot invocation --
+    callers must generate it once (``run_identity.new_experiment_run_id``)
+    and thread it through, never regenerate it per case or per treatment.
     """
     case_execution = execute_case(
         case_input=case.input,
@@ -52,7 +63,7 @@ def run_case_for_treatment(
         policy_repository=policy_repository,
     )
     score = score_case(case.input, case.oracle, case_execution)
-    metadata = new_run_metadata()
+    metadata = new_run_metadata(experiment_run_id)
     return CaseResult(
         identity=case_execution.identity,
         metadata=metadata,
@@ -68,12 +79,22 @@ def run_pilot(
     corpus_version: str = "hr/v1",
     run_classification: RunClassification = PILOT_DEVELOPMENT,
     treatments: Iterable[Treatment] = ALL_TREATMENTS,
+    experiment_run_id: str | None = None,
 ) -> dict[Treatment, list[CaseResult]]:
     """Run every case in ``corpus_dir`` through every treatment in
     ``treatments``, using the policy documents in ``policy_dir``. Each
     treatment gets its own list of ``CaseResult``, one per case, in corpus
     (file name) order.
+
+    Every ``CaseResult`` this call produces shares one ``experiment_run_id``
+    (PR #35 review, blocker 5) -- pass one explicitly to tie this pilot run
+    to the same id used elsewhere (e.g. the contextual matrix comparisons
+    and ``artifacts.write_pilot_artifacts``' manifest for the same
+    invocation); left ``None``, a fresh one is generated for this call alone.
     """
+    active_experiment_run_id = (
+        experiment_run_id if experiment_run_id is not None else new_experiment_run_id()
+    )
     cases = load_hr_v1_cases(corpus_dir)
     policy_repository = PolicyRepository.from_directory(policy_dir)
 
@@ -87,6 +108,7 @@ def run_pilot(
                     corpus_version=corpus_version,
                     run_classification=run_classification,
                     policy_repository=policy_repository,
+                    experiment_run_id=active_experiment_run_id,
                 )
             )
     return results

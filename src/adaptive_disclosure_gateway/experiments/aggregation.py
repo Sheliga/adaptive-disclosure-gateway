@@ -15,6 +15,7 @@ from statistics import mean
 from typing import Literal
 
 from .case_result import CaseResult
+from .scoring.detector_scoring import DetectorAggregateScore, aggregate_detector_scores
 
 _UTILITY_RANK = {"not_answerable": 0, "indeterminate": 1, "not_applicable": 2, "answerable": 3}
 
@@ -54,6 +55,10 @@ class TreatmentSummary:
     policy_block_count: int
     ordinary_utility_failure_count: int
     provider_failure_count: int
+    mean_cpu_time_ms: float | None
+    mean_peak_memory_bytes: float | None
+    resource_measurement_scope: str | None
+    detector: DetectorAggregateScore
 
 
 def summarize_treatment(results: list[CaseResult]) -> TreatmentSummary:
@@ -109,6 +114,15 @@ def summarize_treatment(results: list[CaseResult]) -> TreatmentSummary:
         if r.case_execution.provider_metrics is not None
     ]
 
+    cpu_times_ms = [r.case_execution.resource_metrics.cpu_time_ms for r in results]
+    peak_memory_bytes = [
+        float(r.case_execution.resource_metrics.peak_memory_bytes) for r in results
+    ]
+    resource_scopes = {r.case_execution.resource_metrics.measurement_scope for r in results}
+    resource_measurement_scope = next(iter(resource_scopes)) if len(resource_scopes) == 1 else None
+
+    detector_aggregate = aggregate_detector_scores([r.score.detector for r in results])
+
     return TreatmentSummary(
         treatment_code=treatment_code,
         case_count=len(results),
@@ -137,6 +151,10 @@ def summarize_treatment(results: list[CaseResult]) -> TreatmentSummary:
         policy_block_count=sum(1 for r in results if r.score.outcomes.policy_block),
         ordinary_utility_failure_count=sum(1 for r in results if r.score.ordinary_utility_failure),
         provider_failure_count=sum(1 for r in results if r.score.outcomes.provider_failure),
+        mean_cpu_time_ms=_safe_mean(cpu_times_ms),
+        mean_peak_memory_bytes=_safe_mean(peak_memory_bytes),
+        resource_measurement_scope=resource_measurement_scope,
+        detector=detector_aggregate,
     )
 
 

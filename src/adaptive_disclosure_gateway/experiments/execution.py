@@ -34,9 +34,12 @@ from adaptive_disclosure_gateway.vault import InMemoryVault, Vault
 
 from .b4_span_metadata import B4Metadata, extract_b4_metadata
 from .corpus_source import build_request
+from .detector_capture import DetectedSpanRef, RecordingDetector
 from .provider_instrumentation import ProviderCallMetrics, TimingProviderDelegate
+from .resource_metrics import ResourceMetrics, measure_resources
 from .run_identity import (
     B3_TASK_AWARE_BASELINE_COMMIT,
+    B4_POLICY_GOVERNED_COMMIT,
     SCHEMA_VERSION,
     RunClassification,
     RunIdentity,
@@ -45,7 +48,33 @@ from .span_capture import run_case_with_span_capture
 from .stage_timing import StageTimings, extract_stage_timings
 from .treatments import build_treatment
 
-_TREATMENTS_WITH_FROZEN_BASELINE = (Treatment.TASK_AWARE, Treatment.POLICY_GOVERNED)
+# PR #35 review, blocker 1: B3 and B4 are two distinct frozen
+# implementations. treatment_version names *this result's own* frozen
+# commit; task_aware_baseline_version separately names the B3 baseline the
+# result's task-analysis/action-space machinery depends on -- identical to
+# treatment_version for B3 itself, but B3's (older, different) commit for
+# B4. Never conflate the two into one field again -- that was exactly the
+# defect this split fixes (every B4 result previously reported B3's commit
+# as if it were B4's own).
+_TREATMENT_VERSION_BY_TREATMENT: dict[Treatment, str] = {
+    Treatment.TASK_AWARE: B3_TASK_AWARE_BASELINE_COMMIT,
+    Treatment.POLICY_GOVERNED: B4_POLICY_GOVERNED_COMMIT,
+}
+_TASK_AWARE_BASELINE_VERSION_BY_TREATMENT: dict[Treatment, str] = {
+    Treatment.TASK_AWARE: B3_TASK_AWARE_BASELINE_COMMIT,
+    Treatment.POLICY_GOVERNED: B3_TASK_AWARE_BASELINE_COMMIT,
+}
+
+# PR #35 review, blocker 3: the resource-measurement window wraps exactly
+# the same call span_capture.run_case_with_span_capture makes to the real
+# pipeline.run_disclosure_case -- detection, the treatment's own sanitize(),
+# the provider call and, when applicable, reconstruction. Never presented as
+# if it measured only the treatment's own sanitize() in isolation -- see
+# resource_metrics.py's module docstring.
+_RESOURCE_MEASUREMENT_SCOPE = (
+    "detection+treatment+provider+reconstruction "
+    "(whole pipeline.run_disclosure_case call, via run_case_with_span_capture)"
+)
 
 
 @dataclass(frozen=True)
@@ -62,6 +91,21 @@ class CaseExecution:
     stage_timings: StageTimings
     provider_metrics: ProviderCallMetrics | None
     b4_metadata: B4Metadata | None
+    # The real spans the Detector produced for request.text during this
+    # execution (PR #35 review, blocker 2) -- captured, never re-detected,
+    # by a RecordingDetector wrapping the same Detector instance the
+    # treatment actually ran against. Category/offset-only: never the
+    # detected value itself (see detector_capture.py's module docstring).
+    # Scored against the oracle strictly post-hoc, in
+    # experiments/scoring/detector_scoring.py -- this field alone carries no
+    # ground truth and nothing here changes if score_case is never called.
+    detected_text_spans: tuple[DetectedSpanRef, ...]
+    # Process CPU time and peak Python-level memory allocation across the
+    # same call that produced `execution` (PR #35 review, blocker 3) -- see
+    # resource_metrics.py's module docstring for exactly what is and is not
+    # measured, and _RESOURCE_MEASUREMENT_SCOPE above for this field's own
+    # measurement_scope value.
+    resource_metrics: ResourceMetrics
     # ``execution.reconstructed_text`` reflects the *real* pipeline's
     # reconstruction, driven by FakeProvider's actual response text --
     # which never echoes any payload content at all (see
@@ -146,13 +190,21 @@ def execute_case(
         else TimingProviderDelegate(base_provider)
     )
 
-    exec_result, spans = run_case_with_span_capture(
-        active_treatment,
-        request,
-        timing_provider,
-        detector=detector,
-        capture_raw_values_for_controlled_experiment=(capture_raw_values_for_controlled_experiment),
+    recording_detector = RecordingDetector(detector if detector is not None else Detector())
+
+    (exec_result, spans), resource_metrics = measure_resources(
+        _RESOURCE_MEASUREMENT_SCOPE,
+        lambda: run_case_with_span_capture(
+            active_treatment,
+            request,
+            timing_provider,
+            detector=recording_detector,
+            capture_raw_values_for_controlled_experiment=(
+                capture_raw_values_for_controlled_experiment
+            ),
+        ),
     )
+    detected_text_spans = recording_detector.text_spans
 
     stage_timings = extract_stage_timings(spans)
     b4_metadata = extract_b4_metadata(spans) if treatment is Treatment.POLICY_GOVERNED else None
@@ -174,9 +226,8 @@ def execute_case(
         case_id=case_input.sample_id,
         treatment_code=treatment.value,
         treatment_name=treatment.name.lower(),
-        treatment_baseline=(
-            B3_TASK_AWARE_BASELINE_COMMIT if treatment in _TREATMENTS_WITH_FROZEN_BASELINE else None
-        ),
+        treatment_version=_TREATMENT_VERSION_BY_TREATMENT.get(treatment),
+        task_aware_baseline_version=_TASK_AWARE_BASELINE_VERSION_BY_TREATMENT.get(treatment),
         policy_version=request.context.policy_version,
         matrix_cell=(
             "|".join(b4_metadata.matrix_cells)
@@ -209,5 +260,7 @@ def execute_case(
         stage_timings=stage_timings,
         provider_metrics=provider_metrics,
         b4_metadata=b4_metadata,
+        detected_text_spans=detected_text_spans,
+        resource_metrics=resource_metrics,
         payload_echo_reconstructed_text=payload_echo_reconstructed_text,
     )

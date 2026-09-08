@@ -29,16 +29,54 @@ from .scoring import CaseScore
 # Fields of RunMetadata considered volatile for golden/regression comparison
 # purposes -- see docs/experimental-design.md's "Separate deterministic
 # content from volatile metadata" requirement, implemented here as "strip
-# these before comparing/golden-testing a serialized result".
-VOLATILE_METADATA_FIELDS = ("run_id", "generated_at")
+# these before comparing/golden-testing a serialized result". PR #35 review,
+# blocker 5: run_id was split into experiment_run_id (shared across a whole
+# pilot run) and case_execution_id (unique per execution) -- both are still
+# per-run/per-execution provenance, never part of a deterministic comparison.
+VOLATILE_METADATA_FIELDS = ("experiment_run_id", "case_execution_id", "generated_at")
 
 # Measurement fields that are also excluded from a *golden* (byte-for-byte
-# regression) comparison: real wall-clock timing is never reproducible
-# between runs even when every deterministic input is identical. These stay
-# in the safe dict itself (they are real, useful, non-sensitive metrics) --
-# only ``deterministic_key`` below strips them, for callers that want to
-# diff two runs' *decisions* while ignoring how long each took.
-_MEASUREMENT_KEYS = ("stage_timings", "provider_metrics")
+# regression) comparison: real wall-clock timing (and, since PR #35 review's
+# blocker 3, CPU time/peak memory) are never reproducible between runs even
+# when every deterministic input is identical. These stay in the safe dict
+# itself (they are real, useful, non-sensitive metrics) -- only
+# ``deterministic_key`` below strips them, for callers that want to diff two
+# runs' *decisions* while ignoring how long/how much memory each took.
+_MEASUREMENT_KEYS = ("stage_timings", "provider_metrics", "resource_metrics")
+
+# PR #35 review, blocker 4: audit.py's payload_hash/response_hash/
+# reconstructed_hash are HMAC-SHA256, keyed by a key generated once per
+# *process* (audit.py's _DEFAULT_AUDIT_HASH_KEY) specifically so they cannot
+# be dictionary-attacked from outside this process's trust boundary (see
+# audit.py's module docstring). That is exactly why two independent
+# processes scoring the same case produce *different* hashes for identical
+# content -- correct, intentional behavior, not a reproducibility defect.
+# deterministic_key's whole contract is "equal for the same case/treatment/
+# config, even across independent processes" (see run_pilot's cross-process
+# reproducibility test), so these three fields must never be part of it --
+# only of the full to_safe_dict, where they remain exactly as
+# audit.build_audit_record produced them.
+_AUDIT_PROCESS_VOLATILE_HASH_FIELDS = (
+    ("transformation", "payload_hash"),
+    ("provider", "response_hash"),
+    ("reconstruction", "reconstructed_hash"),
+)
+
+
+def _audit_without_process_volatile_hashes(audit: dict[str, Any]) -> dict[str, Any]:
+    """A copy of a safe ``audit`` dict (``to_safe_dict``'s own output) with
+    every per-process HMAC content hash removed -- see
+    ``_AUDIT_PROCESS_VOLATILE_HASH_FIELDS`` above for why. Used only to build
+    ``deterministic_key``'s output; never mutates, and never replaces,
+    ``to_safe_dict``'s own ``audit`` value, which keeps every hash exactly as
+    produced.
+    """
+    result = dict(audit)
+    for stage, field_name in _AUDIT_PROCESS_VOLATILE_HASH_FIELDS:
+        stage_dict = dict(result.get(stage) or {})
+        stage_dict.pop(field_name, None)
+        result[stage] = stage_dict
+    return result
 
 
 def _to_plain(value: Any) -> Any:
@@ -90,6 +128,7 @@ def to_safe_dict(case_result: CaseResult) -> dict[str, Any]:
         "metadata": _dataclass_safe_dict(case_result.metadata),
         "stage_timings": _dataclass_safe_dict(execution.stage_timings),
         "provider_metrics": _dataclass_safe_dict(execution.provider_metrics),
+        "resource_metrics": _dataclass_safe_dict(execution.resource_metrics),
         "b4_metadata": _dataclass_safe_dict(execution.b4_metadata),
         "status": execution.execution.disclosure_result.status,
         "score": {
@@ -102,6 +141,7 @@ def to_safe_dict(case_result: CaseResult) -> dict[str, Any]:
             "reconstruction": _dataclass_safe_dict(case_result.score.reconstruction),
             "outcomes": _dataclass_safe_dict(case_result.score.outcomes),
             "ordinary_utility_failure": case_result.score.ordinary_utility_failure,
+            "detector": _dataclass_safe_dict(case_result.score.detector),
         },
         "audit": audit_dict,
     }
@@ -126,4 +166,9 @@ def deterministic_key(case_result: CaseResult) -> dict[str, Any]:
         stripped["provider_metrics_deterministic"] = {
             key: value for key, value in provider_metrics.items() if key != "latency_ms"
         }
+    # PR #35 review, blocker 4: strip the per-process HMAC content hashes
+    # from the audit block used for deterministic comparison -- see
+    # _AUDIT_PROCESS_VOLATILE_HASH_FIELDS above. to_safe_dict's own "audit"
+    # value (in `full`) is left untouched; only this copy is normalized.
+    stripped["audit"] = _audit_without_process_volatile_hashes(full["audit"])
     return stripped

@@ -16,6 +16,12 @@ from adaptive_disclosure_gateway.corpus.oracle import CaseOracle
 
 from ..execution import CaseExecution
 from .conformance import ConformanceScore, SpanConformance, score_conformance
+from .detector_scoring import (
+    DetectorCaseScore,
+    DetectorSpanResult,
+    aggregate_detector_scores,
+    score_detector_case,
+)
 from .exposure import ExposureScore, SpanExposure, score_exposure
 from .outcomes import CaseOutcomeFlags, classify_case_outcomes, classify_ordinary_utility_failure
 from .reconstruction import CategoryReconstruction, ReconstructionScore, score_reconstruction
@@ -28,16 +34,20 @@ __all__ = [
     "CategoryReconstruction",
     "CategoryUtility",
     "ConformanceScore",
+    "DetectorCaseScore",
+    "DetectorSpanResult",
     "ExposureScore",
     "ReconstructionScore",
     "SpanConformance",
     "SpanExposure",
     "UnnecessaryDisclosureScore",
     "UtilityScore",
+    "aggregate_detector_scores",
     "classify_case_outcomes",
     "classify_ordinary_utility_failure",
     "score_case",
     "score_conformance",
+    "score_detector_case",
     "score_exposure",
     "score_reconstruction",
     "score_unnecessary_disclosure",
@@ -54,6 +64,7 @@ class CaseScore:
     reconstruction: ReconstructionScore
     outcomes: CaseOutcomeFlags
     ordinary_utility_failure: bool
+    detector: DetectorCaseScore
 
 
 def score_case(
@@ -75,6 +86,7 @@ def score_case(
     )
     outcomes = classify_case_outcomes(case_execution)
     ordinary_utility_failure = classify_ordinary_utility_failure(utility, outcomes)
+    detector = score_detector_case(oracle.expected_spans, case_execution.detected_text_spans)
 
     return CaseScore(
         conformance=conformance,
@@ -84,4 +96,5 @@ def score_case(
         reconstruction=reconstruction,
         outcomes=outcomes,
         ordinary_utility_failure=ordinary_utility_failure,
+        detector=detector,
     )

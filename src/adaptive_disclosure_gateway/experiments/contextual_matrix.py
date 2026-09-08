@@ -32,6 +32,13 @@ from adaptive_disclosure_gateway.policies import PolicyRepository
 from .execution import CaseExecution, execute_case
 from .run_identity import RunClassification
 
+# Names/version this fixed set of comparison specs for the pilot manifest
+# (PR #35 review, blocker 5's reproducibility requirements) -- bump this
+# whenever CONTEXTUAL_MATRIX_SPECS below changes (a spec added, removed or
+# redefined against a different base case/dimension), independently of
+# run_identity.SCHEMA_VERSION, which versions a CaseResult's own shape.
+CONTEXTUAL_MATRIX_VERSION = "hr-policy-matrix-v1"
+
 
 @dataclass(frozen=True)
 class ContextualComparisonSpec:
