@@ -132,7 +132,23 @@ B4 keeps the same task analyzer/reversible mechanism and adds explicit contextua
 
 ### T10 / Issue #8 — experiment runner and metrics
 
-Status: not started.
+Status: **implemented, PR open (Validação) — not yet merged.**
+
+`src/adaptive_disclosure_gateway/experiments/` implements corpus loading,
+run identity (deterministic vs. volatile), treatment execution
+(ground-truth-isolated), provider-call timing/volume instrumentation,
+real-span-based stage timing, scoring (conformance, exposure, unnecessary
+disclosure, utility, reconstruction, separated outcome classification),
+descriptive aggregation (per-treatment and pairwise B0→B1/B1→B2/B2→B3/B3→B4,
+plus a dedicated B3→B4 summary) and the B4 contextual-matrix comparisons
+from `docs/hr-policy-matrix.md`. A first pilot run over `corpus/hr/v1` with
+`FakeProvider` is committed under `artifacts/experiments/hr/v1/`, tagged
+`run_classification: "pilot_development"` throughout (never confirmatory).
+`scripts/report_b3_corpus_divergence.py` remains at 55/56, with the single
+documented `hr_salary_analysis_003/salary` divergence still present and
+now also visible, unmodified, in the runner's own conformance/utility
+output. Awaiting review before merge; Milestone 2 does not close on this
+entry alone.
 
 Authoritative pilot/result dependencies:
 

@@ -1,0 +1,128 @@
+{
+  "b3_to_b4": {
+    "cases": [
+      {
+        "case_id": "hr_department_aggregation_001",
+        "exposure_direction": "b4_more",
+        "hard_block_by_b4_not_b3": false,
+        "impossible_under_policy": false,
+        "policy_restricted": false,
+        "same_action_profile": false,
+        "utility_direction": "same"
+      },
+      {
+        "case_id": "hr_department_aggregation_002",
+        "exposure_direction": "b4_more",
+        "hard_block_by_b4_not_b3": false,
+        "impossible_under_policy": false,
+        "policy_restricted": false,
+        "same_action_profile": false,
+        "utility_direction": "same"
+      },
+      {
+        "case_id": "hr_department_aggregation_003",
+        "exposure_direction": "b4_more",
+        "hard_block_by_b4_not_b3": false,
+        "impossible_under_policy": false,
+        "policy_restricted": false,
+        "same_action_profile": false,
+        "utility_direction": "same"
+      },
+      {
+        "case_id": "hr_medical_block_001",
+        "exposure_direction": "incomparable",
+        "hard_block_by_b4_not_b3": false,
+        "impossible_under_policy": false,
+        "policy_restricted": false,
+        "same_action_profile": true,
+        "utility_direction": "incomparable"
+      },
+      {
+        "case_id": "hr_medical_block_002",
+        "exposure_direction": "incomparable",
+        "hard_block_by_b4_not_b3": false,
+        "impossible_under_policy": false,
+        "policy_restricted": false,
+        "same_action_profile": true,
+        "utility_direction": "incomparable"
+      },
+      {
+        "case_id": "hr_medical_block_003",
+        "exposure_direction": "incomparable",
+        "hard_block_by_b4_not_b3": false,
+        "impossible_under_policy": false,
+        "policy_restricted": false,
+        "same_action_profile": true,
+        "utility_direction": "incomparable"
+      },
+      {
+        "case_id": "hr_salary_analysis_001",
+        "exposure_direction": "b4_more",
+        "hard_block_by_b4_not_b3": false,
+        "impossible_under_policy": false,
+        "policy_restricted": false,
+        "same_action_profile": false,
+        "utility_direction": "same"
+      },
+      {
+        "case_id": "hr_salary_analysis_002",
+        "exposure_direction": "b4_more",
+        "hard_block_by_b4_not_b3": false,
+        "impossible_under_policy": false,
+        "policy_restricted": false,
+        "same_action_profile": false,
+        "utility_direction": "same"
+      },
+      {
+        "case_id": "hr_salary_analysis_003",
+        "exposure_direction": "b4_more",
+        "hard_block_by_b4_not_b3": false,
+        "impossible_under_policy": false,
+        "policy_restricted": false,
+        "same_action_profile": false,
+        "utility_direction": "same"
+      },
+      {
+        "case_id": "hr_team_summary_001",
+        "exposure_direction": "b4_more",
+        "hard_block_by_b4_not_b3": false,
+        "impossible_under_policy": false,
+        "policy_restricted": false,
+        "same_action_profile": false,
+        "utility_direction": "same"
+      },
+      {
+        "case_id": "hr_team_summary_002",
+        "exposure_direction": "b4_more",
+        "hard_block_by_b4_not_b3": false,
+        "impossible_under_policy": false,
+        "policy_restricted": false,
+        "same_action_profile": false,
+        "utility_direction": "same"
+      },
+      {
+        "case_id": "hr_team_summary_003",
+        "exposure_direction": "b4_more",
+        "hard_block_by_b4_not_b3": false,
+        "impossible_under_policy": false,
+        "policy_restricted": false,
+        "same_action_profile": false,
+        "utility_direction": "same"
+      },
+      {
+        "case_id": "hr_team_summary_004",
+        "exposure_direction": "same",
+        "hard_block_by_b4_not_b3": false,
+        "impossible_under_policy": false,
+        "policy_restricted": false,
+        "same_action_profile": true,
+        "utility_direction": "same"
+      }
+    ],
+    "hard_block_count": 0,
+    "impossible_under_policy_count": 0,
+    "policy_restricted_count": 0,
+    "same_action_profile_count": 4
+  },
+  "experiment_run_id": "13198a3b95bd49b88a62f591f3da1224"
+}
