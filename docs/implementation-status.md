@@ -1,8 +1,8 @@
 # Implementation status
 
-Last updated: 2026-09-08 — post-Milestone 2 synchronization.
+Last updated: 2026-09-08 — post-Milestone 2 synchronization + advisor-demo planning.
 
-This file tracks the current engineering/research state and execution order. Architectural decisions belong in ADRs; experimental definitions belong in `docs/experimental-design.md`; factual pilot results belong in `docs/milestone-2-pilot.md`; historical PR/Issue descriptions remain in GitHub.
+This file tracks the current engineering/research state and execution order. Architectural decisions belong in ADRs; experimental definitions belong in `docs/experimental-design.md`; factual pilot results belong in `docs/milestone-2-pilot.md`; the parallel advisor-facing application plan belongs in `docs/advisor-demo.md`; historical PR/Issue descriptions remain in GitHub.
 
 ## Current phase
 
@@ -15,6 +15,8 @@ The canonical sequence is implemented and executable:
 **B0 — Direct → B1 — Static Sanitization → B2 — Reversible Pseudonymization → B3 — Task-aware → B4 — Policy-governed.**
 
 Milestone 2 closed via PR #35 / merge `027a2baead4a3cee35db23cb8d4b79005a3a75d0` after the frozen HR corpus, B3, B4 and the experiment runner were completed.
+
+In parallel, the same Python implementation is now explicitly planned as the **reference application core for an advisor-facing interactive demo**. This application track does not change Milestone 3 gates.
 
 ## Milestone 2 — completed
 
@@ -119,6 +121,8 @@ Implement at least one real provider behind the existing narrow `Provider` proto
 
 Provider/model/scaffolding/decoding configuration must be frozen under the T23 protocol before confirmatory comparison.
 
+T22 is also consumed by the advisor-facing demo when available. FakeProvider remains sufficient to build/test the demo shell, but a real-provider mode is preferred before sharing the demo broadly with prospective advisors.
+
 #### T12 / Issue #9 — Docling ingestion
 
 Status: **gate released after M2; may proceed in parallel**.
@@ -156,6 +160,8 @@ T01 remains independent from engineering gates.
 
 The completed M2 materially changes the academic discussion: the project can now be presented as an executable research prototype with all B0–B4 treatments, a reproducible pilot, machine-readable metrics and explicit methodological limitations—not only as an architecture proposal.
 
+The advisor-facing demo track is intended to make that prototype directly testable by prospective advisors through a hosted URL, but demo completion is not a prerequisite for T01 conversations.
+
 Current provisional candidates remain:
 
 - Daniel Fernando Pigatto;
@@ -164,19 +170,69 @@ Current provisional candidates remain:
 
 T01 blocks only the final academic framing/line/advisor/submission, not M3 engineering.
 
-## Parallel product/integration tracks
+## Parallel advisor-facing demo/application track
 
-### T20 / Issue #28 — CLI + HTTP API + MCP
+Tracker: **Issue #41 — Advisor-facing interactive research application**.
 
-Status: **backlog / non-blocking for M3**.
+Purpose: turn the current Python research implementation into the application used to demonstrate the concept to prospective advisors. The demo exposes the actual implemented core rather than recreating anonymization/policy logic in Next.js.
 
-M2 now provides stable safe result concepts (`t10-experiment-runner-v2`) that adapters may expose. All adapters must remain thin and must not duplicate treatment/policy/scoring semantics.
+Target path:
 
-### T21 / Issue #29 — Next.js UI
+```text
+browser -> Next.js -> HTTP API -> Python application/core -> B0–B4 -> provider -> local reconstruction
+```
 
-Status: **backlog / non-blocking for M3**.
+### First-demo rules
 
-Fixtures should now be derived from the safe M2 artifact schema rather than inventing frontend-only experiment semantics. Phase 2 still integrates through T20 HTTP API.
+- no agentic anonymization/orchestration;
+- detector/B3 analyzer/B4 policy logic remain the implemented deterministic mechanisms;
+- prepared HR examples are synthetic/controlled;
+- free-form input, if enabled, must preserve safe logging/error semantics;
+- provider credentials remain server-side;
+- UI never becomes a source of treatment/policy/scoring semantics.
+
+### T20 / Issue #28 — application boundary + CLI/HTTP/MCP
+
+Status: **backlog globally / first implementation step inside the demo track / non-blocking for M3**.
+
+For the advisor demo, HTTP API is the first required adapter. CLI and MCP should share the same application service but do not need to block the first hosted URL.
+
+The HTTP surface should execute controlled text + task + GovernanceContext + treatment/provider through the real Python core and return safe transformation/policy/provider/reconstruction/result metadata.
+
+### T21 / Issue #29 — Next.js advisor-facing UI
+
+Status: **backlog globally / follows T20 inside the demo track / non-blocking for M3**.
+
+The UI should let a reviewer select a prepared HR example or controlled text, choose/compare B0–B4, see what crosses the trust boundary, inspect actions/policy reasons, provider response, local reconstructed response and selected metrics.
+
+Phase 1 can use safe T10 artifact/schema-driven fixtures. Phase 2 uses T20's real HTTP API.
+
+### T25 / Issue #42 — containerized demo/deploy infrastructure
+
+Status: **backlog / follows functional API+UI integration / non-blocking for M3**.
+
+The current root `compose.yaml` is a development/test harness rather than deploy infrastructure: it mounts the repository and runs tests. T25 owns a distinct deployment-oriented topology.
+
+Required demo infrastructure includes:
+
+- Python API image on the supported Python 3.13 runtime;
+- Next.js image;
+- demo/deploy compose/profile distinct from test compose;
+- service networking;
+- health/readiness checks;
+- explicit CORS/API-origin handling;
+- server-side-only provider secrets;
+- one-command local startup;
+- documented simple hosted container deployment suitable for sharing a URL;
+- core/application version provenance.
+
+The target is a small research-demo deployment, not desktop distribution, installers, multi-tenant SaaS or production-scale orchestration.
+
+### Demo completion criterion
+
+The first demo track is complete when a prospective advisor can receive a URL and execute at least the controlled HR B0–B4 concept through the actual Python core without local setup.
+
+T22/real provider improves this substantially and should be enabled when available, but FakeProvider remains valid for deterministic demonstration of the gateway mechanics.
 
 ## Deferred unless evidence creates a need
 
@@ -185,7 +241,8 @@ Fixtures should now be derived from the safe M2 artifact schema rather than inve
 - Accounting/Finance third domain;
 - multi-turn disclosure-history study;
 - additional detector categories not required by the next frozen domain;
-- full product-grade visual audit platform.
+- full product-grade visual audit platform;
+- agentic anonymization as an unversioned replacement for the deterministic B0–B4 path.
 
 ## Execution order
 
@@ -199,16 +256,24 @@ Fixtures should now be derived from the safe M2 artifact schema rather than inve
 6. Launch next frozen B0–B4 validation batch
 7. Only then analyze authoritative comparative results under the pre-frozen protocol
 
-### Parallel
+### Parallel academic path
 
-- T01 academic framing/advisor;
-- T20 adapters when integration becomes useful;
-- T21 UI when presentation/inspection becomes useful.
+- T01 advisor/line framing.
+
+### Parallel demo/application path
+
+1. **T20 HTTP/application boundary**;
+2. **T21 Next.js interactive demo**;
+3. **T25 containerized deploy**;
+4. consume **T22 real provider** when available.
+
+This ordering is internal to the demo track and does not reorder the scientific critical path.
 
 ## References
 
 - Experimental design: `docs/experimental-design.md`
 - M2 pilot record: `docs/milestone-2-pilot.md`
+- Advisor demo plan: `docs/advisor-demo.md`
 - ADR 0001: `docs/adr/0001-milestone-1-architecture.md`
 - M2 tracker: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/32
 - T23 methodology freeze: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/36
@@ -216,5 +281,7 @@ Fixtures should now be derived from the safe M2 artifact schema rather than inve
 - T12 Docling: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/9
 - T24 Contracts corpus: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/37
 - M3 tracker: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/38
+- Demo tracker: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/41
 - T20 CLI/API/MCP: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/28
 - T21 Next.js UI: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/29
+- T25 demo containers/deploy: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/42
