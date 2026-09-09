@@ -1,0 +1,74 @@
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  max-width: 42rem;
+  margin: 0 auto;
+  padding: 2.5rem 1.5rem;
+}
+
+.heading {
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.subheading {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.list {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.blocked {
+  padding: 1rem;
+  border-radius: 0.6rem;
+  background: var(--tone-blocked-surface);
+  color: var(--tone-blocked);
+}
+
+.payload {
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  padding: 0.75rem;
+  font-size: 0.85rem;
+  max-height: 16rem;
+  overflow: auto;
+}
+
+.actions {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.confirmButton {
+  padding: 0.75rem 1.5rem;
+  border-radius: 0.5rem;
+  border: none;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cancelButton {
+  padding: 0.75rem 1.5rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.error {
+  color: var(--tone-blocked);
+}
