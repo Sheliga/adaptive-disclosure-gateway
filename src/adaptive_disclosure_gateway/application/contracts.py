@@ -1,0 +1,270 @@
+"""The stable application-layer contract for the disclosure preview/execute
+use cases (T20 / issue #28, slice 1).
+
+Every result contract here is a frozen dataclass, and every one of them is
+no-leak safe by construction:
+
+- ``Transformation.original``/``Transformation.transformed`` (the vault
+  mapping) never appear anywhere below -- only counts derived from them
+  (``CategoryDisclosureSummary.occurrence_count``, see ``summaries.py``).
+- ``DisclosurePreview.external_payload`` IS returned deliberately: it is
+  exactly the representation that would cross the trust boundary, returned
+  to the same caller who supplied the source content, and it is the whole
+  point of a "review before sending" screen. This is not a leak -- it is the
+  product surface this slice exists to build.
+- ``SafeGovernanceView`` exposes only ``domain``/``purpose``/``policy_version``/
+  ``provider_class``/``requester_role``/``requested_pseudonym_scope``. It
+  never exposes ``requester_id`` or any lifecycle identifier
+  (``session_id``/``document_id``/``request_id``) -- see
+  ``tests/test_application_contracts.py``'s dedicated pin.
+- ``DisclosureExecution.provider``/``.reconstruction`` reuse
+  ``audit.ProviderStage``/``audit.ReconstructionStage`` verbatim rather than
+  redefining an equivalent shape: those types are already no-leak safe by
+  construction (metadata/hashes only, never a raw value or provider message
+  -- see ``audit.py``'s own module docstring), and redefining them here
+  would be exactly the kind of duplicated-shape drift this ticket's "no
+  duplicated logic" rule warns against.
+
+``DisclosureExecution.total_ms`` is a basic wall-clock convenience for the
+UI (how long the whole use case took, start to finish). It is explicitly
+NOT the T10 scientific latency metric (``experiments/stage_timing.py``,
+which requires the exact span-topology proof T10 relies on) and must never
+be used as one.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from enum import StrEnum
+from typing import Literal
+
+from adaptive_disclosure_gateway.application.ingestion import NormalizedContent
+from adaptive_disclosure_gateway.audit import ProviderStage, ReconstructionStage
+from adaptive_disclosure_gateway.domain import (
+    DisclosureAction,
+    GovernanceContext,
+    PseudonymScope,
+    Treatment,
+)
+
+
+class DisclosureStrategy(StrEnum):
+    """What the caller asks for. ``RECOMMENDED`` is the novice default and
+    is the only value the guided UI needs to know; the explicit B0-B4
+    values exist for the optional research/comparison surface.
+
+    Values reuse ``Treatment``'s own frozen ``"b0"``-``"b4"`` codes verbatim
+    (CLAUDE.md: frozen codes must never change) -- no new codes are minted
+    here.
+    """
+
+    RECOMMENDED = "recommended"
+    DIRECT = "b0"
+    STATIC_SANITIZATION = "b1"
+    REVERSIBLE_PSEUDONYMIZATION = "b2"
+    TASK_AWARE = "b3"
+    POLICY_GOVERNED = "b4"
+
+
+# RECOMMENDED -> POLICY_GOVERNED is a product/UX default for the guided demo
+# -- "the treatment we recommend a novice caller use" -- and is not a
+# scientific claim that B4 dominates every comparison; it never changes any
+# treatment's semantics, and every explicit B0-B4 value still maps to
+# exactly the treatment it names.
+_STRATEGY_TO_TREATMENT: dict[DisclosureStrategy, Treatment] = {
+    DisclosureStrategy.DIRECT: Treatment.DIRECT,
+    DisclosureStrategy.STATIC_SANITIZATION: Treatment.STATIC_SANITIZATION,
+    DisclosureStrategy.REVERSIBLE_PSEUDONYMIZATION: Treatment.REVERSIBLE_PSEUDONYMIZATION,
+    DisclosureStrategy.TASK_AWARE: Treatment.TASK_AWARE,
+    DisclosureStrategy.POLICY_GOVERNED: Treatment.POLICY_GOVERNED,
+    DisclosureStrategy.RECOMMENDED: Treatment.POLICY_GOVERNED,
+}
+
+
+def resolve_treatment(strategy: DisclosureStrategy) -> Treatment:
+    """Map a caller-facing ``DisclosureStrategy`` to the ``Treatment`` the
+    core actually runs. See the module-level comment above for why
+    ``RECOMMENDED`` maps to ``Treatment.POLICY_GOVERNED``.
+    """
+    return _STRATEGY_TO_TREATMENT[strategy]
+
+
+@dataclass(frozen=True)
+class StrategyOption:
+    """One entry of the B0-B4 + recommended discovery list (T20 / issue #28,
+    slice 2's ``GET /strategies``). Pure data -- listing these never
+    executes anything, and never carries human prose: the UI owns copy
+    (issue #29 -- "no scientific identifiers should be translated
+    internally").
+    """
+
+    strategy: DisclosureStrategy
+    treatment: Treatment
+    recommended: bool
+
+
+def list_strategy_options() -> tuple[StrategyOption, ...]:
+    """Every ``DisclosureStrategy`` value paired with the ``Treatment`` it
+    resolves to and whether it is the novice default -- in
+    ``DisclosureStrategy``'s own declaration order, so ``RECOMMENDED`` is
+    always first.
+    """
+    return tuple(
+        StrategyOption(
+            strategy=strategy,
+            treatment=resolve_treatment(strategy),
+            recommended=strategy is DisclosureStrategy.RECOMMENDED,
+        )
+        for strategy in DisclosureStrategy
+    )
+
+
+@dataclass(frozen=True)
+class GovernanceOverrides:
+    """Optional per-request overrides for the server-configured default
+    ``GovernanceContext``. Every field optional: a novice caller supplies
+    none of these and gets the server's configured defaults untouched.
+    """
+
+    purpose: str | None = None
+    requester_role: str | None = None
+    requester_id: str | None = None
+    provider_class: str | None = None
+    policy_version: str | None = None
+    requested_pseudonym_scope: PseudonymScope | None = None
+    session_id: str | None = None
+    document_id: str | None = None
+    request_id: str | None = None
+    domain: str | None = None
+
+
+@dataclass(frozen=True)
+class DisclosureApplicationRequest:
+    """The single input shape both ``preview`` and ``execute`` accept."""
+
+    content: NormalizedContent
+    task: str
+    strategy: DisclosureStrategy = DisclosureStrategy.RECOMMENDED
+    governance: GovernanceOverrides = field(default_factory=GovernanceOverrides)
+
+
+class DisclosureOutcome(StrEnum):
+    """Stable, presentation-facing outcome codes. The UI maps these to
+    localized copy; this layer never emits localized prose.
+    """
+
+    REMOVED = "removed"
+    PSEUDONYMIZED = "pseudonymized"
+    GENERALIZED = "generalized"
+    PRESERVED = "preserved"
+    BLOCKED = "blocked"
+
+
+@dataclass(frozen=True)
+class CategoryDisclosureSummary:
+    """One detected category's disclosure outcome for the "what happens to
+    my data" screen. Never carries a raw value or pseudonym -- only counts,
+    flags and the treatment's own (non-sensitive) reasoning text.
+    """
+
+    category: str
+    outcome: DisclosureOutcome
+    action: DisclosureAction
+    crosses_trust_boundary: bool
+    occurrence_count: int
+    required_for_task: bool | None
+    technical_reason: str
+    policy_version: str | None
+    policy_restricted: bool | None
+    impossible_under_policy: bool | None
+
+
+@dataclass(frozen=True)
+class DisclosureSummary:
+    """The full "what happens to my data" picture for one request, shared
+    verbatim between ``DisclosurePreview`` and ``DisclosureExecution`` --
+    see ``summaries.build_disclosure_summary``.
+    """
+
+    status: Literal["allowed", "blocked"]
+    categories: tuple[CategoryDisclosureSummary, ...]
+    detected_span_count: int
+    detected_categories: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class SafeGovernanceView:
+    """A ``GovernanceContext`` projected down to what is safe to hand back
+    to the same caller who supplied it: domain/purpose/policy_version/
+    provider_class/requester_role/pseudonym scope only.
+
+    Deliberately excludes ``requester_id`` and every lifecycle identifier
+    (``session_id``/``document_id``/``request_id``): those identify a
+    specific requester/session/document and partition the pseudonym vault,
+    and have no presentational value to a "what happens to my data" screen
+    -- see ``tests/test_application_contracts.py``'s dedicated pin that this
+    type has no such field at all, not merely that it is left unset.
+    """
+
+    domain: str
+    purpose: str
+    policy_version: str
+    provider_class: str
+    requester_role: str | None
+    requested_pseudonym_scope: PseudonymScope
+
+
+def safe_governance_view(context: GovernanceContext) -> SafeGovernanceView:
+    """Project a real ``GovernanceContext`` down to ``SafeGovernanceView``."""
+    return SafeGovernanceView(
+        domain=context.domain,
+        purpose=context.purpose,
+        policy_version=context.policy_version,
+        provider_class=context.provider_class,
+        requester_role=context.requester_role,
+        requested_pseudonym_scope=context.requested_pseudonym_scope,
+    )
+
+
+@dataclass(frozen=True)
+class ProviderMode:
+    """Which provider *would* handle a previewed request, known without
+    ever calling it -- just the provider's own declared ``provider_class``.
+    Populated by ``preview``, which never invokes a provider at all (see
+    ``service.py``).
+    """
+
+    provider_class: str
+
+
+@dataclass(frozen=True)
+class DisclosurePreview:
+    """The "review before sending" result: everything about what would
+    happen, plus the exact payload that would cross the trust boundary --
+    without ever calling a provider.
+    """
+
+    summary: DisclosureSummary
+    external_payload: str
+    payload_byte_count: int
+    treatment: Treatment
+    strategy: DisclosureStrategy
+    governance: SafeGovernanceView
+    provider_mode: ProviderMode
+
+
+@dataclass(frozen=True)
+class DisclosureExecution:
+    """The real result of running a request all the way through the core:
+    provider call, local reconstruction (if the treatment supports it), and
+    the same disclosure summary ``preview`` would have shown for this input.
+    """
+
+    summary: DisclosureSummary
+    final_answer: str | None
+    provider: ProviderStage
+    reconstruction: ReconstructionStage
+    treatment: Treatment
+    strategy: DisclosureStrategy
+    governance: SafeGovernanceView
+    total_ms: float

@@ -132,9 +132,19 @@ class ExecutionResult:
     produces reconstructed text. ``audit`` is always present: even a
     blocked request gets a full structural audit record (see
     ``adaptive_disclosure_gateway.audit``).
+
+    ``spans`` are the spans the detector actually returned over
+    ``request.text`` during *this* run -- the same list the treatment's own
+    ``sanitize`` was handed. Carried here (T20 / issue #28) so a consumer
+    that needs both halves of the decision phase can read them off the
+    result it already has, instead of re-running detection/sanitization a
+    second time and then arguing that the second run must have agreed with
+    the first. A caller that wants the decision phase *without* a provider
+    call calls :func:`decide_disclosure` directly instead.
     """
 
     disclosure_result: DisclosureResult
+    spans: list[SensitiveSpan]
     provider_response: ProviderResponse | None
     reconstructed_text: str | None
     audit: AuditRecord
@@ -185,6 +195,66 @@ def _blocked_for_sensitive_task(task_spans: list[SensitiveSpan]) -> DisclosureRe
     )
 
 
+@dataclass(frozen=True)
+class DisclosureDecision:
+    """What the decision phase of one case produced, before any provider
+    call: the spans the detector actually returned over ``request.text`` and
+    the treatment's own ``DisclosureResult`` -- already including the
+    fail-closed task check below.
+
+    Extracted (T20 / issue #28, slice 1) so a future preview use case (no
+    provider call at all) can run exactly this phase without duplicating it:
+    ``run_disclosure_case`` below now calls :func:`decide_disclosure` itself
+    rather than inlining this logic a second time. This is *not* a new
+    stage: it is the same detect -> sanitize -> task-check sequence that has
+    always run first inside ``run_disclosure_case``'s own span, moved
+    verbatim into its own function.
+    """
+
+    spans: list[SensitiveSpan]
+    result: DisclosureResult
+
+
+def decide_disclosure(
+    treatment: DisclosureTreatment,
+    request: DisclosureRequest,
+    *,
+    detector: Detector | None = None,
+) -> DisclosureDecision:
+    """Run the decision phase alone: detect over ``request.text``, call
+    ``treatment.sanitize(request, spans)``, then the fail-closed check that
+    re-detects over ``request.task`` and blocks the whole request (except
+    for ``UnsafeControlTreatment`` -- see its docstring) if it finds
+    anything there.
+
+    CRITICAL: this function must never open an OpenTelemetry span of its
+    own. ``experiments/stage_timing.py`` depends on ``detection.detect`` and
+    ``<treatment>.sanitize`` being *direct children* of the
+    ``pipeline.run_disclosure_case`` span (siblings of each other, neither
+    nested inside the other, nor inside anything else). ``run_disclosure_case``
+    calls this function from inside its own span for exactly that reason;
+    a caller that calls this function with no span of its own open (e.g. a
+    preview use case) gets ``detection.detect``/``<treatment>.sanitize`` as
+    root spans instead -- see
+    ``tests/test_pipeline.py::test_decide_disclosure_opens_no_span_of_its_own``.
+    """
+    active_detector = detector or Detector()
+    spans = active_detector.detect(request.text)
+    result = treatment.sanitize(request, spans)
+
+    # A sensitive value can exist only in request.task, which no
+    # treatment's sanitize() ever inspects. Run the same Detector over
+    # it and fail the whole request closed if it finds anything -- but
+    # never for the unsafe control baseline, which must keep sending
+    # request.task completely raw (see UnsafeControlTreatment above).
+    if result.status == "allowed" and not isinstance(treatment, UnsafeControlTreatment):
+        task_spans = active_detector.detect(request.task)
+        if task_spans:
+            result = _blocked_for_sensitive_task(task_spans)
+
+    return DisclosureDecision(spans=spans, result=result)
+
+
 def run_disclosure_case(
     treatment: DisclosureTreatment,
     request: DisclosureRequest,
@@ -218,19 +288,9 @@ def run_disclosure_case(
     with tracer.start_as_current_span("pipeline.run_disclosure_case") as otel_span:
         otel_span.set_attribute("treatment", treatment.treatment.value)
 
-        active_detector = detector or Detector()
-        spans = active_detector.detect(request.text)
-        result = treatment.sanitize(request, spans)
-
-        # A sensitive value can exist only in request.task, which no
-        # treatment's sanitize() ever inspects. Run the same Detector over
-        # it and fail the whole request closed if it finds anything -- but
-        # never for the unsafe control baseline, which must keep sending
-        # request.task completely raw (see UnsafeControlTreatment above).
-        if result.status == "allowed" and not isinstance(treatment, UnsafeControlTreatment):
-            task_spans = active_detector.detect(request.task)
-            if task_spans:
-                result = _blocked_for_sensitive_task(task_spans)
+        decision = decide_disclosure(treatment, request, detector=detector)
+        spans = decision.spans
+        result = decision.result
 
         provider_response: ProviderResponse | None = None
         reconstructed_text: str | None = None
@@ -304,6 +364,7 @@ def run_disclosure_case(
 
         return ExecutionResult(
             disclosure_result=result,
+            spans=spans,
             provider_response=provider_response,
             reconstructed_text=reconstructed_text,
             audit=audit,

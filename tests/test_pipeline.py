@@ -26,7 +26,11 @@ from adaptive_disclosure_gateway.domain import (
     GovernanceContext,
     Treatment,
 )
-from adaptive_disclosure_gateway.pipeline import run_disclosure_case
+from adaptive_disclosure_gateway.pipeline import (
+    DisclosureDecision,
+    decide_disclosure,
+    run_disclosure_case,
+)
 from adaptive_disclosure_gateway.policies import PolicyRepository
 from adaptive_disclosure_gateway.providers import (
     ProviderRequest,
@@ -539,3 +543,82 @@ def test_provider_class_mismatch_never_calls_generate_and_audit_does_not_claim_i
     assert "8500" not in dumped
     assert "Engineering" not in dumped
     assert HR_FIXTURE_NO_MEDICAL not in dumped
+
+
+# --- T20 / issue #28, slice 1: decide_disclosure is the shared decision
+# phase (detect -> sanitize -> task fail-closed check) extracted, not
+# copied, out of run_disclosure_case, so a future preview use case can run
+# exactly that phase without a provider ------------------------------------
+
+
+def test_decide_disclosure_agrees_with_run_disclosure_case_for_an_allowed_case():
+    """The extraction must not change behavior: calling decide_disclosure
+    directly must produce the exact same DisclosureResult content
+    run_disclosure_case's own decision phase produces for the same
+    treatment/request (an idempotent treatment -- B1 has no vault state to
+    diverge between two calls)."""
+    request = _request(HR_FIXTURE_NO_MEDICAL)
+    treatment = StaticSanitizer()
+
+    decision = decide_disclosure(treatment, request)
+    execution = run_disclosure_case(treatment, request, RecordingProvider())
+
+    assert isinstance(decision, DisclosureDecision)
+    assert decision.result.status == execution.disclosure_result.status == "allowed"
+    assert decision.result.external_payload == execution.disclosure_result.external_payload
+    assert [d.action for d in decision.result.decisions] == [
+        d.action for d in execution.disclosure_result.decisions
+    ]
+    # The spans decide_disclosure detected over request.text must be the
+    # same ones run_disclosure_case's own audit trail recorded.
+    assert len(decision.spans) == execution.audit.detection.span_count
+    assert sorted({s.category for s in decision.spans}) == execution.audit.detection.categories
+
+
+def test_decide_disclosure_agrees_with_run_disclosure_case_for_a_blocked_case():
+    request = _request(HR_FIXTURE_WITH_MEDICAL)
+    treatment = StaticSanitizer()
+
+    decision = decide_disclosure(treatment, request)
+    execution = run_disclosure_case(treatment, request, RecordingProvider())
+
+    assert decision.result.status == execution.disclosure_result.status == "blocked"
+    assert decision.result.external_payload == execution.disclosure_result.external_payload == ""
+
+
+def test_decide_disclosure_also_fails_closed_for_a_sensitive_value_present_only_in_the_task():
+    """decide_disclosure alone must reproduce the task fail-closed check --
+    not just the detect/sanitize call -- since a caller (the preview use
+    case) that only calls decide_disclosure must see the same block a full
+    run_disclosure_case call would produce for this defect class."""
+    request = _request_with_task(INNOCUOUS_TEXT, SENSITIVE_TASK, session_id="s1")
+
+    decision = decide_disclosure(StaticSanitizer(), request)
+
+    assert decision.result.status == "blocked"
+    assert any("task" in d.reason.lower() for d in decision.result.decisions)
+
+
+def test_decide_disclosure_opens_no_span_of_its_own(recorded_spans):
+    """Structural pin for the CRITICAL CONSTRAINT that experiments/stage_timing.py
+    depends on: detection.detect and <treatment>.sanitize must be direct
+    children of pipeline.run_disclosure_case's own span, never nested inside
+    a decide_disclosure span. Calling decide_disclosure with no enclosing
+    span at all must leave both child spans as *root* spans (no parent) --
+    if decide_disclosure wrapped them in a span of its own, they would each
+    have that span as a parent instead.
+    """
+    request = _request(HR_FIXTURE_NO_MEDICAL)
+
+    decide_disclosure(StaticSanitizer(), request)
+
+    finished = recorded_spans.get_finished_spans()
+    names = {span.name for span in finished}
+    assert "detection.detect" in names
+    assert "static_sanitization.sanitize" in names
+    assert "pipeline.run_disclosure_case" not in names
+    for span in finished:
+        assert span.parent is None, (
+            f"span {span.name!r} unexpectedly has a parent -- decide_disclosure must not "
+            "open a span of its own around detect/sanitize"
+        )

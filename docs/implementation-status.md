@@ -193,11 +193,28 @@ browser -> Next.js -> HTTP API -> Python application/core -> B0–B4 -> provider
 
 ### T20 / Issue #28 — application boundary + CLI/HTTP/MCP
 
-Status: **backlog globally / first implementation step inside the demo track / non-blocking for M3**.
+Status: **first vertical slice in review (PR open) / non-blocking for M3**.
 
 For the advisor demo, HTTP API is the first required adapter. CLI and MCP should share the same application service but do not need to block the first hosted URL.
 
 The HTTP surface should execute controlled text + task + GovernanceContext + treatment/provider through the real Python core and return safe transformation/policy/provider/reconstruction/result metadata.
+
+#### Delivered in the first slice
+
+- `application/` — the shared use-case boundary (`DisclosureApplicationService.preview`/`.execute`), framework-free and reusable by a later CLI/MCP adapter;
+- `pipeline.decide_disclosure` — the detect → sanitize → fail-closed-task-check phase extracted from `run_disclosure_case`, so preview and execute share one implementation instead of two;
+- `application/ingestion.py` — the normalization seam (direct text, `.txt`, `.md`) that T12 / Issue #9 plugs PDF/DOCX/XLSX/image into behind the same `NormalizedContent` contract;
+- `api/` — a thin FastAPI adapter: `GET /health`, `GET /examples`, `GET /strategies`, `POST /disclosure/preview`, `POST /disclosure/execute`.
+
+The default strategy is the policy-governed one, selected as `"recommended"` so the frontend never needs to know B0–B4 to run the primary flow. `GET /strategies` exposes the five treatments for the optional comparison surface.
+
+#### Deliberately not in the first slice
+
+CLI adapter, MCP adapter, multipart/binary upload, B0–B4 comparison execution, real-provider mode (T22 / Issue #30), authentication and rate limiting.
+
+#### Scientific state unchanged
+
+This slice adds no treatment, policy, corpus, oracle or metric semantics. B0–B4, the frozen HR corpus, `hr-v1`/`hr-v2`/`hr-v3`, the M2 artifacts and every experimental metric are untouched; the application layer never reaches the oracle, and the T10 scoring modules are not imported by it.
 
 ### T21 / Issue #29 — Next.js advisor-facing UI
 
