@@ -108,11 +108,25 @@ Rules:
 - when the full feature and its acceptance criteria are complete, open a single integration PR from `develop` to `master`;
 - the `develop → master` PR is the CI boundary: the complete GitHub Actions suite must run and be green before merge;
 - CI also runs on pushes to `master` as a post-integration safeguard;
-- never merge the final `develop → master` PR without explicit user authorization;
+- the final `develop → master` PR is merged only with the user's explicit authorization (see Merge authorization above for who executes it);
 - after the final PR is merged, synchronize `develop` to the new `master` before starting the next feature so the next feature begins from the canonical state;
 - direct feature PRs to `master` are not part of the normal workflow and require explicit user direction.
 
 This CI strategy exists to reduce repeated GitHub Actions consumption while preserving one full remote validation at the feature integration boundary.
+
+## Merge authorization
+
+Repository Claude Code sessions must never execute PR merges. Merge approval belongs to the
+user; merge execution is performed outside the repository Claude Code session.
+
+- `.claude/settings.json` denies `Bash(gh pr merge:*)`. That blocks the `gh pr merge` command
+  specifically from inside a Claude Code session -- it is not a claim that merging is
+  impossible through every mechanism, only that this command is unavailable here.
+- An agent may leave a PR ready, review it, comment on it, and report that it is ready to
+  merge. It must not try to accomplish the merge through a different command or mechanism.
+- `git merge` stays available: bringing a local branch up to date with `origin/develop` or
+  `origin/master` is a different operation from merging a PR on GitHub, and is not restricted
+  by this rule.
 
 ## Delegation
 
@@ -170,7 +184,7 @@ Expected flow:
 - move it to `Validação` when the relevant implementation is in an open PR ready for review;
 - merging an intermediate PR into `develop` does not by itself move the overall feature to `Concluído`;
 - move the feature to `Concluído` only after the final `develop → master` PR is merged and its acceptance criteria are satisfied/closed;
-- do not merge a PR or mark a Trello card complete without explicit user authorization;
+- a PR is merged, and a Trello card marked complete, only with explicit user authorization (see Merge authorization above);
 - before starting a new ticket, read the current Trello card, linked GitHub Issue and relevant authoritative docs instead of relying on stale session context;
 - when a review discovers a missing security/methodological invariant, update the active Issue/card acceptance criteria before calling the work complete.
 
