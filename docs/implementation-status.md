@@ -199,18 +199,29 @@ For the advisor demo, HTTP API is the first required adapter. CLI and MCP should
 
 The HTTP surface should execute controlled text + task + GovernanceContext + treatment/provider through the real Python core and return safe transformation/policy/provider/reconstruction/result metadata.
 
-#### Delivered in the first slice
+#### Delivered so far
 
 - `application/` — the shared use-case boundary (`DisclosureApplicationService.preview`/`.execute`), framework-free and reusable by a later CLI/MCP adapter;
 - `pipeline.decide_disclosure` — the detect → sanitize → fail-closed-task-check phase extracted from `run_disclosure_case`, so preview and execute share one implementation instead of two;
 - `application/ingestion.py` — the normalization seam (direct text, `.txt`, `.md`) that T12 / Issue #9 plugs PDF/DOCX/XLSX/image into behind the same `NormalizedContent` contract;
-- `api/` — a thin FastAPI adapter: `GET /health`, `GET /examples`, `GET /strategies`, `POST /disclosure/preview`, `POST /disclosure/execute`.
+- `api/` — a thin FastAPI adapter: `GET /health`, `GET /examples`, `GET /strategies`, `POST /disclosure/preview`, `POST /disclosure/execute`;
+- `cli.py` — a thin `argparse` CLI adapter over the same service (`adg health|examples|strategies|preview|execute`), for local development, controlled runs and debugging. No new dependency, and it never imports the HTTP package, so it runs without FastAPI installed;
+- `application/wire.py` — the single allowlisted serialization both adapters use, so CLI `--json` and the HTTP API return identical bodies and one field-allowlist governs both surfaces;
+- `application/settings.py` — the shared default-service construction both adapters build from.
 
 The default strategy is the policy-governed one, selected as `"recommended"` so the frontend never needs to know B0–B4 to run the primary flow. `GET /strategies` exposes the five treatments for the optional comparison surface.
 
-#### Deliberately not in the first slice
+#### Adapter status
 
-CLI adapter, MCP adapter, multipart/binary upload, B0–B4 comparison execution, real-provider mode (T22 / Issue #30), authentication and rate limiting.
+| Adapter | Status |
+| --- | --- |
+| HTTP API | delivered |
+| CLI | delivered |
+| MCP | pending |
+
+#### Deliberately still out
+
+MCP adapter, multipart/binary upload, B0–B4 comparison execution, real-provider mode (T22 / Issue #30), authentication and rate limiting.
 
 #### Scientific state unchanged
 

@@ -65,23 +65,16 @@ from adaptive_disclosure_gateway.application.examples import ExampleNotFoundErro
 from adaptive_disclosure_gateway.application.ingestion import IngestionError
 from adaptive_disclosure_gateway.application.requests import ContentSourceError, MissingTaskError
 from adaptive_disclosure_gateway.application.service import DisclosureApplicationService
-from adaptive_disclosure_gateway.policies import PolicyRepository
-from adaptive_disclosure_gateway.providers import FakeProvider
 
 
 def _build_default_service() -> DisclosureApplicationService:
     """The default demo service ``create_app()`` builds when no service is
-    injected: the real policy repository and HR pilot examples from this
-    checkout, a deterministic ``FakeProvider`` (issue #29 requires this be
-    clearly labeled -- see ``GET /health``'s ``deterministic_demo_mode``),
-    and a documented default ``GovernanceContext``. See ``api/settings.py``.
+    injected. Delegates to ``application.settings.build_default_service`` --
+    the CLI adapter (``cli.py``) builds the identical default service the
+    same way, so this must not become a second, independently-maintained
+    copy of that construction. See ``application/settings.py``.
     """
-    return DisclosureApplicationService(
-        policy_repository=PolicyRepository.from_directory(api_settings.policy_directory()),
-        provider=FakeProvider(),
-        default_context=api_settings.default_governance_context(),
-        examples_directory=api_settings.examples_directory(),
-    )
+    return api_settings.build_default_service()
 
 
 def _get_service(request: Request) -> DisclosureApplicationService:
