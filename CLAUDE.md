@@ -52,6 +52,26 @@ identifier that plausibly holds sensitive data (`value`, `text`, `payload`, `ori
 legitimate `raise` trips it, reword the message -- do not weaken the test. Telemetry itself is
 separately pinned per-treatment in `tests/test_telemetry_privacy.py`.
 
+The disclosure surface is the whole output boundary, not only the external payload. It
+includes: the payload · the task/prompt · the provider request · exception messages and
+anything chained onto them via `__cause__`/`__context__` · logs · telemetry · audit records ·
+hashes and other derived identifiers. "The payload is clean" does not prove no disclosure
+occurred -- the same pattern has recurred three times across the project's history, each a
+separate real defect that escaped through a side channel after passing the main sanitization
+path: `span.value` interpolated into an exception message; a sensitive value living only in
+`request.task`; a public SHA-256 of the content stored in the audit record. Local behavioral
+tests caught none of the three, because each checked the payload and nothing else.
+
+A guessable representation counts as a leak. A public, reproducible digest of low-entropy
+content is dictionary-reversible, so hashing content is not anonymizing it.
+
+Therefore any change touching sensitive data needs, beyond its local behavioral tests, at
+least one adversarial test that asks: if a sensitive value is placed here, is there any
+alternative path by which it -- or a guessable representation of it -- can get out? AST-based
+tests that apply repository-wide, such as the existing `raise` check in
+`tests/test_no_sensitive_value_in_raises.py` and the import-isolation tests, are the most
+durable form of this rule, because they also reach code that has not been written yet.
+
 ## TDD
 
 Development follows TDD. A test must be able to fail from a real defect in production code.
@@ -94,6 +114,40 @@ Rules:
 
 This CI strategy exists to reduce repeated GitHub Actions consumption while preserving one full remote validation at the feature integration boundary.
 
+## Delegation
+
+This section governs the main interactive session. It does not apply to a subagent already
+executing a briefing: that subagent does the work itself and does not dispatch further
+sub-subagents. A subagent that reads this file and starts spawning its own subagents has
+misread it.
+
+The main session orchestrates; it does not execute. It may run directly: read-only git
+operations (`git status`, `git diff`, `git log`, `git show`, `git branch`, `git rev-parse`),
+`git fetch --all --prune`, and any other inspection of branches, commits, diffs, working state
+and history -- this, alongside reading Trello/GitHub state, is how it builds context. Deciding
+scope, priority and sequence, writing the briefing a subagent will work from, and reviewing
+what comes back also stay with the session itself.
+
+Everything else that writes is dispatched to a subagent: editing any file; mutating git
+operations such as `git add`, `git commit`, `git commit --amend`, `git rebase` and
+`git cherry-pick`, creating or moving a branch as part of executing the task, and pushing;
+creating/editing/closing a GitHub Issue or PR; creating/moving/editing a Trello card; and any
+other mutating operation.
+
+Model tiering for that dispatch: Haiku for mechanical, fully-specified work; Sonnet for
+implementation inside a clear contract; Opus only for genuine architectural reasoning, which
+is rare.
+
+This trades away some output quality on purpose. The main session's accumulated context is
+the scarce resource here, and this rule exists to stop that context being spent on execution
+instead of orchestration.
+
+Every briefing dispatched under this rule must open by telling the subagent to
+`git fetch --all --prune` and verify its base is not behind before touching anything -- a local
+branch is routinely behind its remote, and per Branching and CI above the base is normally
+`develop`, not `master` -- and must restate three rules regardless of the task: TDD as defined
+in this file, no `Co-Authored-By` trailer in commits, and never merge a PR.
+
 ## Workflow state
 
 Use each system for one purpose:
@@ -124,3 +178,12 @@ Expected flow:
 
 - [`docs/experimental-design.md`](docs/experimental-design.md) — treatment definitions, semantic-name mapping, pairwise comparisons, held-constant variables and metrics mapping. Authoritative for experimental design.
 - [`docs/implementation-status.md`](docs/implementation-status.md) — what is merged, in validation and pending. Authoritative for engineering status.
+
+## Local setup
+
+Run the Python suite through the project venv, not the ambient interpreter:
+`.venv/Scripts/python.exe -m pytest` on Windows, `.venv/bin/python -m pytest` on POSIX. A bare
+`python -m pytest` fails collection with `ModuleNotFoundError: fastapi` -- that looks like a
+regression and is not; it means the dependencies installed in the venv are not visible.
+
+Enable the repository's git hooks once per clone: `git config core.hooksPath .githooks`.
