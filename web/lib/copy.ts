@@ -1,0 +1,231 @@
+/**
+ * Centralized user-facing copy. pt-BR is the only locale in this slice
+ * (`docs/advisor-demo.md`: "Português (Brasil) is the default locale"), but
+ * every string a component renders must come from here -- never inlined in
+ * a component -- so this is the ONE module that changes when copy changes,
+ * and the ONE module a future locale needs to duplicate.
+ *
+ * Scientific/internal identifiers (`b0`-`b4`, `removed`, `pseudonymized`,
+ * example/category codes, contract versions, ...) are DELIBERATELY absent
+ * from this module: CLAUDE.md and issue #29 both pin those as verbatim
+ * data, never translated. This module only ever holds presentation prose
+ * *about* those identifiers, never the identifiers themselves.
+ *
+ * --- How a second locale would be added (deliberately not built yet) ---
+ *
+ * 1. Define `export type AppCopy = typeof ptBR;` (structural, so it is
+ *    derived from the one locale that exists today rather than maintained
+ *    by hand).
+ * 2. Write a sibling object, e.g. `const enUS: AppCopy = { ... }`, in its
+ *    own module -- TypeScript's structural typing against `AppCopy` means
+ *    a missing or extra key is a compile error in that new file, not a
+ *    silent runtime gap.
+ * 3. Add a tiny resolver (`resolveCopy(locale: "pt-BR" | "en-US"): AppCopy`)
+ *    that picks between them, and a persisted user preference that calls
+ *    it (`docs/advisor-demo.md`: "English is available through an explicit
+ *    language control. User preference should persist.").
+ *
+ * This is deliberately not built now because there is only one locale to
+ * resolve between -- a resolver with a single branch is speculative
+ * machinery with no second caller yet (YAGNI), and every current call site
+ * can import the flat `copy` object directly. Adding the resolver becomes a
+ * pure addition (a new file + a few lines wiring it in), never a refactor
+ * of this module's shape, which is the property that matters.
+ */
+
+const ptBR = {
+  howItWorks: {
+    title: "Como funciona",
+    steps: [
+      {
+        title: "Análise local",
+        description:
+          "O documento é inspecionado antes de qualquer coisa sair do ambiente confiável.",
+      },
+      {
+        title: "Divulgação controlada",
+        description:
+          "Apenas a representação permitida/transformada é enviada ao provedor externo.",
+      },
+      {
+        title: "Reconstrução local",
+        description: "Pseudônimos autorizados podem ser reconstruídos após a resposta do modelo.",
+      },
+    ],
+    ctaPrimary: "Testar agora",
+    ctaSecondary: "Como funciona a pesquisa?",
+  },
+
+  entryModes: {
+    heading: "Como você quer testar?",
+    useExample: "Usar um exemplo",
+    uploadFile: "Enviar meu arquivo",
+    pasteText: "Colar texto",
+  },
+
+  /** Screen 2 -- "Novo teste": entry mode fields, upload UX, task field. */
+  newTest: {
+    heading: "Novo teste",
+    exampleFieldLabel: "Escolha um exemplo",
+    exampleLoading: "Carregando exemplos...",
+    exampleTechnicalIdLabel: "Identificador técnico deste exemplo:",
+    exampleLoadError: "Não foi possível carregar os exemplos.",
+    examplePlaceholder: "Selecione um exemplo",
+    pasteLabel: "Cole o texto que deseja testar",
+    pastePlaceholder: "Cole aqui o conteúdo que deseja testar.",
+    uploadFieldLabel: "Selecione um arquivo",
+    uploadDropHint: "Arraste um arquivo .txt ou .md aqui, ou escolha um arquivo.",
+    uploadUnsupportedType: "Apenas arquivos .txt ou .md são aceitos.",
+    uploadReadError: "Não foi possível ler o arquivo selecionado.",
+    removeFile: "Remover arquivo",
+    fileNameLabel: "Nome do arquivo",
+    fileTypeLabel: "Tipo",
+    fileSizeLabel: "Tamanho",
+    taskLabel: "O que você quer que o modelo faça com esse conteúdo?",
+    taskPlaceholder: "Ex.: Resuma os pontos principais deste documento.",
+    taskHintForExample: "Deixe em branco para usar a tarefa sugerida pelo exemplo escolhido.",
+    continueToReview: "Revisar antes de enviar",
+    incompleteHint: "Escolha um exemplo, envie um arquivo ou cole um texto para continuar.",
+  },
+
+  /** Screen 3 -- "Revisão antes do envio". */
+  review: {
+    heading: "Revisão antes do envio",
+    detectedCountLabel: "itens sensíveis detectados",
+    noneDetected: "Nenhum dado sensível foi detectado neste conteúdo.",
+    nothingInSection: "Nenhum item nesta categoria.",
+    showPayloadToggle: "Ver o payload exato que seria enviado",
+    payloadByteCountLabel: "bytes",
+    blockedHeading: "Solicitação bloqueada",
+    blockedExplanation:
+      "A política de divulgação bloqueou esta solicitação. Nada será enviado ao provedor externo.",
+    confirmSend: "Confirmar e enviar",
+    backToCompose: "Voltar e editar",
+  },
+
+  /** Screen 4 -- "Resultado". */
+  result: {
+    heading: "Resultado",
+    pathHeading: "Caminho da informação",
+    pathLocal: "Local",
+    pathProvider: "Provedor externo",
+    protectionsAppliedHeading: "Proteções aplicadas",
+    blockedHeading: "Execução bloqueada",
+    blockedExplanation:
+      "A política de divulgação bloqueou esta execução. Nenhum conteúdo foi enviado ao provedor externo.",
+    providerFailedHeading: "Falha ao consultar o provedor",
+    providerFailedExplanation:
+      "O provedor externo não respondeu com sucesso. Nenhuma resposta foi fabricada.",
+    restart: "Testar novamente",
+  },
+
+  provider: {
+    deterministicDemoLabel: "Provedor de demonstração determinístico — não é um modelo real.",
+  },
+
+  processingStages: {
+    readingFile: "Lendo o arquivo",
+    detectingSensitiveData: "Detectando dados sensíveis",
+    applyingDisclosurePolicy: "Aplicando política de divulgação",
+    consultingModel: "Consultando o modelo",
+    reconstructingAnswer: "Reconstruindo a resposta",
+  },
+
+  /**
+   * pt-BR labels for the prepared examples' `purpose` values -- the only
+   * human-readable thing the API gives us about an example besides its raw
+   * corpus sample id (see lib/exampleLabels.ts for why the label is derived
+   * here rather than server-side).
+   *
+   * Keys are the frozen `purpose` identifiers exactly as the corpus and
+   * the policy matrix spell them -- never translated, never renamed. A
+   * purpose with no entry here deliberately falls back to the raw id rather
+   * than to an invented label.
+   */
+  examplePurposes: {
+    department_aggregation: "Agregação por departamento",
+    team_summary: "Resumo de equipe",
+    salary_analysis: "Análise salarial",
+    compensation_review: "Revisão de remuneração",
+    fitness_for_duty_review: "Avaliação de aptidão para o trabalho",
+  } as Record<string, string>,
+
+  /**
+   * Per category disclosure outcome: the "what happened" label/explanation
+   * pairs, plus the trust-boundary pair used independently of outcome (see
+   * `outcomes.ts`, which reads `crosses_trust_boundary` directly rather
+   * than guessing it from these labels).
+   */
+  outcomes: {
+    removed: {
+      label: "Removido",
+      explanation: "Esse dado foi retirado do conteúdo antes de qualquer envio externo.",
+    },
+    pseudonymized: {
+      label: "Substituído por pseudônimo",
+      explanation:
+        "O valor original foi trocado por um pseudônimo local; o original nunca sai do ambiente confiável.",
+    },
+    generalized: {
+      label: "Generalizado",
+      explanation: "O valor foi trocado por uma versão menos específica antes do envio.",
+    },
+    preserved: {
+      label: "Mantido porque é necessário para a tarefa",
+      explanation: "Esse dado foi mantido como está por ser necessário para realizar a tarefa pedida.",
+    },
+    blocked: {
+      label: "Bloqueado",
+      explanation: "A solicitação foi bloqueada e nenhum conteúdo foi enviado ao provedor externo.",
+    },
+    protectedLocally: {
+      label: "Protegido localmente",
+    },
+    sentToProvider: {
+      label: "Enviado ao modelo",
+    },
+    unknown: {
+      label: "Ação não reconhecida — requer revisão",
+      explanation:
+        "O sistema retornou uma ação que esta versão da interface não reconhece. Por segurança, ela não é tratada como local nem como segura até ser revisada.",
+      boundaryLabel: "Não é possível confirmar — requer revisão",
+    },
+  },
+
+  buttons: {
+    testNow: "Testar agora",
+    howResearchWorks: "Como funciona a pesquisa?",
+    compareStrategies: "Comparar estratégias",
+    viewTechnicalDetails: "Ver detalhes técnicos",
+    submit: "Enviar",
+    cancel: "Cancelar",
+    tryAgain: "Tentar novamente",
+  },
+
+  errors: {
+    generic: "Não foi possível concluir a operação. Tente novamente.",
+    upstreamUnreachable: "Não foi possível falar com o serviço no momento. Tente novamente em instantes.",
+    validationFailed: "Os dados enviados não são válidos. Revise e tente novamente.",
+  },
+
+  sectionHeadings: {
+    whatWasDetected: "O que foi detectado",
+    whatStaysLocal: "O que permanece local",
+    whatWasSent: "O que foi enviado",
+    finalAnswer: "Resposta final",
+    technicalDetails: "Detalhes técnicos",
+    compareStrategies: "Comparar estratégias",
+  },
+
+  theme: {
+    light: "Claro",
+    dark: "Escuro",
+    system: "Automático (sistema)",
+    toggleLabel: "Tema",
+  },
+} as const;
+
+export type AppCopy = typeof ptBR;
+
+/** The active locale's copy. pt-BR is the only locale wired up today. */
+export const copy: AppCopy = ptBR;

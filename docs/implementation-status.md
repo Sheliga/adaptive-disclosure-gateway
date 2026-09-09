@@ -237,11 +237,36 @@ This slice adds no treatment, policy, corpus, oracle or metric semantics. B0–B
 
 ### T21 / Issue #29 — Next.js advisor-facing UI
 
-Status: **backlog globally / follows T20 inside the demo track / non-blocking for M3**.
+Status: **first vertical slice in review (PR open) / non-blocking for M3**.
 
-The UI should let a reviewer select a prepared HR example or controlled text, choose/compare B0–B4, see what crosses the trust boundary, inspect actions/policy reasons, provider response, local reconstructed response and selected metrics.
+The UI lets a reviewer select a prepared HR example or controlled text, see what crosses the trust boundary before anything is sent, and receive the locally reconstructed answer. It consumes T20's real HTTP API — there is no fixture phase.
 
-Phase 1 can use safe T10 artifact/schema-driven fixtures. Phase 2 uses T20's real HTTP API.
+#### Delivered in the first slice
+
+The guided flow from `docs/advisor-demo.md`, steps 1–4:
+
+1. **Boas-vindas / Como funciona** — the three-step concept explanation;
+2. **Novo teste** — prepared example, `.txt`/`.md` upload, or pasted text, plus a natural-language task;
+3. **Revisão antes do envio** — what was detected, what stays local vs. what will be sent, per-category plain-language outcome and why;
+4. **Resultado** — the reconstructed answer, the `Local → Provedor externo → Local` trust-boundary path, and the protections applied.
+
+Supporting structure under `web/`:
+
+- `lib/contracts.ts` — TypeScript mirror of `application/wire.py`, pinned against the Python enum by a test that reads the Python source;
+- `lib/outcomes.ts` — the only place a category summary becomes user-facing text. **Fail-closed**: an outcome the UI does not recognize renders as "unknown — verify", never as protected/local. The local-vs-sent split is read from `crosses_trust_boundary`, never re-derived;
+- `lib/copy.ts` — all pt-BR copy in one module, structured so a second locale is an addition rather than a refactor;
+- `app/api/**` — thin Next.js proxy routes (`browser → web → API`), forwarding body and status unchanged and never logging either;
+- `app/globals.css` — semantic tokens with complete light and dark palettes.
+
+The primary path never requires knowing B0–B4: the UI simply omits `strategy`, so the API's `"recommended"` (policy-governed) default applies. A test pins that the compose screen renders no B0–B4 vocabulary and no treatment selector.
+
+#### Deliberately not in the first slice
+
+`Comparar estratégias` (the B0–B4 screen over `POST /disclosure/compare`), `Ver detalhes técnicos`, the English locale, `Histórico`, `Experimentos` and the `Configurações` area.
+
+#### Scientific state unchanged
+
+The UI adds no treatment, policy, corpus, oracle or metric semantics. It renders what the API returns and never decides what is safe.
 
 ### T25 / Issue #42 — containerized demo/deploy infrastructure
 

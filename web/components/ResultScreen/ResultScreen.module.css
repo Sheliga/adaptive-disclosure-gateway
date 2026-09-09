@@ -1,0 +1,91 @@
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  max-width: 42rem;
+  margin: 0 auto;
+  padding: 2.5rem 1.5rem;
+}
+
+.heading {
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.subheading {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.demoLabel {
+  padding: 0.5rem 0.9rem;
+  border-radius: 0.4rem;
+  background: var(--tone-unknown-surface);
+  color: var(--tone-unknown);
+  font-size: 0.85rem;
+  align-self: flex-start;
+}
+
+.finalAnswer {
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  background: var(--surface-raised);
+  white-space: pre-wrap;
+}
+
+.blocked,
+.providerFailed {
+  padding: 1rem;
+  border-radius: 0.6rem;
+}
+
+.blocked {
+  background: var(--tone-blocked-surface);
+  color: var(--tone-blocked);
+}
+
+.providerFailed {
+  background: var(--tone-sent-surface);
+  color: var(--tone-sent);
+}
+
+.path {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  list-style: none;
+  padding: 0;
+}
+
+.path li {
+  padding: 0.4rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+.path li + li::before {
+  content: "\2192";
+  margin-right: 0.75rem;
+  color: var(--text-muted);
+}
+
+.protectionsList {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.restartButton {
+  align-self: flex-start;
+  padding: 0.75rem 1.5rem;
+  border-radius: 0.5rem;
+  border: none;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+}

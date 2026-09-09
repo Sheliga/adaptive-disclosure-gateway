@@ -20,3 +20,29 @@ jobs:
         run: ruff check .
       - name: Test
         run: pytest --cov=adaptive_disclosure_gateway --cov-report=term-missing
+
+  # The advisor-facing demo UI (T21 / issue #29). A separate job rather than
+  # extra steps on `test` above: the two stacks share no toolchain, and a
+  # Python failure and a UI failure should be distinguishable at a glance.
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Test
+        run: npm test
+      - name: Build
+        run: npm run build
