@@ -1,9 +1,13 @@
 name: test
 
+# CI is intentionally reserved for the canonical integration boundary.
+# Feature/slice PRs target `develop` and are validated locally; only the
+# final `develop -> master` PR (and pushes to master) consume GitHub Actions.
 on:
   push:
     branches: [master]
   pull_request:
+    branches: [master]
 
 jobs:
   test:

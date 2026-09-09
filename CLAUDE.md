@@ -64,8 +64,35 @@ Before production code for a ticket:
 2. confirm it fails for the expected reason;
 3. implement the minimum change;
 4. run focused tests;
-5. run the complete suite;
-6. run `ruff check .` and `ruff format --check .`.
+5. run the complete suite locally;
+6. run `ruff check .` and `ruff format --check .` locally;
+7. if `web/` changed, also run `npm run lint`, `npm run typecheck`, `npm test` and `npm run build` from `web/` locally.
+
+PRs targeting `develop` deliberately do not run GitHub Actions. This changes where validation runs, not whether validation is required. A PR description/review must state which relevant local gates were run and their result.
+
+## Branching and CI
+
+`develop` is the long-lived integration branch for work that belongs to the feature currently under development. `master` remains the canonical completed state.
+
+Branch flow is mandatory unless the user explicitly directs otherwise:
+
+`feature/* (or fix/*, chore/*) → develop → master`
+
+Rules:
+
+- start new implementation branches from the latest `develop`, not from `master`;
+- every normal implementation PR targets `develop` while the current feature is incomplete;
+- do not retarget an individual feature/slice PR to `master` merely because that slice is reviewable or locally green;
+- merging a PR into `develop` means the slice is integrated into the in-progress feature; it does **not** mean the whole feature is canonical, released or complete;
+- GitHub Actions CI does **not** run for PRs targeting `develop`; authors/reviewers must rely on the mandatory local gates in the TDD section for those intermediate PRs;
+- when the full feature and its acceptance criteria are complete, open a single integration PR from `develop` to `master`;
+- the `develop → master` PR is the CI boundary: the complete GitHub Actions suite must run and be green before merge;
+- CI also runs on pushes to `master` as a post-integration safeguard;
+- never merge the final `develop → master` PR without explicit user authorization;
+- after the final PR is merged, synchronize `develop` to the new `master` before starting the next feature so the next feature begins from the canonical state;
+- direct feature PRs to `master` are not part of the normal workflow and require explicit user direction.
+
+This CI strategy exists to reduce repeated GitHub Actions consumption while preserving one full remote validation at the feature integration boundary.
 
 ## Workflow state
 
@@ -74,18 +101,21 @@ Use each system for one purpose:
 - **Trello** — priority and workflow state;
 - **GitHub Issue** — technical scope and acceptance criteria;
 - **ADR / experimental-design.md** — frozen architectural and experimental decisions;
-- **Pull Request** — candidate change under review;
+- **Pull Request to `develop`** — candidate slice/change under review for the current feature;
+- **develop** — integrated but potentially incomplete state of the current feature;
+- **Pull Request `develop → master`** — complete feature under final integration review and CI;
 - **master** — canonical implemented state.
 
-Do not treat `code implemented`, `tests green`, `PR open`, `merged`, and `completed` as synonyms.
+Do not treat `code implemented`, `tests green`, `PR open`, `merged into develop`, `merged into master`, and `completed` as synonyms.
 
 Expected flow:
 
 `Próximas → Em andamento → Validação → Concluído`
 
 - move a card to `Em andamento` when implementation actually starts;
-- move it to `Validação` when the implementation is in an open PR ready for review;
-- move it to `Concluído` only after the PR is merged and the Issue acceptance criteria are satisfied/closed;
+- move it to `Validação` when the relevant implementation is in an open PR ready for review;
+- merging an intermediate PR into `develop` does not by itself move the overall feature to `Concluído`;
+- move the feature to `Concluído` only after the final `develop → master` PR is merged and its acceptance criteria are satisfied/closed;
 - do not merge a PR or mark a Trello card complete without explicit user authorization;
 - before starting a new ticket, read the current Trello card, linked GitHub Issue and relevant authoritative docs instead of relying on stale session context;
 - when a review discovers a missing security/methodological invariant, update the active Issue/card acceptance criteria before calling the work complete.
