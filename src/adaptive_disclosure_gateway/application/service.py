@@ -81,21 +81,69 @@ under ``api/``, none of which touch ``preview``/``execute``'s own logic.
   ``describe_health`` never calls ``self._provider.generate`` (see its own
   docstring), and ``list_strategies`` is a pure passthrough to
   ``contracts.list_strategy_options``.
+
+``compare_strategies`` (T20 / issue #28's "Compare strategies" slice, issue
+#29/#41): runs the SAME content through every B0-B4 strategy and reports
+what each one would disclose. This is the "educational" surface, not an
+evaluation one -- see ``application/contracts.py``'s module docstring for
+the full no-oracle/no-scoring rationale.
+
+It is PREVIEW-based and must NEVER call a provider, for any strategy:
+
+- B0 -- Direct discloses the raw document unchanged (that is its whole
+  point as an experimental control, see
+  ``transformations/direct_disclosure.py``). *Executing* a comparison would
+  send the caller's unprotected document to the external provider merely to
+  illustrate a teaching point -- actively harmful once T22/#30 wires in a
+  real provider.
+- With ``FakeProvider``, the responses carry no task utility at all, so
+  executing adds nothing today and only creates that risk tomorrow.
+- Showing exactly what each strategy *would* send is the entire pedagogical
+  content of the comparison.
+
+An execute-based/utility-aware comparison is explicitly deferred, and would
+require both T22 and a deliberate decision about whether B0 may ever run
+against a real provider on user content.
+
+``compare_strategies`` calls ``self.preview`` once per treatment, in
+``contracts.CANONICAL_COMPARISON_ORDER`` (CLAUDE.md's canonical sequence,
+B0 -> B1 -> B2 -> B3 -> B4) -- never enum-definition order by accident, and
+never a different order per call. Each per-strategy request is built from
+the incoming one with ``dataclasses.replace(request, strategy=<treatment>)``
+so content/task/governance are byte-for-byte identical across entries --
+that identity is the entire point of a comparison. This reuses ``preview``
+rather than reimplementing or inlining the decision phase: the comparison
+IS n previews.
+
+All entries share this service's one vault (``self._vault``, see the
+vault-ownership note above), so a pseudonym for the same original is
+identical across the B2/B3/B4 entries. That is correct and desirable: it is
+the same vault every other call on this service instance shares, and a
+comparison run is not a special case.
+
+``StrategyComparisonEntry.unsafe_control_baseline`` is read from the
+existing ``pipeline.UnsafeControlTreatment`` capability marker via
+``isinstance`` -- exactly how ``pipeline.run_disclosure_case`` itself
+checks it -- never a hardcoded ``treatment is Treatment.DIRECT`` comparison.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from adaptive_disclosure_gateway.application.contracts import (
+    CANONICAL_COMPARISON_ORDER,
     DisclosureApplicationRequest,
     DisclosureExecution,
     DisclosurePreview,
     DisclosureStrategy,
     GovernanceOverrides,
     ProviderMode,
+    StrategyComparison,
+    StrategyComparisonEntry,
     StrategyOption,
     list_strategy_options,
     resolve_treatment,
@@ -119,6 +167,7 @@ from adaptive_disclosure_gateway.domain import DisclosureRequest, GovernanceCont
 from adaptive_disclosure_gateway.observability import elapsed_ms_since, get_tracer
 from adaptive_disclosure_gateway.pipeline import (
     DisclosureDecision,
+    UnsafeControlTreatment,
     decide_disclosure,
     run_disclosure_case,
 )
@@ -324,6 +373,44 @@ class DisclosureApplicationService:
                 governance=safe_governance_view(context),
                 total_ms=total_ms,
             )
+
+    def compare_strategies(self, request: DisclosureApplicationRequest) -> StrategyComparison:
+        """Run ``request`` through every B0-B4 strategy via ``preview`` --
+        never the provider -- in ``CANONICAL_COMPARISON_ORDER``. See the
+        module docstring for the full design rationale.
+        """
+        recommended_treatment = resolve_treatment(DisclosureStrategy.RECOMMENDED)
+        # request.strategy plays no role in _build_disclosure_request (it
+        # only reads content/task/governance), so this single call already
+        # produces the governance view/provider mode identical to what every
+        # per-strategy preview() below computes for itself.
+        _, context = self._build_disclosure_request(request)
+        governance = safe_governance_view(context)
+        provider_mode = ProviderMode(provider_class=self._provider.provider_class)
+
+        entries = []
+        for strategy in CANONICAL_COMPARISON_ORDER:
+            per_strategy_request = dataclasses.replace(request, strategy=strategy)
+            preview = self.preview(per_strategy_request)
+            # Built only for its capability marker (unsafe_control_baseline
+            # below) -- never used to reimplement any part of the decision
+            # phase, which preview() above already ran in full.
+            _, treatment = self._build_treatment(per_strategy_request)
+            entries.append(
+                StrategyComparisonEntry(
+                    strategy=strategy,
+                    treatment=preview.treatment,
+                    recommended=preview.treatment == recommended_treatment,
+                    unsafe_control_baseline=isinstance(treatment, UnsafeControlTreatment),
+                    summary=preview.summary,
+                    external_payload=preview.external_payload,
+                    payload_byte_count=preview.payload_byte_count,
+                )
+            )
+
+        return StrategyComparison(
+            entries=tuple(entries), governance=governance, provider_mode=provider_mode
+        )
 
     def list_examples(self) -> tuple[ExampleSummary, ...]:
         """Convenience passthrough to ``examples.list_examples`` bound to

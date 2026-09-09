@@ -30,6 +30,44 @@ UI (how long the whole use case took, start to finish). It is explicitly
 NOT the T10 scientific latency metric (``experiments/stage_timing.py``,
 which requires the exact span-topology proof T10 relies on) and must never
 be used as one.
+
+``StrategyComparisonEntry``/``StrategyComparison`` (T20 / issue #28's
+"Compare strategies" slice, issue #29/#41): the educational surface that
+runs the SAME content through every B0-B4 strategy and shows what each one
+would disclose.
+
+This comparison is PREVIEW-based and must NEVER call a provider, for any
+strategy -- see ``service.compare_strategies``'s own docstring for the full
+reasoning (in short: B0 -- Direct discloses the raw document unchanged by
+design, so *executing* a comparison would send the caller's unprotected
+document to an external provider merely to illustrate a teaching point;
+with ``FakeProvider`` the responses carry no task utility at all today, so
+executing adds nothing now and only creates that risk once T22/#30 wires in
+a real provider). Showing exactly what each strategy *would* send is the
+entire pedagogical content of the comparison. An execute-based/
+utility-aware comparison is explicitly deferred, and would require both
+T22 and a deliberate decision about whether B0 may ever run against a real
+provider on user content.
+
+This is also NOT an evaluation surface: it never imports
+``experiments.scoring``, never touches the oracle, never computes
+conformance/exposure/unnecessary-disclosure or any T10 metric, and never
+ranks/scores/declares a "best" strategy -- it reports facts each preview
+already produced. The only judgment it expresses is the pre-existing
+``recommended`` flag ``list_strategy_options`` already documents as a
+product/UX default, not a scientific claim. No aggregate counts, ratios,
+deltas or "protection score" are added here -- a UI that wants those can
+already derive them from ``summary.categories`` on each entry.
+
+``StrategyComparisonEntry.strategy`` is always one of the five explicit
+``b0``-``b4`` values, never ``DisclosureStrategy.RECOMMENDED`` --
+``recommended`` is a separate boolean precisely so ``RECOMMENDED`` (a
+sentinel meaning "resolve this for me") never needs to appear as a value
+alongside the four explicit strategies it could resolve to.
+``unsafe_control_baseline`` is derived from the existing
+``pipeline.UnsafeControlTreatment`` capability marker -- never a hardcoded
+comparison against ``Treatment.DIRECT`` -- so it stays correct if a future
+treatment ever gained the same marker.
 """
 
 from __future__ import annotations
@@ -87,6 +125,23 @@ def resolve_treatment(strategy: DisclosureStrategy) -> Treatment:
     ``RECOMMENDED`` maps to ``Treatment.POLICY_GOVERNED``.
     """
     return _STRATEGY_TO_TREATMENT[strategy]
+
+
+# CLAUDE.md's canonical treatment sequence, Direct -> Static Sanitization ->
+# Reversible Pseudonymization -> Task-aware -> Policy-governed, expressed as
+# an explicit, named tuple of the five explicit DisclosureStrategy values
+# (never RECOMMENDED) -- deliberately NOT `tuple(DisclosureStrategy)` (whose
+# declaration order happens to put RECOMMENDED first and would silently
+# change if that enum's declaration order ever did) and not derived from
+# Treatment's own declaration order either. `service.compare_strategies`
+# iterates this tuple, and only this tuple, to decide entry order.
+CANONICAL_COMPARISON_ORDER: tuple[DisclosureStrategy, ...] = (
+    DisclosureStrategy.DIRECT,
+    DisclosureStrategy.STATIC_SANITIZATION,
+    DisclosureStrategy.REVERSIBLE_PSEUDONYMIZATION,
+    DisclosureStrategy.TASK_AWARE,
+    DisclosureStrategy.POLICY_GOVERNED,
+)
 
 
 @dataclass(frozen=True)
@@ -268,3 +323,40 @@ class DisclosureExecution:
     strategy: DisclosureStrategy
     governance: SafeGovernanceView
     total_ms: float
+
+
+@dataclass(frozen=True)
+class StrategyComparisonEntry:
+    """One strategy's preview within a ``StrategyComparison`` -- see the
+    module docstring's "Compare strategies" section.
+
+    ``strategy`` is always an explicit ``b0``-``b4`` value, never
+    ``DisclosureStrategy.RECOMMENDED``. ``recommended`` is ``True`` only for
+    the one entry whose ``treatment`` is the treatment
+    ``DisclosureStrategy.RECOMMENDED`` currently resolves to.
+    ``unsafe_control_baseline`` is ``True`` only for the entry produced by a
+    treatment implementing ``pipeline.UnsafeControlTreatment`` -- today only
+    B0 -- Direct.
+    """
+
+    strategy: DisclosureStrategy
+    treatment: Treatment
+    recommended: bool
+    unsafe_control_baseline: bool
+    summary: DisclosureSummary
+    external_payload: str
+    payload_byte_count: int
+
+
+@dataclass(frozen=True)
+class StrategyComparison:
+    """The full "compare strategies" result: one ``StrategyComparisonEntry``
+    per B0-B4 strategy, in ``CANONICAL_COMPARISON_ORDER``, plus the
+    governance view and provider mode shared identically by every entry
+    (content/task/governance are byte-for-byte identical across entries by
+    construction -- see ``service.compare_strategies``).
+    """
+
+    entries: tuple[StrategyComparisonEntry, ...]
+    governance: SafeGovernanceView
+    provider_mode: ProviderMode

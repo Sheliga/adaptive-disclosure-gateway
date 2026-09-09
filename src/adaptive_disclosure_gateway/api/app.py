@@ -65,23 +65,16 @@ from adaptive_disclosure_gateway.application.examples import ExampleNotFoundErro
 from adaptive_disclosure_gateway.application.ingestion import IngestionError
 from adaptive_disclosure_gateway.application.requests import ContentSourceError, MissingTaskError
 from adaptive_disclosure_gateway.application.service import DisclosureApplicationService
-from adaptive_disclosure_gateway.policies import PolicyRepository
-from adaptive_disclosure_gateway.providers import FakeProvider
 
 
 def _build_default_service() -> DisclosureApplicationService:
     """The default demo service ``create_app()`` builds when no service is
-    injected: the real policy repository and HR pilot examples from this
-    checkout, a deterministic ``FakeProvider`` (issue #29 requires this be
-    clearly labeled -- see ``GET /health``'s ``deterministic_demo_mode``),
-    and a documented default ``GovernanceContext``. See ``api/settings.py``.
+    injected. Delegates to ``application.settings.build_default_service`` --
+    the CLI adapter (``cli.py``) builds the identical default service the
+    same way, so this must not become a second, independently-maintained
+    copy of that construction. See ``application/settings.py``.
     """
-    return DisclosureApplicationService(
-        policy_repository=PolicyRepository.from_directory(api_settings.policy_directory()),
-        provider=FakeProvider(),
-        default_context=api_settings.default_governance_context(),
-        examples_directory=api_settings.examples_directory(),
-    )
+    return api_settings.build_default_service()
 
 
 def _get_service(request: Request) -> DisclosureApplicationService:
@@ -216,6 +209,27 @@ def create_app(
 
         preview = service.preview(application_request)
         content = schemas.PreviewResponse.from_domain(preview).model_dump()
+        return JSONResponse(status_code=200, content=content)
+
+    @app.post("/disclosure/compare", response_model=None)
+    def compare_disclosure(body: schemas.DisclosureRequestBody, request: Request) -> JSONResponse:
+        """Run the SAME content through every B0-B4 strategy
+        (``service.compare_strategies``) and return all five previews side
+        by side -- never a provider call, for any of them.
+
+        ``body.strategy`` is deliberately ignored here: unlike
+        ``/disclosure/preview``/``/disclosure/execute``, where it selects
+        which single strategy to run, a comparison always covers all five
+        regardless of what a caller supplied for it. This route still
+        accepts the same shared ``DisclosureRequestBody`` (rather than a
+        second, near-identical schema) so a client can point one existing
+        request payload at either endpoint.
+        """
+        service = _get_service(request)
+        application_request = _application_request_from(service, body)
+
+        comparison = service.compare_strategies(application_request)
+        content = schemas.CompareResponse.from_domain(comparison).model_dump()
         return JSONResponse(status_code=200, content=content)
 
     @app.post("/disclosure/execute", response_model=None)
