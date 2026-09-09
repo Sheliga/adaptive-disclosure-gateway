@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import type { ReactNode } from "react";
 
 import { THEME_BOOTSTRAP_SCRIPT } from "@/lib/theme";
 
@@ -10,7 +11,20 @@ export const metadata: Metadata = {
     "Demonstração guiada do Adaptive Disclosure Gateway: veja o que permanece local, o que é enviado a um provedor externo e o que é reconstruído localmente.",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+/**
+ * Props are declared explicitly rather than using Next's generated global
+ * `LayoutProps<"/">`. That global lives in `.next/types`, which only exists
+ * after a build or an explicit `next typegen`, so depending on it makes
+ * `tsc --noEmit` fail on any clean checkout that has not built yet --
+ * exactly what happened on CI, where typecheck runs before build. The root
+ * layout has no dynamic route segments, so `children` is the whole of what
+ * the generated type would have provided anyway.
+ */
+interface RootLayoutProps {
+  children: ReactNode;
+}
+
+export default function RootLayout({ children }: RootLayoutProps) {
   return (
     <html lang="pt-BR">
       <head>
