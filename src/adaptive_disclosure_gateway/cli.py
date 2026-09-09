@@ -64,6 +64,19 @@ be logged, captured in a screen share, or scrolled back into shell history
 in a way an HTTP JSON response body is not, so this adapter makes the
 human-readable rendering opt-in rather than dumping it by default. ``--json``
 output always includes it, matching the HTTP contract exactly.
+
+``compare`` (T20 / issue #28's "Compare strategies" slice) runs the SAME
+content through every B0-B4 strategy via ``service.compare_strategies`` --
+never the provider, for any of them -- and prints all five side by side. It
+shares every argument ``preview``/``execute`` accept (content source, task,
+governance overrides, ``--json``, ``--show-payload``) via
+``_add_disclosure_arguments``, except ``--strategy``: a comparison always
+covers all five strategies regardless of what a caller would have picked,
+so ``compare`` does not advertise a flag whose value it would silently
+ignore. ``--show-payload`` matters even more here than for ``preview``:
+B0's own entry is the raw input document (see the module-level no-leak
+note above and ``tests/test_compare_no_leak.py``'s dedicated pin), so it
+stays behind the same opt-in gate as every other entry's payload.
 """
 
 from __future__ import annotations
@@ -79,6 +92,7 @@ from adaptive_disclosure_gateway.application.contracts import (
     DisclosurePreview,
     DisclosureStrategy,
     GovernanceOverrides,
+    StrategyComparison,
     StrategyOption,
 )
 from adaptive_disclosure_gateway.application.examples import ExampleNotFoundError, ExampleSummary
@@ -186,15 +200,24 @@ def _add_json_argument(parser: argparse.ArgumentParser, *, suppress_default: boo
     )
 
 
-def _add_disclosure_arguments(parser: argparse.ArgumentParser) -> None:
+def _add_disclosure_arguments(
+    parser: argparse.ArgumentParser, *, include_strategy: bool = True
+) -> None:
+    # include_strategy=False for `compare` (see its subparser below and the
+    # module docstring): a comparison always covers all five B0-B4
+    # strategies, so advertising a --strategy flag there would suggest it
+    # selects one, when in fact any value would be silently overwritten per
+    # entry by service.compare_strategies. preview/execute, which each run
+    # exactly one strategy, keep the flag.
     _add_json_argument(parser, suppress_default=True)
     _add_content_source_arguments(parser)
     parser.add_argument("--task", help="the task the disclosed content is for")
-    parser.add_argument(
-        "--strategy",
-        choices=[strategy.value for strategy in DisclosureStrategy],
-        default=DisclosureStrategy.RECOMMENDED.value,
-    )
+    if include_strategy:
+        parser.add_argument(
+            "--strategy",
+            choices=[strategy.value for strategy in DisclosureStrategy],
+            default=DisclosureStrategy.RECOMMENDED.value,
+        )
     _add_governance_arguments(parser)
     parser.add_argument(
         "--show-payload",
@@ -231,6 +254,13 @@ def build_parser() -> argparse.ArgumentParser:
         "execute", help="run the request through the real pipeline, provider call included"
     )
     _add_disclosure_arguments(execute_parser)
+
+    compare_parser = subparsers.add_parser(
+        "compare",
+        help="run the SAME content through every B0-B4 strategy as a preview; never calls "
+        "the provider",
+    )
+    _add_disclosure_arguments(compare_parser, include_strategy=False)
 
     return parser
 
@@ -275,13 +305,20 @@ def _build_application_request(service: DisclosureApplicationService, args: argp
             ) from None
         filename = args.file.name
 
+    # `compare`'s own subparser never declares --strategy (see
+    # _add_disclosure_arguments); the strategy on the request built here is
+    # immediately overwritten per entry by service.compare_strategies, so
+    # RECOMMENDED as a default is inert for that command and only matters
+    # for preview/execute, which always have the real parsed value.
+    strategy_value = getattr(args, "strategy", DisclosureStrategy.RECOMMENDED.value)
+
     return service.build_application_request(
         text=args.text,
         filename=filename,
         file_bytes=file_bytes,
         example_id=args.example,
         task=args.task,
-        strategy=DisclosureStrategy(args.strategy),
+        strategy=DisclosureStrategy(strategy_value),
         governance=_governance_overrides_from_args(args),
     )
 
@@ -331,6 +368,31 @@ def _print_preview_human(preview: DisclosurePreview, *, show_payload: bool) -> N
     if show_payload:
         print("external_payload:")
         print(preview.external_payload)
+
+
+def _print_compare_human(comparison: StrategyComparison, *, show_payload: bool) -> None:
+    for entry in comparison.entries:
+        markers = []
+        if entry.recommended:
+            markers.append("recommended")
+        if entry.unsafe_control_baseline:
+            markers.append("UNSAFE CONTROL BASELINE -- sends everything unchanged")
+        marker_suffix = f"  ({', '.join(markers)})" if markers else ""
+        print(f"=== {entry.strategy.value} -> {entry.treatment.value}{marker_suffix} ===")
+        print(f"status: {entry.summary.status}")
+        print(f"payload_byte_count: {entry.payload_byte_count}")
+        print("categories:")
+        if not entry.summary.categories:
+            print("  (none detected)")
+        for category in entry.summary.categories:
+            print(
+                f"  - {category.category}: {category.outcome.value} "
+                f"(crosses_trust_boundary={category.crosses_trust_boundary})"
+            )
+        if show_payload:
+            print("external_payload:")
+            print(entry.external_payload)
+        print()
 
 
 def _print_execute_human(execution: DisclosureExecution) -> None:
@@ -385,6 +447,16 @@ def _cmd_preview(service: DisclosureApplicationService, args: argparse.Namespace
     return EXIT_OK
 
 
+def _cmd_compare(service: DisclosureApplicationService, args: argparse.Namespace) -> int:
+    request = _build_application_request(service, args)
+    comparison = service.compare_strategies(request)
+    if args.json:
+        print(wire.CompareResponse.from_domain(comparison).model_dump_json(indent=2))
+    else:
+        _print_compare_human(comparison, show_payload=args.show_payload)
+    return EXIT_OK
+
+
 def _cmd_execute(service: DisclosureApplicationService, args: argparse.Namespace) -> int:
     request = _build_application_request(service, args)
     execution = service.execute(request)
@@ -401,6 +473,7 @@ _COMMAND_HANDLERS = {
     "strategies": _cmd_strategies,
     "preview": _cmd_preview,
     "execute": _cmd_execute,
+    "compare": _cmd_compare,
 }
 
 

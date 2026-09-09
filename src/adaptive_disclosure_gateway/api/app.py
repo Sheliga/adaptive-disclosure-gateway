@@ -211,6 +211,27 @@ def create_app(
         content = schemas.PreviewResponse.from_domain(preview).model_dump()
         return JSONResponse(status_code=200, content=content)
 
+    @app.post("/disclosure/compare", response_model=None)
+    def compare_disclosure(body: schemas.DisclosureRequestBody, request: Request) -> JSONResponse:
+        """Run the SAME content through every B0-B4 strategy
+        (``service.compare_strategies``) and return all five previews side
+        by side -- never a provider call, for any of them.
+
+        ``body.strategy`` is deliberately ignored here: unlike
+        ``/disclosure/preview``/``/disclosure/execute``, where it selects
+        which single strategy to run, a comparison always covers all five
+        regardless of what a caller supplied for it. This route still
+        accepts the same shared ``DisclosureRequestBody`` (rather than a
+        second, near-identical schema) so a client can point one existing
+        request payload at either endpoint.
+        """
+        service = _get_service(request)
+        application_request = _application_request_from(service, body)
+
+        comparison = service.compare_strategies(application_request)
+        content = schemas.CompareResponse.from_domain(comparison).model_dump()
+        return JSONResponse(status_code=200, content=content)
+
     @app.post("/disclosure/execute", response_model=None)
     def execute_disclosure(body: schemas.DisclosureRequestBody, request: Request) -> JSONResponse:
         service = _get_service(request)

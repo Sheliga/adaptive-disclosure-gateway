@@ -35,6 +35,7 @@ from adaptive_disclosure_gateway.application.contracts import (
 from adaptive_disclosure_gateway.application.wire import (
     CONTRACT_VERSION,
     CategoryDisclosureSummaryModel,
+    CompareResponse,
     DisclosureSummaryModel,
     ErrorResponse,
     ExamplesResponse,
@@ -48,6 +49,7 @@ from adaptive_disclosure_gateway.application.wire import (
     ReconstructionStageModel,
     SafeGovernanceViewModel,
     StrategiesResponse,
+    StrategyComparisonEntryModel,
     StrategyInfoModel,
 )
 from adaptive_disclosure_gateway.domain import PseudonymScope
@@ -55,6 +57,7 @@ from adaptive_disclosure_gateway.domain import PseudonymScope
 __all__ = [
     "CONTRACT_VERSION",
     "CategoryDisclosureSummaryModel",
+    "CompareResponse",
     "DisclosureRequestBody",
     "DisclosureSummaryModel",
     "ErrorResponse",
@@ -70,6 +73,7 @@ __all__ = [
     "ReconstructionStageModel",
     "SafeGovernanceViewModel",
     "StrategiesResponse",
+    "StrategyComparisonEntryModel",
     "StrategyInfoModel",
     "ValidationErrorItem",
     "ValidationErrorResponse",

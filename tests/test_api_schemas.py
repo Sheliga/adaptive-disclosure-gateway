@@ -117,6 +117,24 @@ def test_execute_response_field_sets_are_explicit():
     }
 
 
+def test_compare_response_field_sets_are_explicit():
+    assert set(schemas.CompareResponse.model_fields) == {
+        "contract_version",
+        "entries",
+        "governance",
+        "provider_mode",
+    }
+    assert set(schemas.StrategyComparisonEntryModel.model_fields) == {
+        "strategy",
+        "treatment",
+        "recommended",
+        "unsafe_control_baseline",
+        "summary",
+        "external_payload",
+        "payload_byte_count",
+    }
+
+
 def test_error_response_field_sets_are_explicit():
     assert set(schemas.ErrorResponse.model_fields) == {"detail", "kind"}
     assert set(schemas.ValidationErrorResponse.model_fields) == {"detail"}
@@ -170,6 +188,8 @@ def test_every_response_model_forbids_extra_fields():
         schemas.ProviderStageModel,
         schemas.ReconstructionStageModel,
         schemas.ExecuteResponse,
+        schemas.StrategyComparisonEntryModel,
+        schemas.CompareResponse,
         schemas.ErrorResponse,
         schemas.ValidationErrorItem,
         schemas.ValidationErrorResponse,

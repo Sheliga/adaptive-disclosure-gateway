@@ -47,6 +47,17 @@ Request-specific schemas (``GovernanceOverridesBody``, ``DisclosureRequestBody``
 here: they describe an HTTP request body / FastAPI's own validation-failure
 shape, which the CLI does not have -- argparse validates CLI input its own
 way.
+
+``StrategyComparisonEntryModel``/``CompareResponse`` (T20 / issue #28's
+"Compare strategies" slice) are the wire projection of
+``application.contracts.StrategyComparisonEntry``/``StrategyComparison`` --
+see that module's docstring for the full design. They reuse
+``DisclosureSummaryModel``/``SafeGovernanceViewModel``/``ProviderModeModel``
+verbatim rather than redefining an equivalent shape, exactly like
+``PreviewResponse`` already does. Adding these does not change
+``CONTRACT_VERSION``: it identifies existing response shapes, none of which
+changed -- a new response model is an addition, not an incompatible change
+to any shape a client already depends on.
 """
 
 from __future__ import annotations
@@ -61,6 +72,8 @@ from adaptive_disclosure_gateway.application.contracts import (
     DisclosurePreview,
     DisclosureSummary,
     SafeGovernanceView,
+    StrategyComparison,
+    StrategyComparisonEntry,
     StrategyOption,
 )
 from adaptive_disclosure_gateway.application.examples import ExampleSummary
@@ -374,6 +387,53 @@ class ExecuteResponse(BaseModel):
             strategy=execution.strategy.value,
             governance=SafeGovernanceViewModel.from_domain(execution.governance),
             total_ms=execution.total_ms,
+        )
+
+
+# --- POST /disclosure/compare ---------------------------------------------------
+
+
+class StrategyComparisonEntryModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    strategy: str
+    treatment: str
+    recommended: bool
+    unsafe_control_baseline: bool
+    summary: DisclosureSummaryModel
+    external_payload: str
+    payload_byte_count: int
+
+    @classmethod
+    def from_domain(cls, entry: StrategyComparisonEntry) -> StrategyComparisonEntryModel:
+        return cls(
+            strategy=entry.strategy.value,
+            treatment=entry.treatment.value,
+            recommended=entry.recommended,
+            unsafe_control_baseline=entry.unsafe_control_baseline,
+            summary=DisclosureSummaryModel.from_domain(entry.summary),
+            external_payload=entry.external_payload,
+            payload_byte_count=entry.payload_byte_count,
+        )
+
+
+class CompareResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: str
+    entries: list[StrategyComparisonEntryModel]
+    governance: SafeGovernanceViewModel
+    provider_mode: ProviderModeModel
+
+    @classmethod
+    def from_domain(cls, comparison: StrategyComparison) -> CompareResponse:
+        return cls(
+            contract_version=CONTRACT_VERSION,
+            entries=[
+                StrategyComparisonEntryModel.from_domain(entry) for entry in comparison.entries
+            ],
+            governance=SafeGovernanceViewModel.from_domain(comparison.governance),
+            provider_mode=ProviderModeModel(provider_class=comparison.provider_mode.provider_class),
         )
 
 
