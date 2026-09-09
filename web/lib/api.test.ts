@@ -1,21 +1,200 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { executeDisclosure, getExamples, getHealth, previewDisclosure } from "./api";
+import { CONTRACT_VERSION } from "./contracts";
+import type {
+  CategoryDisclosureSummary,
+  ExamplesResponse,
+  ExecuteResponse,
+  HealthResponse,
+  PreviewResponse,
+} from "./contracts";
 import { copy } from "./copy";
+
+/**
+ * Fixtures below are COMPLETE, contract-faithful bodies -- every field
+ * `application/wire.py` declares, with the type it declares. That is
+ * deliberate: the point of these tests is that an incomplete body is
+ * rejected, so a fixture that is itself incomplete would silently stop
+ * testing anything.
+ */
+
+function healthBody(): HealthResponse {
+  return {
+    status: "ok",
+    contract_version: CONTRACT_VERSION,
+    provider: {
+      provider_class: "FakeProvider",
+      model_id: "fake-1",
+      model_snapshot: "2026-01-01",
+      deterministic_demo_mode: true,
+    },
+    treatments_available: ["b0", "b1", "b2", "b3", "b4"],
+  };
+}
+
+function examplesBody(): ExamplesResponse {
+  return {
+    contract_version: CONTRACT_VERSION,
+    examples: [
+      {
+        example_id: "hr_team_summary_001",
+        title: "hr_team_summary_001",
+        domain: "hr",
+        purpose: "team_summary",
+        task: "Resuma a equipe.",
+        character_count: 400,
+      },
+    ],
+  };
+}
+
+function categoryBody(
+  overrides: Partial<CategoryDisclosureSummary> = {},
+): CategoryDisclosureSummary {
+  return {
+    category: "employee_name",
+    outcome: "pseudonymized",
+    action: "pseudonymize",
+    crosses_trust_boundary: true,
+    occurrence_count: 1,
+    required_for_task: null,
+    technical_reason: "policy hr-v1 rule",
+    policy_version: "hr-v1",
+    policy_restricted: null,
+    impossible_under_policy: null,
+    ...overrides,
+  };
+}
+
+function previewBody(): PreviewResponse {
+  return {
+    contract_version: CONTRACT_VERSION,
+    summary: {
+      status: "allowed",
+      categories: [categoryBody()],
+      detected_span_count: 1,
+      detected_categories: ["employee_name"],
+    },
+    external_payload: "conteudo transformado",
+    payload_byte_count: 21,
+    treatment: "b4",
+    strategy: "recommended",
+    governance: {
+      domain: "hr",
+      purpose: "team_summary",
+      policy_version: "hr-v1",
+      provider_class: "FakeProvider",
+      requester_role: null,
+      requested_pseudonym_scope: "session",
+    },
+    provider_mode: { provider_class: "FakeProvider" },
+  };
+}
+
+function executeBody(): ExecuteResponse {
+  return {
+    contract_version: CONTRACT_VERSION,
+    status: "allowed",
+    summary: previewBody().summary,
+    final_answer: "Resposta final reconstruída localmente.",
+    provider: {
+      called: true,
+      provider_class: "FakeProvider",
+      model_id: "fake-1",
+      model_snapshot: "2026-01-01",
+      decoding_config: null,
+      transmitted_bytes: 21,
+      response_hash: "hash",
+      failed: false,
+      failure_kind: null,
+    },
+    reconstruction: {
+      attempted: true,
+      reconstructed_hash: "hash2",
+      changed_from_provider_response: false,
+    },
+    treatment: "b4",
+    strategy: "recommended",
+    governance: previewBody().governance,
+    total_ms: 42,
+  };
+}
+
+/**
+ * A loose, deliberately-mutable view of a decoded body. Corrupting a
+ * fixture goes through this rather than through the real contract type --
+ * the whole point is to build a body the contract type FORBIDS, which a
+ * correctly-typed draft could not express.
+ */
+interface Draft {
+  [key: string]: unknown;
+}
+
+function draftOf(body: object): Draft {
+  return JSON.parse(JSON.stringify(body)) as Draft;
+}
+
+function nested(draft: Draft, key: string): Draft {
+  return draft[key] as Draft;
+}
+
+function firstCategory(draft: Draft): Draft {
+  return (nested(draft, "summary")["categories"] as Draft[])[0];
+}
+
+function stub200(body: unknown): void {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body), { status: 200 })));
+}
 
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
 describe("getHealth / getExamples — success", () => {
-  it("returns ok:true with the parsed body on 200", async () => {
-    const payload = { status: "ok", contract_version: "t20-application-api-v1" };
+  it("returns ok:true with the parsed body on a 200 that satisfies the whole contract", async () => {
+    const payload = healthBody();
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), { status: 200 })),
     );
 
     const result = await getHealth();
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data).toEqual(payload);
+    }
+  });
+
+  it("rejects a 200 /health body missing the provider block the UI reads", async () => {
+    // Regression: this partial body used to be accepted as `ok: true`, which
+    // let `health.provider.deterministic_demo_mode` be read off `undefined`.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ status: "ok", contract_version: CONTRACT_VERSION }), {
+          status: 200,
+        }),
+      ),
+    );
+
+    const result = await getHealth();
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toBe(copy.errors.generic);
+    }
+  });
+
+  it("returns ok:true for a fully valid /examples body", async () => {
+    const payload = examplesBody();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), { status: 200 })),
+    );
+
+    const result = await getExamples();
 
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -181,5 +360,324 @@ describe("error mapping — fails closed on anything unrecognized", () => {
     if (!result.ok) {
       expect(result.error.message).toBe(copy.errors.generic);
     }
+  });
+});
+
+/**
+ * The 200-response contract gate.
+ *
+ * These are the regressions for the defect this suite previously had no
+ * coverage for: `requestJson` used to end in `(await response.json()) as T`,
+ * a compile-time-only assertion. Any JSON body that happened to arrive with
+ * a 200 reached the React tree wearing the contract's type, so a MISSING
+ * field read as `undefined` -- and `undefined` is falsy, which is the exact
+ * direction that turns "this crossed the trust boundary" into "this stayed
+ * local" in `ReviewScreen`'s split.
+ *
+ * Every case below is a 200. The status code is never the thing under test;
+ * the body's structure is.
+ */
+describe("200 response validation — preview fails closed on a broken contract", () => {
+  it("accepts a preview body that satisfies the whole contract", async () => {
+    const body = previewBody();
+    stub200(body);
+
+    const result = await previewDisclosure({ text: "x" });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data).toEqual(body);
+    }
+  });
+
+  it("rejects a 200 whose category is MISSING crosses_trust_boundary", async () => {
+    // The dangerous direction: absent reads as `undefined`, which is falsy,
+    // so the review screen would file this category under "stays local".
+    const draft = draftOf(previewBody());
+    delete firstCategory(draft)["crosses_trust_boundary"];
+    stub200(draft);
+
+    const result = await previewDisclosure({ text: "x" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toBe(copy.errors.generic);
+    }
+  });
+
+  it("rejects a 200 whose crosses_trust_boundary is the STRING \"false\"", async () => {
+    // The opposite direction, equally wrong: a truthy string would file a
+    // local-only category under "was sent to the provider". Either way the
+    // UI must not guess -- only a real boolean is the authoritative flag.
+    const draft = draftOf(previewBody());
+    firstCategory(draft)["crosses_trust_boundary"] = "false";
+    stub200(draft);
+
+    const result = await previewDisclosure({ text: "x" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toBe(copy.errors.generic);
+    }
+  });
+
+  it("rejects a 200 whose crosses_trust_boundary is the STRING \"true\"", async () => {
+    const draft = draftOf(previewBody());
+    firstCategory(draft)["crosses_trust_boundary"] = "true";
+    stub200(draft);
+
+    expect((await previewDisclosure({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a 200 whose summary.status is a value this UI does not know", async () => {
+    // `status` gates the confirm button. Anything that is not exactly
+    // "allowed" or "blocked" must never be treated as permission to send:
+    // an unknown status is not `blocked`, so `isBlocked` would be false and
+    // the confirm-and-send button would render.
+    const draft = draftOf(previewBody());
+    nested(draft, "summary")["status"] = "partially_allowed";
+    stub200(draft);
+
+    const result = await previewDisclosure({ text: "x" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toBe(copy.errors.generic);
+    }
+  });
+
+  it("rejects a 200 whose summary.status is missing entirely", async () => {
+    const draft = draftOf(previewBody());
+    delete nested(draft, "summary")["status"];
+    stub200(draft);
+
+    expect((await previewDisclosure({ text: "x" })).ok).toBe(false);
+  });
+
+  it("still accepts a blocked summary — blocked is a valid contract state", async () => {
+    const draft = draftOf(previewBody());
+    nested(draft, "summary")["status"] = "blocked";
+    stub200(draft);
+
+    expect((await previewDisclosure({ text: "x" })).ok).toBe(true);
+  });
+
+  it("rejects a 200 whose summary.categories is not an array", async () => {
+    const draft = draftOf(previewBody());
+    nested(draft, "summary")["categories"] = { employee_name: "pseudonymized" };
+    stub200(draft);
+
+    expect((await previewDisclosure({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a 200 whose summary is missing altogether", async () => {
+    const draft = draftOf(previewBody());
+    delete draft["summary"];
+    stub200(draft);
+
+    expect((await previewDisclosure({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a 200 whose category is missing its outcome", async () => {
+    const draft = draftOf(previewBody());
+    delete firstCategory(draft)["outcome"];
+    stub200(draft);
+
+    expect((await previewDisclosure({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a 200 whose external_payload is not a string", async () => {
+    const draft = draftOf(previewBody());
+    draft["external_payload"] = { redacted: true };
+    stub200(draft);
+
+    expect((await previewDisclosure({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a 200 whose payload_byte_count is not a number", async () => {
+    const draft = draftOf(previewBody());
+    draft["payload_byte_count"] = "21";
+    stub200(draft);
+
+    expect((await previewDisclosure({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a 200 carrying a contract_version this UI was not written against", async () => {
+    const draft = draftOf(previewBody());
+    draft["contract_version"] = "t99-some-future-contract";
+    stub200(draft);
+
+    expect((await previewDisclosure({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a 200 that is a JSON array rather than an object", async () => {
+    stub200([previewBody()]);
+
+    expect((await previewDisclosure({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a 200 that is JSON null", async () => {
+    stub200(null);
+
+    expect((await previewDisclosure({ text: "x" })).ok).toBe(false);
+  });
+});
+
+describe("200 response validation — execute fails closed on a broken contract", () => {
+  it("accepts an execute body that satisfies the whole contract", async () => {
+    const body = executeBody();
+    stub200(body);
+
+    const result = await executeDisclosure({ text: "x" });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data).toEqual(body);
+    }
+  });
+
+  it("rejects a 200 whose provider block is missing", async () => {
+    // `ResultScreen` reads `execute.provider.failed` unconditionally.
+    const draft = draftOf(executeBody());
+    delete draft["provider"];
+    stub200(draft);
+
+    const result = await executeDisclosure({ text: "x" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toBe(copy.errors.generic);
+    }
+  });
+
+  it("rejects a 200 whose provider.failed is missing", async () => {
+    // Absent reads as `undefined` -> falsy -> "the provider call succeeded",
+    // and the screen would render `final_answer` as a real completion.
+    const draft = draftOf(executeBody());
+    delete nested(draft, "provider")["failed"];
+    stub200(draft);
+
+    expect((await executeDisclosure({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a 200 whose provider.failed is the STRING \"false\"", async () => {
+    const draft = draftOf(executeBody());
+    nested(draft, "provider")["failed"] = "false";
+    stub200(draft);
+
+    expect((await executeDisclosure({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a 200 whose provider.failure_kind is neither a string nor null", async () => {
+    const draft = draftOf(executeBody());
+    nested(draft, "provider")["failure_kind"] = { code: 500 };
+    stub200(draft);
+
+    expect((await executeDisclosure({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a 200 whose final_answer is neither a string nor null", async () => {
+    const draft = draftOf(executeBody());
+    draft["final_answer"] = { text: "answer" };
+    stub200(draft);
+
+    expect((await executeDisclosure({ text: "x" })).ok).toBe(false);
+  });
+
+  it("accepts final_answer: null — the contract's own blocked/failed shape", async () => {
+    const draft = draftOf(executeBody());
+    draft["final_answer"] = null;
+    stub200(draft);
+
+    expect((await executeDisclosure({ text: "x" })).ok).toBe(true);
+  });
+
+  it("rejects a 200 whose summary.status is unknown", async () => {
+    const draft = draftOf(executeBody());
+    nested(draft, "summary")["status"] = "maybe";
+    stub200(draft);
+
+    expect((await executeDisclosure({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a 200 whose reconstruction block is missing", async () => {
+    const draft = draftOf(executeBody());
+    delete draft["reconstruction"];
+    stub200(draft);
+
+    expect((await executeDisclosure({ text: "x" })).ok).toBe(false);
+  });
+});
+
+describe("200 response validation — nothing from the rejected body is echoed", () => {
+  it("shows only the generic message, never a fragment of the invalid response", async () => {
+    // The no-leak invariant applied to this boundary: a body we refused to
+    // understand may still contain document text, so the failure it maps to
+    // must carry NONE of it -- not in the message, not in `kind`, not in
+    // `fields`.
+    const draft = draftOf(previewBody());
+    delete firstCategory(draft)["crosses_trust_boundary"];
+    draft["external_payload"] = "CPF 123.456.789-00 de Maria Oliveira";
+    stub200(draft);
+
+    const result = await previewDisclosure({ text: "x" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toEqual({ message: copy.errors.generic, kind: null, fields: null });
+      const serialized = JSON.stringify(result.error);
+      expect(serialized).not.toContain("123.456.789-00");
+      expect(serialized).not.toContain("Maria Oliveira");
+      expect(serialized).not.toContain("crosses_trust_boundary");
+      expect(serialized).not.toContain("external_payload");
+    }
+  });
+
+  it("does not echo an invalid execute body's final_answer either", async () => {
+    const draft = draftOf(executeBody());
+    delete nested(draft, "provider")["failed"];
+    draft["final_answer"] = "resposta contendo Maria Oliveira";
+    stub200(draft);
+
+    const result = await executeDisclosure({ text: "x" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(JSON.stringify(result.error)).not.toContain("Maria Oliveira");
+    }
+  });
+});
+
+describe("200 response validation — examples and health", () => {
+  it("rejects a 200 /examples whose examples is not an array", async () => {
+    stub200({ contract_version: CONTRACT_VERSION, examples: { a: 1 } });
+
+    expect((await getExamples()).ok).toBe(false);
+  });
+
+  it("rejects a 200 /examples whose entry is missing example_id", async () => {
+    const draft = draftOf(examplesBody());
+    delete (draft["examples"] as Draft[])[0]["example_id"];
+    stub200(draft);
+
+    expect((await getExamples()).ok).toBe(false);
+  });
+
+  it("rejects a 200 /health whose deterministic_demo_mode is not a boolean", async () => {
+    // Fail-closed on the FakeProvider label specifically: a non-boolean must
+    // not be coerced into "this is a real provider" OR "this is the demo".
+    const draft = draftOf(healthBody());
+    nested(draft, "provider")["deterministic_demo_mode"] = "true";
+    stub200(draft);
+
+    expect((await getHealth()).ok).toBe(false);
+  });
+
+  it("rejects a 200 /health whose treatments_available is not a string array", async () => {
+    const draft = draftOf(healthBody());
+    draft["treatments_available"] = [0, 1, 2, 3, 4];
+    stub200(draft);
+
+    expect((await getHealth()).ok).toBe(false);
   });
 });

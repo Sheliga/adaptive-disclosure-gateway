@@ -5,6 +5,18 @@
  * discriminated `ApiResult<T>` so screens branch on `.ok` instead of
  * handling a raw `Response`/thrown error.
  *
+ * Both directions of the boundary are gated, and gated the same way.
+ *
+ * A SUCCESS body is not trusted for having arrived with a 200: it must
+ * satisfy the matching guard in `lib/responseGuards.ts` before it becomes
+ * `ApiSuccess.data`. `(await response.json()) as T` would be a compile-time
+ * assertion only, and the fields this app reads fail unsafely when absent
+ * -- a missing `crosses_trust_boundary` reads as falsy, i.e. "stayed
+ * local"; a missing `summary.status` is not `"blocked"`, i.e. "may send".
+ * See that module's docstring for the full argument. A 200 that fails its
+ * guard collapses to the same generic `ApiFailure` as any other
+ * unrecognized body -- it never reaches a caller as data.
+ *
  * Error mapping is the one piece of judgment this module makes, and it is
  * deliberately conservative: `application/wire.py`'s `ErrorResponse`
  * (`{detail, kind}`) and the 422 `ValidationErrorResponse` (`{detail: [...]}
@@ -15,6 +27,13 @@
  * `copy.errors.generic` instead. This is the same fail-closed posture as
  * `outcomes.ts`: an unrecognized shape must never be assumed safe to show
  * just because it happened to arrive as this response's body.
+ *
+ * One rule covers both directions: a body this module could not fully
+ * understand contributes NOTHING to what the user sees. Not a fragment of
+ * it, not a field name from it, not a hint about which check failed --
+ * a rejected body can still hold the user's document text (CLAUDE.md's
+ * no-leak invariant), so the failure it maps to is a fixed, content-free
+ * value.
  */
 
 import type {
@@ -25,6 +44,13 @@ import type {
   PreviewResponse,
 } from "./contracts";
 import { copy } from "./copy";
+import {
+  isExamplesResponse,
+  isExecuteResponse,
+  isHealthResponse,
+  isPreviewResponse,
+  type ResponseGuard,
+} from "./responseGuards";
 
 export interface DisplayError {
   /** Safe, display-ready message -- never raw upstream prose. */
@@ -105,7 +131,17 @@ async function toDisplayError(response: Response): Promise<DisplayError> {
   return genericError();
 }
 
-async function requestJson<T>(path: string, init?: RequestInit): Promise<ApiResult<T>> {
+/**
+ * `guard` is a required parameter, not an optional one, and that is the
+ * point: there is no way to call this helper without deciding what the
+ * response must look like, so a future endpoint cannot be added with its
+ * body left unvalidated by omission.
+ */
+async function requestJson<T>(
+  path: string,
+  guard: ResponseGuard<T>,
+  init?: RequestInit,
+): Promise<ApiResult<T>> {
   let response: Response;
   try {
     response = await fetch(path, init);
@@ -117,24 +153,35 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<ApiResu
     return { ok: false, status: response.status, error: await toDisplayError(response) };
   }
 
+  let parsed: unknown;
   try {
-    const data = (await response.json()) as T;
-    return { ok: true, data };
+    parsed = await response.json();
   } catch {
     return { ok: false, status: response.status, error: genericError() };
   }
+
+  if (!guard(parsed)) {
+    // A 200 that does not satisfy its contract. `status` stays the real
+    // status rather than being rewritten to an error code -- the transport
+    // genuinely did succeed, and misreporting it would hide the fact that
+    // the upstream is serving a body this app cannot read. The error itself
+    // says nothing about `parsed`.
+    return { ok: false, status: response.status, error: genericError() };
+  }
+
+  return { ok: true, data: parsed };
 }
 
 export function getHealth(): Promise<ApiResult<HealthResponse>> {
-  return requestJson<HealthResponse>("/api/health");
+  return requestJson("/api/health", isHealthResponse);
 }
 
 export function getExamples(): Promise<ApiResult<ExamplesResponse>> {
-  return requestJson<ExamplesResponse>("/api/examples");
+  return requestJson("/api/examples", isExamplesResponse);
 }
 
 export function previewDisclosure(body: DisclosureRequestBody): Promise<ApiResult<PreviewResponse>> {
-  return requestJson<PreviewResponse>("/api/disclosure/preview", {
+  return requestJson("/api/disclosure/preview", isPreviewResponse, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -142,7 +189,7 @@ export function previewDisclosure(body: DisclosureRequestBody): Promise<ApiResul
 }
 
 export function executeDisclosure(body: DisclosureRequestBody): Promise<ApiResult<ExecuteResponse>> {
-  return requestJson<ExecuteResponse>("/api/disclosure/execute", {
+  return requestJson("/api/disclosure/execute", isExecuteResponse, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),

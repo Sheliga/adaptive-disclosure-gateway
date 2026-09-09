@@ -4,8 +4,10 @@
  * body it accepts (`src/adaptive_disclosure_gateway/api/schemas.py`'s
  * `DisclosureRequestBody`).
  *
- * This module declares TYPES ONLY, plus the `CONTRACT_VERSION` constant --
- * no logic, no mapping, no defaults. Field names and shapes mirror the
+ * This module declares TYPES ONLY, plus `CONTRACT_VERSION` and the two
+ * closed-set constants the runtime guards in `lib/responseGuards.ts` need
+ * (`KNOWN_DISCLOSURE_OUTCOMES`, `DISCLOSURE_SUMMARY_STATUSES`) -- no logic,
+ * no mapping, no defaults. Field names and shapes mirror the
  * Python side exactly (snake_case, verbatim), so a response decoded as
  * `JSON.parse` matches these types without any renaming step. See
  * `docs/advisor-demo.md` / CLAUDE.md: the UI never reimplements scientific
@@ -105,8 +107,28 @@ export interface CategoryDisclosureSummary {
   impossible_under_policy: boolean | null;
 }
 
+/**
+ * The `DisclosureSummary.status` values, as `application/contracts.py`
+ * declares them today (`Literal["allowed", "blocked"]`).
+ *
+ * A readonly array rather than a bare union for the same reason
+ * `KNOWN_DISCLOSURE_OUTCOMES` is one: `lib/responseGuards.ts` has to check
+ * this set at RUNTIME, and `contracts.test.ts` diffs it against the Python
+ * source on disk so the two cannot drift.
+ *
+ * Unlike `outcome`, this set has no escape hatch for an unrecognized value.
+ * That is deliberate and is the opposite call from `DisclosureOutcome`
+ * above: an unknown outcome degrades safely to "unknown -- verify", but
+ * `status` is what decides whether a send is permitted at all, and there is
+ * no third rendering between "may send" and "must not send". A status this
+ * UI does not know is therefore a rejected response, not a degraded one.
+ */
+export const DISCLOSURE_SUMMARY_STATUSES = ["allowed", "blocked"] as const;
+
+export type DisclosureSummaryStatus = (typeof DISCLOSURE_SUMMARY_STATUSES)[number];
+
 export interface DisclosureSummary {
-  status: "allowed" | "blocked";
+  status: DisclosureSummaryStatus;
   categories: CategoryDisclosureSummary[];
   detected_span_count: number;
   detected_categories: string[];

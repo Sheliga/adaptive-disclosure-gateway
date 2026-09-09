@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { KNOWN_DISCLOSURE_OUTCOMES } from "./contracts";
+import { DISCLOSURE_SUMMARY_STATUSES, KNOWN_DISCLOSURE_OUTCOMES } from "./contracts";
 
 /**
  * Reads the Python `DisclosureOutcome` StrEnum's own declared values
@@ -65,5 +65,58 @@ describe("KNOWN_DISCLOSURE_OUTCOMES stays synchronized with Python's DisclosureO
     }
 
     expect(KNOWN_DISCLOSURE_OUTCOMES.length).toBe(pythonValues.length);
+  });
+});
+
+/**
+ * Same source-on-disk technique as above, for the OTHER closed set the
+ * runtime guards depend on. `summary.status` is not merely displayed: it
+ * decides whether the confirm-and-send button exists at all, and
+ * `lib/responseGuards.ts` rejects any response whose status is outside this
+ * set. So a value added to the Python `Literal` and not mirrored here would
+ * make the UI reject perfectly valid responses -- and, worse, a value
+ * REMOVED from Python and left here would keep a status the API can no
+ * longer mean in the set the UI treats as safe to act on.
+ */
+function readPythonSummaryStatusLiteral(): string[] {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const contractsPath = path.resolve(
+    here,
+    "..",
+    "..",
+    "src",
+    "adaptive_disclosure_gateway",
+    "application",
+    "contracts.py",
+  );
+  const source = readFileSync(contractsPath, "utf-8");
+
+  const match = source.match(/status:\s*Literal\[([^\]]+)\]/);
+  if (!match) {
+    throw new Error(
+      "could not locate `status: Literal[...]` in application/contracts.py -- " +
+        "has DisclosureSummary.status changed shape?",
+    );
+  }
+
+  const values = [...match[1].matchAll(/"([a-z_]+)"/g)].map((valueMatch) => valueMatch[1]);
+  if (values.length === 0) {
+    throw new Error("found the status Literal but extracted zero values -- regex likely stale");
+  }
+  return values;
+}
+
+describe("DISCLOSURE_SUMMARY_STATUSES stays synchronized with Python's status Literal", () => {
+  it("has exactly one TypeScript entry per Python literal member", () => {
+    const pythonValues = readPythonSummaryStatusLiteral();
+
+    for (const value of pythonValues) {
+      expect(DISCLOSURE_SUMMARY_STATUSES).toContain(value);
+    }
+    for (const value of DISCLOSURE_SUMMARY_STATUSES) {
+      expect(pythonValues).toContain(value);
+    }
+
+    expect(DISCLOSURE_SUMMARY_STATUSES.length).toBe(pythonValues.length);
   });
 });
