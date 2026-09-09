@@ -1,0 +1,60 @@
+#!/bin/sh
+#
+# commit-msg -- strip Claude/Anthropic co-authorship trailers from every commit message.
+#
+# Why this exists: this repository's commit history is the authorship record
+# of a master's dissertation, so it must credit Paulo only. A "Co-authored-by"
+# trailer naming Claude or Anthropic is not authorship in that sense, and it keeps
+# getting re-introduced because agent harnesses inject an attribution
+# instruction per session -- a convention written down in prose loses to that
+# instruction sooner or later, as it did on PR #47.
+#
+# So the rule is enforced here instead of trusted to whoever writes the
+# message. git runs this hook on EVERY commit that produces a message --
+# `git commit`, `git commit --amend`, `git cherry-pick`, and each step of a
+# rebase -- and the hook rewrites the message file in place before the commit
+# object is created. It applies to commits made by a person, by an agent, or
+# by a subagent, without any of them having to remember.
+#
+# Scope: only trailers that name Claude/Anthropic are removed. A genuine
+# human co-author trailer is left untouched -- silently dropping real
+# collaborators from the record would be the same kind of authorship error
+# this hook exists to prevent, in the opposite direction.
+#
+# Not a security control: `git commit --no-verify` bypasses it, as it bypasses
+# every hook. It is there to make the correct thing automatic, not to make the
+# incorrect thing impossible.
+#
+# Versioned: this file lives in .githooks/, which IS tracked by git, so it
+# ships with every clone. It is not wired up automatically -- git only looks
+# in .git/hooks/ by default -- so each clone must opt in once with:
+#     git config core.hooksPath .githooks
+# Without that, a fresh clone starts without this protection.
+
+msg_file="$1"
+work_file="$msg_file.adg-tmp"
+
+# 1. Drop Claude/Anthropic co-authorship trailers, case-insensitively, tolerating leading
+#    whitespace and either spelling of the key ("Co-authored-by"/"Co-Authored-By").
+grep -viE '^[[:space:]]*co-authored-by:.*(claude|anthropic)' "$msg_file" > "$work_file"
+
+# 2. Removing a trailing trailer leaves a dangling blank line before the end of
+#    the message. Trim trailing blank lines so the result looks hand-written
+#    rather than edited. Body content and internal blank lines are untouched.
+awk '
+  { lines[NR] = $0 }
+  END {
+    last = NR
+    while (last > 0 && lines[last] ~ /^[[:space:]]*$/) {
+      last--
+    }
+    for (i = 1; i <= last; i++) {
+      print lines[i]
+    }
+  }
+' "$work_file" > "$msg_file"
+
+rm -f "$work_file"
+
+# grep exits 1 when it filters out every line; that is not a hook failure.
+exit 0
