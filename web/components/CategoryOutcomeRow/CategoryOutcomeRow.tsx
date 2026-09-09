@@ -4,6 +4,14 @@
  * looks at `category.outcome` itself, so it automatically inherits that
  * module's fail-closed behavior for an outcome it does not recognize.
  *
+ * The category itself is presented through `describeCategory`
+ * (`lib/categoryLabels.ts`) for the same reason: `category.category` is a
+ * frozen policy identifier, not copy. It is still passed through untouched
+ * -- it is simply not what the row is headlined with. When the identifier
+ * is one this UI has no reviewed copy for, the row says so and shows the
+ * raw identifier underneath as a technical detail rather than inventing a
+ * friendly name for it.
+ *
  * Issue #29's accessibility rule ("color is never the only indicator") is
  * why every row renders three independent signals: a non-color glyph
  * symbol, the tone color (via the CSS Module class), and the plain-text
@@ -11,7 +19,9 @@
  * from the other two.
  */
 
+import { describeCategory } from "@/lib/categoryLabels";
 import type { CategoryDisclosureSummary } from "@/lib/contracts";
+import { copy } from "@/lib/copy";
 import { describeCategoryOutcome, type DisclosureTone } from "@/lib/outcomes";
 
 import styles from "./CategoryOutcomeRow.module.css";
@@ -34,6 +44,7 @@ const TONE_CLASS: Record<DisclosureTone, string> = {
 
 export function CategoryOutcomeRow({ category }: { category: CategoryDisclosureSummary }) {
   const descriptor = describeCategoryOutcome(category);
+  const categoryDescriptor = describeCategory(category.category);
   const glyphSymbol = GLYPH_SYMBOLS[descriptor.glyph] ?? "•";
 
   return (
@@ -42,11 +53,16 @@ export function CategoryOutcomeRow({ category }: { category: CategoryDisclosureS
         <span className={styles.glyph} aria-hidden="true">
           {glyphSymbol}
         </span>
-        <span className={styles.category}>{category.category}</span>
+        <span className={styles.category}>{categoryDescriptor.label}</span>
         <span className={styles.label}>{descriptor.label}</span>
       </div>
       <span className={styles.boundary}>{descriptor.boundaryLabel}</span>
       <p className={styles.explanation}>{descriptor.explanation}</p>
+      {!categoryDescriptor.known && (
+        <p className={styles.technicalId}>
+          {copy.categories.technicalIdLabel} <code>{categoryDescriptor.technicalId}</code>
+        </p>
+      )}
     </li>
   );
 }

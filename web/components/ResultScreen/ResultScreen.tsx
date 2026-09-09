@@ -10,27 +10,33 @@
  *    `failure_kind` (a safe category, never raw provider/error text) and
  *    never renders `final_answer` as if it were a real completion.
  *
- * `health.provider.deterministic_demo_mode` drives the FakeProvider label
+ * The provider-mode notice comes from `describeProviderMode`
+ * (`lib/providerMode.ts`), which this screen renders without interpreting
  * (issue #29: FakeProvider must be clearly labeled as a deterministic
- * demonstration provider, not a real model).
+ * demonstration provider, not a real model). The `health` prop is a
+ * three-state value rather than `HealthResponse | null` precisely so a
+ * FAILED health check is distinguishable here from one still in flight --
+ * conflating them made a failed check silently erase the indication.
  */
 
-import type { ExecuteResponse, HealthResponse } from "@/lib/contracts";
+import { describeCategory } from "@/lib/categoryLabels";
+import type { ExecuteResponse } from "@/lib/contracts";
 import { copy } from "@/lib/copy";
 import { describeCategoryOutcome } from "@/lib/outcomes";
+import { describeProviderMode, type ProviderModeState } from "@/lib/providerMode";
 
 import styles from "./ResultScreen.module.css";
 
 export interface ResultScreenProps {
   execute: ExecuteResponse;
-  health: HealthResponse | null;
+  health: ProviderModeState;
   onRestart: () => void;
 }
 
 export function ResultScreen({ execute, health, onRestart }: ResultScreenProps) {
   const isBlocked = execute.summary.status === "blocked";
   const providerFailed = execute.provider.failed;
-  const isDeterministicDemo = health?.provider.deterministic_demo_mode === true;
+  const providerModeNotice = describeProviderMode(health);
 
   return (
     <section aria-labelledby="result-heading" className={styles.section}>
@@ -38,9 +44,14 @@ export function ResultScreen({ execute, health, onRestart }: ResultScreenProps) 
         {copy.result.heading}
       </h1>
 
-      {isDeterministicDemo && (
-        <p role="status" className={styles.demoLabel}>
-          {copy.provider.deterministicDemoLabel}
+      {providerModeNotice && (
+        <p
+          role="status"
+          className={
+            providerModeNotice.tone === "demo" ? styles.demoLabel : styles.unverifiedModeLabel
+          }
+        >
+          {providerModeNotice.message}
         </p>
       )}
 
@@ -79,9 +90,13 @@ export function ResultScreen({ execute, health, onRestart }: ResultScreenProps) 
           <ul className={styles.protectionsList}>
             {execute.summary.categories.map((category) => {
               const descriptor = describeCategoryOutcome(category);
+              // Same presentation mapping the review step used, so the two
+              // screens never name the same category two different ways.
+              // The raw identifier stays the React key, never the label.
+              const categoryDescriptor = describeCategory(category.category);
               return (
                 <li key={category.category}>
-                  {category.category}: {descriptor.label}
+                  {categoryDescriptor.label}: {descriptor.label}
                 </li>
               );
             })}

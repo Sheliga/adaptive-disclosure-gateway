@@ -192,3 +192,89 @@ describe("ReviewScreen -- confirm/cancel wiring", () => {
     expect(screen.getByRole("button", { name: copy.review.confirmSend })).toBeInTheDocument();
   });
 });
+
+/**
+ * T21's novice-first rule (issue #29: "a reviewer unfamiliar with the
+ * project can understand the purpose without external documentation"),
+ * applied to the review step -- the one screen whose entire job is to be
+ * understood before the user consents to send anything.
+ *
+ * The internal identifiers are NOT renamed anywhere: `category.category`
+ * still carries `employee_name` verbatim from the API, and nothing about
+ * the policy, corpus or contract changes. Only what the reviewer reads
+ * changes. See `lib/categoryLabels.ts`.
+ */
+describe("ReviewScreen -- categories are presented in human language", () => {
+  it("shows the pt-BR label instead of the raw identifier for a local category", () => {
+    render(
+      <ReviewScreen
+        preview={preview([
+          category({ category: "employee_name", outcome: "removed", crosses_trust_boundary: false }),
+        ])}
+        executeError={null}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(copy.categories.labels.employee_name)).toBeInTheDocument();
+    expect(screen.queryByText("employee_name")).not.toBeInTheDocument();
+  });
+
+  it("shows the pt-BR label for a category that crossed the trust boundary too", () => {
+    render(
+      <ReviewScreen
+        preview={preview([
+          category({ category: "salary", outcome: "generalized", crosses_trust_boundary: true }),
+        ])}
+        executeError={null}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(copy.categories.labels.salary)).toBeInTheDocument();
+    expect(screen.queryByText("salary")).not.toBeInTheDocument();
+  });
+
+  it("renders none of the HR corpus identifiers as a label anywhere on the screen", () => {
+    const identifiers = ["employee_name", "cpf", "salary", "department", "medical_data"];
+    render(
+      <ReviewScreen
+        preview={preview(
+          identifiers.map((name) =>
+            category({ category: name, outcome: "removed", crosses_trust_boundary: false }),
+          ),
+        )}
+        executeError={null}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    for (const identifier of identifiers) {
+      expect(screen.queryByText(identifier)).not.toBeInTheDocument();
+      expect(
+        screen.getByText(copy.categories.labels[identifier as keyof typeof copy.categories.labels]),
+      ).toBeInTheDocument();
+    }
+  });
+
+  it("labels an unrecognized category as unrecognized, never with an invented meaning", () => {
+    render(
+      <ReviewScreen
+        preview={preview([
+          category({ category: "shoe_size", outcome: "removed", crosses_trust_boundary: false }),
+        ])}
+        executeError={null}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(copy.categories.unrecognized)).toBeInTheDocument();
+    // The raw identifier is still reachable as a technical detail -- the
+    // reviewer needs to be able to report exactly what the API sent.
+    expect(screen.getByText("shoe_size")).toBeInTheDocument();
+  });
+});

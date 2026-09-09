@@ -89,3 +89,18 @@
   font-weight: 600;
   cursor: pointer;
 }
+
+/*
+ * The "could not verify the provider mode" notice. Styled as a caution
+ * rather than as the demo label: it reports an absent fact, not a
+ * confirmed one. See lib/providerMode.ts.
+ */
+.unverifiedModeLabel {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--tone-unknown);
+  background: var(--tone-unknown-surface);
+  color: var(--tone-unknown);
+  font-size: 0.9rem;
+}

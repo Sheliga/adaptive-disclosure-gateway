@@ -222,3 +222,45 @@ describe("GuidedFlow -- deterministic demo mode label reaches the result screen"
     expect(await screen.findByText(copy.provider.deterministicDemoLabel)).toBeInTheDocument();
   });
 });
+
+describe("GuidedFlow -- a failed /health still tells the user the mode is unknown", () => {
+  it("shows the unverified-mode notice on the result screen when getHealth fails", async () => {
+    // End-to-end version of the ResultScreen unit test: the failure has to
+    // survive GuidedFlow's own health state, which is where the old
+    // `if (result.ok)` swallowed it into an indistinguishable `null`.
+    mockedGetHealth.mockResolvedValue({
+      ok: false,
+      status: 502,
+      error: { message: copy.errors.generic, kind: null, fields: null },
+    });
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+    mockedExecuteDisclosure.mockResolvedValue({ ok: true, data: executeResponse() });
+
+    await goToReview();
+    await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+
+    await screen.findByRole("heading", { name: copy.result.heading });
+
+    expect(await screen.findByText(copy.provider.modeUnverifiedLabel)).toBeInTheDocument();
+    expect(screen.queryByText(copy.provider.deterministicDemoLabel)).not.toBeInTheDocument();
+  });
+
+  it("shows the unverified-mode notice when /health returns a body failing its contract", async () => {
+    // Same user-visible outcome for a different upstream fault: with the
+    // 200-body guard in place, a malformed /health is an ApiFailure, and it
+    // must not silently degrade into "nothing to say about the provider".
+    mockedGetHealth.mockResolvedValue({
+      ok: false,
+      status: 200,
+      error: { message: copy.errors.generic, kind: null, fields: null },
+    });
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+    mockedExecuteDisclosure.mockResolvedValue({ ok: true, data: executeResponse() });
+
+    await goToReview();
+    await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+
+    await screen.findByRole("heading", { name: copy.result.heading });
+    expect(await screen.findByText(copy.provider.modeUnverifiedLabel)).toBeInTheDocument();
+  });
+});

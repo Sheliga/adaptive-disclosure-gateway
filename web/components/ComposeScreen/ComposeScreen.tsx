@@ -15,6 +15,33 @@
  * `POST /disclosure/preview` accepts. Extension validation
  * (`isSupportedUploadFilename`) happens BEFORE any read, so an unsupported
  * file never reaches `FileReader` and never reaches the API client.
+ *
+ * --- KNOWN GAP: there is no upload size limit anywhere in this path ---
+ *
+ * `readAsText` buffers the entire file in memory, `buildRequestBody`
+ * inlines the whole string into a JSON body, and neither the Next route
+ * handler (`app/api/disclosure/preview`, which streams the body through
+ * `request.text()`) nor the Python API (no body-size ceiling in
+ * `api/app.py` or in uvicorn's defaults) bounds it. A large enough .txt is
+ * therefore a browser-tab memory problem and an unbounded upstream request.
+ *
+ * This is deliberately NOT fixed in this slice, for two reasons rather than
+ * for convenience:
+ *
+ *  1. A cap enforced only here would not be a control. The API accepts the
+ *     identical JSON from `curl`, so a client-side check is a usability
+ *     affordance, not a limit -- the enforceable boundary is where the
+ *     request is ACCEPTED (reverse proxy / uvicorn / ASGI middleware),
+ *     which is T25's deployment surface, and secondarily at ingestion,
+ *     which is T12's.
+ *  2. Choosing the number is a real decision, not a detail. The ceiling
+ *     bounds which documents the demo will accept at all, and it has to be
+ *     reconciled with the corpus's own sizes and with T12's Docling
+ *     ingestion path. Inventing one here would freeze an arbitrary
+ *     methodological constraint inside a UI component.
+ *
+ * Tracked as a follow-up on T25 (#42, enforcement point) and T12 (#9,
+ * ingestion limits). See this PR's description.
  */
 
 import { useRef, useState, type ChangeEvent, type DragEvent, type FormEvent } from "react";

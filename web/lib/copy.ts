@@ -121,6 +121,14 @@ const ptBR = {
 
   provider: {
     deterministicDemoLabel: "Provedor de demonstração determinístico — não é um modelo real.",
+    /*
+     * Shown when `GET /health` could not be reached or did not satisfy its
+     * contract. Deliberately states only that the check failed -- it must
+     * not read as "this is the demo provider" (a claim nothing verified)
+     * nor be omitted (which reads as the verified real-provider case). See
+     * lib/providerMode.ts.
+     */
+    modeUnverifiedLabel: "Modo do provedor não pôde ser verificado.",
   },
 
   processingStages: {
@@ -149,6 +157,41 @@ const ptBR = {
     compensation_review: "Revisão de remuneração",
     fitness_for_duty_review: "Avaliação de aptidão para o trabalho",
   } as Record<string, string>,
+
+  /**
+   * pt-BR labels for the sensitive-data CATEGORIES the API reports back on
+   * each `CategoryDisclosureSummary`.
+   *
+   * Same split as `examplePurposes` above and for the same reason: the keys
+   * are the frozen policy identifiers exactly as `configs/policies/hr-v1`,
+   * `hr-v2` and `hr-v3` spell them, and nothing here renames, translates or
+   * reorders anything on the API side -- `category.category` keeps carrying
+   * `employee_name` verbatim through the contract, the outcome mapping and
+   * the React key. Only the string the reviewer READS comes from here.
+   *
+   * Why it is needed: T21's primary flow is novice-first (issue #29 -- "a
+   * reviewer unfamiliar with the project can understand ... without
+   * external documentation"). `employee_name` / `medical_data` as the
+   * headline of a row on the consent screen is a scientific identifier
+   * doing a product's job.
+   *
+   * `unrecognized` is the fail-closed presentation, NOT a fallback label: a
+   * category with no entry here is explicitly marked unrecognized rather
+   * than prettified from its identifier. See `lib/categoryLabels.ts` for
+   * why an invented-but-confident label is the worse failure on a
+   * disclosure demo.
+   */
+  categories: {
+    unrecognized: "Categoria não reconhecida",
+    technicalIdLabel: "Identificador técnico:",
+    labels: {
+      employee_name: "Nome do funcionário",
+      cpf: "CPF",
+      salary: "Salário",
+      department: "Departamento",
+      medical_data: "Dados médicos",
+    },
+  },
 
   /**
    * Per category disclosure outcome: the "what happened" label/explanation

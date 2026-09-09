@@ -63,3 +63,14 @@
   font-size: 0.85rem;
   color: var(--text-muted);
 }
+
+/*
+ * Only rendered for a category this UI has no reviewed copy for -- the raw
+ * policy identifier, demoted to a technical detail so the reviewer can
+ * report exactly what the API sent without it reading as a label.
+ */
+.technicalId {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}

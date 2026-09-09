@@ -11,17 +11,25 @@
  *
  * `getExamples`/`getHealth` are fetched once, lazily: examples on first
  * reaching the compose screen, health up front (its only consumer,
- * `ResultScreen`'s deterministic-demo-mode label, needs it by the time the
- * result screen renders, and a shared, once-only fetch is simpler than
- * threading a loading state through the whole flow for it).
+ * `ResultScreen`'s provider-mode notice, needs it by the time the result
+ * screen renders, and a shared, once-only fetch is simpler than threading a
+ * loading state through the whole flow for it).
+ *
+ * Health is held as a three-state `ProviderModeState`, not as
+ * `HealthResponse | null`. A failed `getHealth` must stay distinguishable
+ * from one still in flight all the way down to the screen that renders it:
+ * collapsing both into `null` is what previously made an unreachable
+ * `/health` silently erase the FakeProvider indication instead of
+ * reporting that it could not be verified. See `lib/providerMode.ts`.
  */
 
 import { useEffect, useReducer, useState } from "react";
 
 import { executeDisclosure, getExamples, getHealth, previewDisclosure, type DisplayError } from "@/lib/api";
-import type { ExampleSummary, HealthResponse } from "@/lib/contracts";
+import type { ExampleSummary } from "@/lib/contracts";
 import { copy } from "@/lib/copy";
 import { buildRequestBody, flowReducer, initialFlowState, type ComposeState } from "@/lib/flow";
+import type { ProviderModeState } from "@/lib/providerMode";
 
 import { ComposeScreen } from "../ComposeScreen/ComposeScreen";
 import { ProcessingStatus } from "../ProcessingStatus/ProcessingStatus";
@@ -35,14 +43,18 @@ export function GuidedFlow() {
   const [state, dispatch] = useReducer(flowReducer, initialFlowState);
   const [examples, setExamples] = useState<ExampleSummary[] | null>(null);
   const [examplesError, setExamplesError] = useState<DisplayError | null>(null);
-  const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [health, setHealth] = useState<ProviderModeState>({ status: "loading" });
 
   useEffect(() => {
     let cancelled = false;
     getHealth().then((result) => {
-      if (!cancelled && result.ok) {
-        setHealth(result.data);
+      if (cancelled) {
+        return;
       }
+      // A failure is recorded as `unavailable`, never left as the initial
+      // "loading" -- the whole point of the three-state value is that the
+      // screen can tell "we could not check" from "we have not checked yet".
+      setHealth(result.ok ? { status: "ready", health: result.data } : { status: "unavailable" });
     });
     return () => {
       cancelled = true;
