@@ -1,57 +1,22 @@
-"""Treatment factory for T10's experiment runner.
+"""Re-exports the treatment factory for T10's experiment runner.
 
-The only place the runner decides *which* B0-B4 class to instantiate. This
-is runner code, not production treatment code: no treatment module imports
-this, and this module never implements disclosure-control logic itself --
-it only wires up the constructors already frozen in ``transformations/``.
+T20 / issue #28, slice 1 moved the actual ``build_treatment`` implementation
+to ``adaptive_disclosure_gateway.treatment_factory`` -- a neutral module
+neither this runner package nor the new ``application`` package owns -- so
+that the advisor-demo application service can build treatments the same way
+this runner always has, without importing runner code (and without a second,
+duplicated factory). See ``treatment_factory.py``'s module docstring for the
+full rationale.
 
-Receives no ``CaseOracle``, no corpus object at all -- only the primitives
-every treatment constructor already accepts (``Vault``, ``PolicyRepository``,
-optionally a ``TaskAnalyzer``). See
-``tests/test_experiments_ground_truth_isolation.py``.
+This module keeps re-exporting ``build_treatment`` under its original name
+and location so every existing runner call site
+(``experiments/execution.py``'s ``from .treatments import build_treatment``)
+and every test importing ``adaptive_disclosure_gateway.experiments.treatments``
+keeps working unchanged.
 """
 
 from __future__ import annotations
 
-from adaptive_disclosure_gateway.domain import Treatment
-from adaptive_disclosure_gateway.pipeline import DisclosureTreatment
-from adaptive_disclosure_gateway.policies import PolicyRepository
-from adaptive_disclosure_gateway.task_analysis import TaskAnalyzer
-from adaptive_disclosure_gateway.transformations import (
-    DirectDiscloser,
-    PolicyGovernedDiscloser,
-    ReversiblePseudonymizer,
-    StaticSanitizer,
-    TaskAwareDiscloser,
-)
-from adaptive_disclosure_gateway.vault import Vault
+from adaptive_disclosure_gateway.treatment_factory import build_treatment
 
-
-def build_treatment(
-    treatment: Treatment,
-    *,
-    vault: Vault,
-    policy_repository: PolicyRepository,
-    task_analyzer: TaskAnalyzer | None = None,
-) -> DisclosureTreatment:
-    """Construct the treatment object identified by ``treatment``.
-
-    ``vault``/``policy_repository`` are ignored by treatments that do not
-    need them (B0, B1) -- always accepted here anyway so a caller can build
-    one uniformly for every treatment in a run without branching.
-    """
-    if treatment is Treatment.DIRECT:
-        return DirectDiscloser()
-    if treatment is Treatment.STATIC_SANITIZATION:
-        return StaticSanitizer()
-    if treatment is Treatment.REVERSIBLE_PSEUDONYMIZATION:
-        return ReversiblePseudonymizer(vault=vault, policy_repository=policy_repository)
-    if treatment is Treatment.TASK_AWARE:
-        return TaskAwareDiscloser(
-            vault=vault, policy_repository=policy_repository, task_analyzer=task_analyzer
-        )
-    if treatment is Treatment.POLICY_GOVERNED:
-        return PolicyGovernedDiscloser(
-            vault=vault, policy_repository=policy_repository, task_analyzer=task_analyzer
-        )
-    raise ValueError(f"unknown treatment: {treatment!r}")
+__all__ = ["build_treatment"]
