@@ -70,9 +70,12 @@
  */
 
 import {
+  CANONICAL_COMPARISON_ORDER,
+  CANONICAL_COMPARISON_TREATMENTS,
   CONTRACT_VERSION,
   DISCLOSURE_SUMMARY_STATUSES,
   type CategoryDisclosureSummary,
+  type CompareResponse,
   type DisclosureSummary,
   type DisclosureSummaryStatus,
   type ExampleSummary,
@@ -85,6 +88,7 @@ import {
   type ProviderStage,
   type ReconstructionStage,
   type SafeGovernanceView,
+  type StrategyComparisonEntry,
 } from "./contracts";
 
 /** A runtime check that also narrows -- the shape `lib/api.ts` consumes. */
@@ -286,3 +290,56 @@ export const isExecuteResponse: ResponseGuard<ExecuteResponse> = (
   isString(value.strategy) &&
   isSafeGovernanceView(value.governance) &&
   isNumber(value.total_ms);
+
+// --- POST /disclosure/compare ----------------------------------------------------
+
+function isStrategyComparisonEntry(value: unknown): value is StrategyComparisonEntry {
+  return (
+    isRecord(value) &&
+    isString(value.strategy) &&
+    isString(value.treatment) &&
+    isBoolean(value.recommended) &&
+    // The single most important line in this section -- see
+    // `contracts.ts`'s `StrategyComparisonEntry` docstring. A truthiness
+    // check here (accepting the string "false") would silence the B0
+    // warning; a missing field reading as falsy would silence it too.
+    isBoolean(value.unsafe_control_baseline) &&
+    isDisclosureSummary(value.summary) &&
+    isString(value.external_payload) &&
+    isNumber(value.payload_byte_count)
+  );
+}
+
+/**
+ * `entries` must be exactly the five canonical strategies, in
+ * `CANONICAL_COMPARISON_ORDER`, each one's `treatment` matching the code
+ * the real wire emits for that position (`CANONICAL_COMPARISON_TREATMENTS`,
+ * pinned against `resolve_treatment` by `contracts.test.ts`). Checking
+ * position against the canonical order in a single pass is what handles
+ * count, ordering, duplicates and unknown codes together -- any entry
+ * whose strategy isn't exactly `CANONICAL_COMPARISON_ORDER[index]` fails
+ * this, whether that is because the array is the wrong length, the
+ * strategies are reordered, one is repeated, or one is a code this UI does
+ * not recognize at all.
+ */
+function isCanonicalComparisonEntries(value: unknown): value is StrategyComparisonEntry[] {
+  return (
+    Array.isArray(value) &&
+    value.length === CANONICAL_COMPARISON_ORDER.length &&
+    value.every(
+      (entry, index) =>
+        isStrategyComparisonEntry(entry) &&
+        entry.strategy === CANONICAL_COMPARISON_ORDER[index] &&
+        entry.treatment === CANONICAL_COMPARISON_TREATMENTS[index],
+    )
+  );
+}
+
+export const isCompareResponse: ResponseGuard<CompareResponse> = (
+  value: unknown,
+): value is CompareResponse =>
+  isRecord(value) &&
+  declaresKnownContractVersion(value) &&
+  isCanonicalComparisonEntries(value.entries) &&
+  isSafeGovernanceView(value.governance) &&
+  isProviderMode(value.provider_mode);

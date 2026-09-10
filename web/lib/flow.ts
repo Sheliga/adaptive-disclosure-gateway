@@ -20,7 +20,7 @@
  */
 
 import type { DisclosureRequestBody } from "./contracts";
-import type { PreviewResponse, ExecuteResponse } from "./contracts";
+import type { CompareResponse, PreviewResponse, ExecuteResponse } from "./contracts";
 import type { DisplayError } from "./api";
 
 export type EntryMode = "example" | "upload" | "paste";
@@ -72,6 +72,21 @@ export type FlowState =
       compose: ComposeState;
       preview: PreviewResponse;
       execute: ExecuteResponse;
+      /** Set by a failed comparison request; rendered inline on Result. */
+      compareError: DisplayError | null;
+    }
+  | {
+      screen: "comparing";
+      compose: ComposeState;
+      preview: PreviewResponse;
+      execute: ExecuteResponse;
+    }
+  | {
+      screen: "comparison";
+      compose: ComposeState;
+      preview: PreviewResponse;
+      execute: ExecuteResponse;
+      comparison: CompareResponse;
     };
 
 export type FlowEvent =
@@ -90,6 +105,10 @@ export type FlowEvent =
   | { type: "CANCEL_REVIEW" }
   | { type: "EXECUTE_SUCCEEDED"; execute: ExecuteResponse }
   | { type: "EXECUTE_FAILED"; error: DisplayError }
+  | { type: "REQUEST_COMPARISON" }
+  | { type: "COMPARE_SUCCEEDED"; comparison: CompareResponse }
+  | { type: "COMPARE_FAILED"; error: DisplayError }
+  | { type: "RETURN_TO_RESULT" }
   | { type: "RESTART" };
 
 export const initialFlowState: FlowState = { screen: "welcome" };
@@ -109,8 +128,13 @@ export function flowReducer(state: FlowState, event: FlowEvent): FlowState {
       return reviewReducer(state, event);
     case "executing":
       return executingReducer(state, event);
-    case "welcome":
     case "result":
+      return resultReducer(state, event);
+    case "comparing":
+      return comparingReducer(state, event);
+    case "comparison":
+      return comparisonReducer(state, event);
+    case "welcome":
       // No screen-specific event applies here besides the global ones
       // handled above -- unrecognized events are a no-op.
       return state;
@@ -193,6 +217,7 @@ function executingReducer(
         compose: state.compose,
         preview: state.preview,
         execute: event.execute,
+        compareError: null,
       };
     case "EXECUTE_FAILED":
       return {
@@ -200,6 +225,80 @@ function executingReducer(
         compose: state.compose,
         preview: state.preview,
         executeError: event.error,
+      };
+    default:
+      return state;
+  }
+}
+
+/**
+ * The Result screen's only screen-specific event: the user asking to see
+ * the B0-B4 comparison. `REQUEST_COMPARISON` is the ONLY event that reaches
+ * the "comparing" screen -- mirrors `CONFIRM_REVIEW` being the only path to
+ * "executing" (see this module's docstring) -- so a comparison can never be
+ * fetched as a side effect of any other action on Result.
+ */
+function resultReducer(
+  state: Extract<FlowState, { screen: "result" }>,
+  event: FlowEvent,
+): FlowState {
+  switch (event.type) {
+    case "REQUEST_COMPARISON":
+      return {
+        screen: "comparing",
+        compose: state.compose,
+        preview: state.preview,
+        execute: state.execute,
+      };
+    default:
+      return state;
+  }
+}
+
+function comparingReducer(
+  state: Extract<FlowState, { screen: "comparing" }>,
+  event: FlowEvent,
+): FlowState {
+  switch (event.type) {
+    case "COMPARE_SUCCEEDED":
+      return {
+        screen: "comparison",
+        compose: state.compose,
+        preview: state.preview,
+        execute: state.execute,
+        comparison: event.comparison,
+      };
+    case "COMPARE_FAILED":
+      return {
+        screen: "result",
+        compose: state.compose,
+        preview: state.preview,
+        execute: state.execute,
+        compareError: event.error,
+      };
+    default:
+      return state;
+  }
+}
+
+/**
+ * `RETURN_TO_RESULT` is the only way back from the comparison screen (plus
+ * the global `RESTART`) -- the original `execute`/`preview` the user already
+ * saw are threaded straight through, never re-fetched or discarded, so the
+ * Result screen the user returns to is the same one they left.
+ */
+function comparisonReducer(
+  state: Extract<FlowState, { screen: "comparison" }>,
+  event: FlowEvent,
+): FlowState {
+  switch (event.type) {
+    case "RETURN_TO_RESULT":
+      return {
+        screen: "result",
+        compose: state.compose,
+        preview: state.preview,
+        execute: state.execute,
+        compareError: null,
       };
     default:
       return state;

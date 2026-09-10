@@ -48,14 +48,18 @@ const VALIDATED_CONTRACT_INTERFACES = [
   "ExecuteResponse",
   "ProviderStage",
   "ReconstructionStage",
+  // POST /disclosure/compare
+  "CompareResponse",
+  "StrategyComparisonEntry",
 ] as const;
 
-/** The four top-level response bodies, each of which carries a version. */
+/** The five top-level response bodies, each of which carries a version. */
 const TOP_LEVEL_RESPONSE_GUARDS = [
   "isHealthResponse",
   "isExamplesResponse",
   "isPreviewResponse",
   "isExecuteResponse",
+  "isCompareResponse",
 ] as const;
 
 function declaredFieldsOf(source: string, interfaceName: string): string[] {
@@ -124,5 +128,9 @@ describe("responseGuards covers every field of every validated response contract
     expect(guards).toContain('return typeof value === "boolean";');
     expect(guards).toContain("isBoolean(value.crosses_trust_boundary)");
     expect(guards).toContain("isBoolean(value.failed)");
+    // `unsafe_control_baseline` is what the comparison screen's B0 warning
+    // is derived from -- a truthiness check here would let the string
+    // "false" flip the warning on and an absent field silence it.
+    expect(guards).toContain("isBoolean(value.unsafe_control_baseline)");
   });
 });

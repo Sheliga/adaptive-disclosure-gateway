@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-09-08 — post-Milestone 2 synchronization + advisor-demo planning.
+Last updated: 2026-09-09 — T21 second slice (Comparar estratégias) in validation.
 
 This file tracks the current engineering/research state and execution order. Architectural decisions belong in ADRs; experimental definitions belong in `docs/experimental-design.md`; factual pilot results belong in `docs/milestone-2-pilot.md`; the parallel advisor-facing application plan belongs in `docs/advisor-demo.md`; historical PR/Issue descriptions remain in GitHub.
 
@@ -237,9 +237,24 @@ This slice adds no treatment, policy, corpus, oracle or metric semantics. B0–B
 
 ### T21 / Issue #29 — Next.js advisor-facing UI
 
-Status: **first vertical slice in review (PR open) / non-blocking for M3**.
+Status: **second vertical slice in validation (PR open) / non-blocking for M3**. T21 is NOT complete — see "Deliberately not in the second slice" below.
 
-The UI lets a reviewer select a prepared HR example or controlled text, see what crosses the trust boundary before anything is sent, and receive the locally reconstructed answer. It consumes T20's real HTTP API — there is no fixture phase.
+The UI lets a reviewer select a prepared HR example or controlled text, see what crosses the trust boundary before anything is sent, receive the locally reconstructed answer, and — as of the second slice — see the same content compared across all five B0–B4 strategies as a preview-only teaching surface. It consumes T20's real HTTP API — there is no fixture phase.
+
+#### Delivered in the second slice
+
+**Comparação B0–B4** (`Comparar estratégias`), reached as a secondary action from Resultado, over `POST /disclosure/compare`:
+
+- teaches before showing codes: each strategy's headline is a plain-language treatment name (`copy.treatments`, derived from `docs/experimental-design.md`'s treatment definitions), with the raw `b0`–`b4` code and `treatment` identifier demoted to an expandable technical-details area;
+- states explicitly, in pt-BR, that the comparison is a disclosure simulation and that none of the five strategies sends the document to the provider during this step;
+- the B0 — Direct warning is derived from `unsafe_control_baseline` only, never from `strategy === "b0"` — pinned by a test with a non-b0 entry carrying the flag and a b0 entry without it;
+- `recommended` renders as "Estratégia recomendada para o fluxo demonstrativo" — product configuration, never a ranking, score or "best" claim; no benchmark table exists;
+- reuses `CategoryOutcomeRow`/`describeCategoryOutcome`/`describeCategory` unchanged for the per-strategy local-vs-sent split;
+- `external_payload` is kept out of the React tree per strategy until its own disclosure is explicitly opened, same pattern as Revisão's payload toggle; the B0 payload additionally states the unsafe-control context before revealing it;
+- entries render in exactly the order `POST /disclosure/compare` returns (`CANONICAL_COMPARISON_ORDER`), pinned against the Python source, never re-sorted client-side;
+- `lib/flow.ts` gained `comparing`/`comparison` screens and `REQUEST_COMPARISON`/`COMPARE_SUCCEEDED`/`COMPARE_FAILED`/`RETURN_TO_RESULT` events; returning to Resultado preserves the original `preview`/`execute` state without re-fetching.
+
+Runtime validation added in `lib/responseGuards.ts` (`isCompareResponse`): `contract_version`, the `entries` collection, and per entry `strategy`/`treatment`/`recommended`/`unsafe_control_baseline`/`summary`/`external_payload`/`payload_byte_count`, plus `governance`/`provider_mode`. `unsafe_control_baseline` is checked as a real boolean (`typeof === "boolean"`), matching the existing `crosses_trust_boundary`/`failed` posture — a string `"false"` or an absent field both fail closed.
 
 #### Delivered in the first slice
 
@@ -264,9 +279,13 @@ The primary path never requires knowing B0–B4: the UI simply omits `strategy`,
 
 `Comparar estratégias` (the B0–B4 screen over `POST /disclosure/compare`), `Ver detalhes técnicos`, the English locale, `Histórico`, `Experimentos` and the `Configurações` area.
 
+#### Deliberately not in the second slice
+
+`Ver detalhes técnicos` (the full technical-details screen — the comparison screen's own per-entry technical disclosure is a small expandable, not that screen), the English locale, `Histórico`, `Experimentos`, `Configurações`, a real provider, auth, rate limiting, and structured PDF/DOCX/XLSX upload. T21/Issue #29 stays open pending these.
+
 #### Scientific state unchanged
 
-The UI adds no treatment, policy, corpus, oracle or metric semantics. It renders what the API returns and never decides what is safe.
+The UI adds no treatment, policy, corpus, oracle or metric semantics. It renders what the API returns and never decides what is safe. The comparison screen imports no scoring/oracle/metric module and computes no aggregate across strategies beyond what each strategy's own preview already reports.
 
 ### T25 / Issue #42 — containerized demo/deploy infrastructure
 

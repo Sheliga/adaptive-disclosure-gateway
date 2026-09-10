@@ -2,8 +2,8 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { executeDisclosure, getExamples, getHealth, previewDisclosure } from "@/lib/api";
-import type { ExecuteResponse, HealthResponse, PreviewResponse } from "@/lib/contracts";
+import { compareStrategies, executeDisclosure, getExamples, getHealth, previewDisclosure } from "@/lib/api";
+import type { CompareResponse, ExecuteResponse, HealthResponse, PreviewResponse } from "@/lib/contracts";
 import { copy } from "@/lib/copy";
 
 import { GuidedFlow } from "./GuidedFlow";
@@ -13,12 +13,14 @@ vi.mock("@/lib/api", () => ({
   getExamples: vi.fn(),
   previewDisclosure: vi.fn(),
   executeDisclosure: vi.fn(),
+  compareStrategies: vi.fn(),
 }));
 
 const mockedGetHealth = vi.mocked(getHealth);
 const mockedGetExamples = vi.mocked(getExamples);
 const mockedPreviewDisclosure = vi.mocked(previewDisclosure);
 const mockedExecuteDisclosure = vi.mocked(executeDisclosure);
+const mockedCompareStrategies = vi.mocked(compareStrategies);
 
 function healthResponse(deterministicDemoMode = true): HealthResponse {
   return {
@@ -58,7 +60,7 @@ function previewResponse(): PreviewResponse {
     },
     external_payload: "conteudo transformado",
     payload_byte_count: 22,
-    treatment: "policy_governed",
+    treatment: "b4",
     strategy: "recommended",
     governance: {
       domain: "demo",
@@ -90,7 +92,7 @@ function executeResponse(): ExecuteResponse {
       failure_kind: null,
     },
     reconstruction: { attempted: true, reconstructed_hash: "hash2", changed_from_provider_response: false },
-    treatment: "policy_governed",
+    treatment: "b4",
     strategy: "recommended",
     governance: {
       domain: "demo",
@@ -101,6 +103,61 @@ function executeResponse(): ExecuteResponse {
       requested_pseudonym_scope: "none",
     },
     total_ms: 100,
+  };
+}
+
+function compareResponse(): CompareResponse {
+  return {
+    contract_version: "t20-application-api-v1",
+    entries: [
+      {
+        strategy: "b0",
+        treatment: "b0",
+        recommended: false,
+        unsafe_control_baseline: true,
+        summary: previewResponse().summary,
+        external_payload: "conteudo original sem protecao",
+        payload_byte_count: 30,
+      },
+      {
+        strategy: "b1",
+        treatment: "b1",
+        recommended: false,
+        unsafe_control_baseline: false,
+        summary: previewResponse().summary,
+        external_payload: "conteudo b1",
+        payload_byte_count: 12,
+      },
+      {
+        strategy: "b2",
+        treatment: "b2",
+        recommended: false,
+        unsafe_control_baseline: false,
+        summary: previewResponse().summary,
+        external_payload: "conteudo b2",
+        payload_byte_count: 12,
+      },
+      {
+        strategy: "b3",
+        treatment: "b3",
+        recommended: false,
+        unsafe_control_baseline: false,
+        summary: previewResponse().summary,
+        external_payload: "conteudo b3",
+        payload_byte_count: 12,
+      },
+      {
+        strategy: "b4",
+        treatment: "b4",
+        recommended: true,
+        unsafe_control_baseline: false,
+        summary: previewResponse().summary,
+        external_payload: "conteudo transformado",
+        payload_byte_count: 22,
+      },
+    ],
+    governance: previewResponse().governance,
+    provider_mode: { provider_class: "FakeProvider" },
   };
 }
 
@@ -151,6 +208,15 @@ async function goToReview() {
   await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
 
   await screen.findByRole("heading", { name: copy.review.heading });
+}
+
+async function goToResult() {
+  mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+  mockedExecuteDisclosure.mockResolvedValue({ ok: true, data: executeResponse() });
+
+  await goToReview();
+  await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+  await screen.findByRole("heading", { name: copy.result.heading });
 }
 
 describe("GuidedFlow -- execute is never called before the user confirms on review", () => {
@@ -262,5 +328,111 @@ describe("GuidedFlow -- a failed /health still tells the user the mode is unknow
 
     await screen.findByRole("heading", { name: copy.result.heading });
     expect(await screen.findByText(copy.provider.modeUnverifiedLabel)).toBeInTheDocument();
+  });
+});
+
+describe("GuidedFlow -- Comparar estratégias (T21 second slice)", () => {
+  it("does not call compareStrategies until the user clicks Comparar estratégias", async () => {
+    await goToResult();
+
+    expect(mockedCompareStrategies).not.toHaveBeenCalled();
+  });
+
+  it("calls compareStrategies exactly once, with the same content/task/governance as the original test, only after the explicit click", async () => {
+    mockedCompareStrategies.mockResolvedValue({ ok: true, data: compareResponse() });
+    await goToResult();
+
+    await userEvent.click(screen.getByRole("button", { name: copy.buttons.compareStrategies }));
+
+    await waitFor(() => expect(mockedCompareStrategies).toHaveBeenCalledTimes(1));
+    // Same request body the preview/execute calls used for this run --
+    // built by the same `buildRequestBody(compose)`, never re-derived.
+    expect(mockedCompareStrategies.mock.calls[0][0]).toEqual(mockedPreviewDisclosure.mock.calls[0][0]);
+    expect(mockedCompareStrategies.mock.calls[0][0]).toEqual(mockedExecuteDisclosure.mock.calls[0][0]);
+  });
+
+  it("does not call executeDisclosure again when opening the comparison", async () => {
+    mockedCompareStrategies.mockResolvedValue({ ok: true, data: compareResponse() });
+    await goToResult();
+
+    await userEvent.click(screen.getByRole("button", { name: copy.buttons.compareStrategies }));
+    await screen.findByRole("heading", { name: copy.comparison.heading });
+
+    expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders exactly five strategies, in canonical order, once the comparison loads", async () => {
+    mockedCompareStrategies.mockResolvedValue({ ok: true, data: compareResponse() });
+    await goToResult();
+
+    await userEvent.click(screen.getByRole("button", { name: copy.buttons.compareStrategies }));
+    await screen.findByRole("heading", { name: copy.comparison.heading });
+
+    const order = ["b0", "b1", "b2", "b3", "b4"] as const;
+    const names = order.map((code) => copy.treatments[code].name);
+    const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent ?? "");
+    const positions = names.map((name) => headings.findIndex((h) => h.includes(name)));
+
+    expect(positions.every((p) => p >= 0)).toBe(true);
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
+  });
+
+  it("shows the explicit B0 warning once the comparison loads", async () => {
+    mockedCompareStrategies.mockResolvedValue({ ok: true, data: compareResponse() });
+    await goToResult();
+
+    await userEvent.click(screen.getByRole("button", { name: copy.buttons.compareStrategies }));
+
+    expect(await screen.findByText(copy.comparison.unsafeControlHeading)).toBeInTheDocument();
+  });
+
+  it("shows a safe generic error and returns to Result when the comparison request fails", async () => {
+    mockedCompareStrategies.mockResolvedValue({
+      ok: false,
+      status: 500,
+      error: { message: copy.errors.generic, kind: null, fields: null },
+    });
+    await goToResult();
+
+    await userEvent.click(screen.getByRole("button", { name: copy.buttons.compareStrategies }));
+
+    await screen.findByRole("heading", { name: copy.result.heading });
+    expect(screen.getByText(copy.errors.generic)).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: copy.comparison.heading })).not.toBeInTheDocument();
+  });
+
+  it("returning from the comparison preserves the original Result screen", async () => {
+    mockedCompareStrategies.mockResolvedValue({ ok: true, data: compareResponse() });
+    await goToResult();
+
+    const finalAnswer = executeResponse().final_answer as string;
+    expect(screen.getByText(finalAnswer)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: copy.buttons.compareStrategies }));
+    await screen.findByRole("heading", { name: copy.comparison.heading });
+
+    await userEvent.click(screen.getByRole("button", { name: copy.comparison.backToResult }));
+
+    await screen.findByRole("heading", { name: copy.result.heading });
+    expect(screen.getByText(finalAnswer)).toBeInTheDocument();
+    // The original result was not re-fetched to get back here.
+    expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a named loading state while the comparison is in flight, never a generic spinner", async () => {
+    let resolveCompare!: (value: Awaited<ReturnType<typeof compareStrategies>>) => void;
+    mockedCompareStrategies.mockReturnValue(
+      new Promise((resolve) => {
+        resolveCompare = resolve;
+      }),
+    );
+    await goToResult();
+
+    await userEvent.click(screen.getByRole("button", { name: copy.buttons.compareStrategies }));
+
+    expect(await screen.findByText(copy.processingStages.comparingStrategies)).toBeInTheDocument();
+
+    resolveCompare({ ok: true, data: compareResponse() });
+    await screen.findByRole("heading", { name: copy.comparison.heading });
   });
 });

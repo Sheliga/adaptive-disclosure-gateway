@@ -3,7 +3,12 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { DISCLOSURE_SUMMARY_STATUSES, KNOWN_DISCLOSURE_OUTCOMES } from "./contracts";
+import {
+  CANONICAL_COMPARISON_ORDER,
+  CANONICAL_COMPARISON_TREATMENTS,
+  DISCLOSURE_SUMMARY_STATUSES,
+  KNOWN_DISCLOSURE_OUTCOMES,
+} from "./contracts";
 
 /**
  * Reads the Python `DisclosureOutcome` StrEnum's own declared values
@@ -118,5 +123,208 @@ describe("DISCLOSURE_SUMMARY_STATUSES stays synchronized with Python's status Li
     }
 
     expect(DISCLOSURE_SUMMARY_STATUSES.length).toBe(pythonValues.length);
+  });
+});
+
+/**
+ * Pins `CANONICAL_COMPARISON_ORDER` against `application/contracts.py`'s
+ * tuple of the same name -- both the SET of strategies and their ORDER.
+ * `service.compare_strategies` iterates that Python tuple, and only that
+ * tuple, to decide `CompareResponse.entries` order (T21/#29's "canonical
+ * order is preserved" requirement); a UI constant that silently drifted
+ * from it (member added/removed/reordered) would make the "always
+ * DIRECT -> STATIC_SANITIZATION -> REVERSIBLE_PSEUDONYMIZATION ->
+ * TASK_AWARE -> POLICY_GOVERNED" claim this module's docstring makes false
+ * without any test catching it.
+ */
+function readPythonCanonicalComparisonOrder(): string[] {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const contractsPath = path.resolve(
+    here,
+    "..",
+    "..",
+    "src",
+    "adaptive_disclosure_gateway",
+    "application",
+    "contracts.py",
+  );
+  const source = readFileSync(contractsPath, "utf-8");
+
+  const enumMatch = source.match(/class DisclosureStrategy\(StrEnum\):[\s\S]*?(?=\nclass |\n_STRATEGY_TO_TREATMENT)/);
+  if (!enumMatch) {
+    throw new Error(
+      "could not locate `class DisclosureStrategy(StrEnum):` block in application/contracts.py -- " +
+        "has it been renamed or moved?",
+    );
+  }
+  const memberToValue = new Map<string, string>();
+  for (const match of enumMatch[0].matchAll(/^ {4}([A-Z_]+)\s*=\s*"([a-z0-9_]+)"/gm)) {
+    memberToValue.set(match[1], match[2]);
+  }
+  if (memberToValue.size === 0) {
+    throw new Error(
+      "found the DisclosureStrategy block but extracted zero members -- regex likely stale",
+    );
+  }
+
+  const orderMatch = source.match(
+    /CANONICAL_COMPARISON_ORDER:\s*tuple\[DisclosureStrategy, \.\.\.\]\s*=\s*\(([\s\S]*?)\)/,
+  );
+  if (!orderMatch) {
+    throw new Error(
+      "could not locate `CANONICAL_COMPARISON_ORDER: tuple[DisclosureStrategy, ...] = (...)` in " +
+        "application/contracts.py -- has it been renamed or moved?",
+    );
+  }
+  const members = [...orderMatch[1].matchAll(/DisclosureStrategy\.([A-Z_]+)/g)].map(
+    (match) => match[1],
+  );
+  if (members.length === 0) {
+    throw new Error(
+      "found CANONICAL_COMPARISON_ORDER but extracted zero members -- regex likely stale",
+    );
+  }
+
+  return members.map((member) => {
+    const value = memberToValue.get(member);
+    if (value === undefined) {
+      throw new Error(`CANONICAL_COMPARISON_ORDER references unknown DisclosureStrategy member ${member}`);
+    }
+    return value;
+  });
+}
+
+describe("CANONICAL_COMPARISON_ORDER stays synchronized with Python's tuple of the same name", () => {
+  it("has the exact same strategy codes in the exact same order", () => {
+    const pythonOrder = readPythonCanonicalComparisonOrder();
+
+    expect(CANONICAL_COMPARISON_ORDER).toEqual(pythonOrder);
+  });
+});
+
+/**
+ * Derives, independently, the treatment CODE `application/contracts.py`'s
+ * `resolve_treatment` maps each canonical strategy to -- by reading
+ * `_STRATEGY_TO_TREATMENT` off `contracts.py` and `Treatment`'s own
+ * member -> code mapping off `domain.py` -- rather than assuming (as
+ * `contracts.ts`'s `CANONICAL_COMPARISON_TREATMENTS` does) that a
+ * strategy's own `b0`-`b4` code IS the treatment code it resolves to.
+ * CLAUDE.md explicitly warns against treating "treatment equals strategy"
+ * as given rather than verified; this is that verification made durable --
+ * if `_STRATEGY_TO_TREATMENT` ever mapped one of the five canonical
+ * strategies to a differently-coded treatment, this is what would notice,
+ * because it never reads `CANONICAL_COMPARISON_TREATMENTS` itself.
+ */
+function readPythonCanonicalComparisonTreatmentCodes(): string[] {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const contractsPath = path.resolve(
+    here,
+    "..",
+    "..",
+    "src",
+    "adaptive_disclosure_gateway",
+    "application",
+    "contracts.py",
+  );
+  const domainPath = path.resolve(here, "..", "..", "src", "adaptive_disclosure_gateway", "domain.py");
+  const contractsSource = readFileSync(contractsPath, "utf-8");
+  const domainSource = readFileSync(domainPath, "utf-8");
+
+  const strategyEnumMatch = contractsSource.match(
+    /class DisclosureStrategy\(StrEnum\):[\s\S]*?(?=\nclass |\n_STRATEGY_TO_TREATMENT)/,
+  );
+  if (!strategyEnumMatch) {
+    throw new Error(
+      "could not locate `class DisclosureStrategy(StrEnum):` block in application/contracts.py -- " +
+        "has it been renamed or moved?",
+    );
+  }
+  const strategyMembers = new Set(
+    [...strategyEnumMatch[0].matchAll(/^ {4}([A-Z_]+)\s*=\s*"([a-z0-9_]+)"/gm)].map((match) => match[1]),
+  );
+  if (strategyMembers.size === 0) {
+    throw new Error(
+      "found the DisclosureStrategy block but extracted zero members -- regex likely stale",
+    );
+  }
+
+  const treatmentEnumMatch = domainSource.match(/class Treatment\(StrEnum\):[\s\S]*?(?=\nclass )/);
+  if (!treatmentEnumMatch) {
+    throw new Error(
+      "could not locate `class Treatment(StrEnum):` block in domain.py -- has it been renamed or moved?",
+    );
+  }
+  const treatmentMemberToCode = new Map<string, string>();
+  for (const match of treatmentEnumMatch[0].matchAll(/^ {4}([A-Z_]+)\s*=\s*"([a-z0-9_]+)"/gm)) {
+    treatmentMemberToCode.set(match[1], match[2]);
+  }
+  if (treatmentMemberToCode.size === 0) {
+    throw new Error("found the Treatment block but extracted zero members -- regex likely stale");
+  }
+
+  const mappingMatch = contractsSource.match(
+    /_STRATEGY_TO_TREATMENT:\s*dict\[DisclosureStrategy, Treatment\]\s*=\s*\{([\s\S]*?)\n\}/,
+  );
+  if (!mappingMatch) {
+    throw new Error(
+      "could not locate `_STRATEGY_TO_TREATMENT: dict[DisclosureStrategy, Treatment] = {...}` in " +
+        "application/contracts.py -- has it been renamed or moved?",
+    );
+  }
+  const strategyMemberToTreatmentMember = new Map<string, string>();
+  for (const match of mappingMatch[1].matchAll(/DisclosureStrategy\.([A-Z_]+)\s*:\s*Treatment\.([A-Z_]+)/g)) {
+    strategyMemberToTreatmentMember.set(match[1], match[2]);
+  }
+  if (strategyMemberToTreatmentMember.size === 0) {
+    throw new Error(
+      "found _STRATEGY_TO_TREATMENT but extracted zero entries -- regex likely stale",
+    );
+  }
+
+  const orderMatch = contractsSource.match(
+    /CANONICAL_COMPARISON_ORDER:\s*tuple\[DisclosureStrategy, \.\.\.\]\s*=\s*\(([\s\S]*?)\)/,
+  );
+  if (!orderMatch) {
+    throw new Error(
+      "could not locate `CANONICAL_COMPARISON_ORDER: tuple[DisclosureStrategy, ...] = (...)` in " +
+        "application/contracts.py -- has it been renamed or moved?",
+    );
+  }
+  const orderedStrategyMembers = [...orderMatch[1].matchAll(/DisclosureStrategy\.([A-Z_]+)/g)].map(
+    (match) => match[1],
+  );
+  if (orderedStrategyMembers.length === 0) {
+    throw new Error(
+      "found CANONICAL_COMPARISON_ORDER but extracted zero members -- regex likely stale",
+    );
+  }
+
+  return orderedStrategyMembers.map((strategyMember) => {
+    if (!strategyMembers.has(strategyMember)) {
+      throw new Error(
+        `CANONICAL_COMPARISON_ORDER references unknown DisclosureStrategy member ${strategyMember}`,
+      );
+    }
+    const treatmentMember = strategyMemberToTreatmentMember.get(strategyMember);
+    if (treatmentMember === undefined) {
+      throw new Error(`_STRATEGY_TO_TREATMENT has no entry for DisclosureStrategy.${strategyMember}`);
+    }
+    const treatmentCode = treatmentMemberToCode.get(treatmentMember);
+    if (treatmentCode === undefined) {
+      throw new Error(`Treatment has no member named ${treatmentMember}`);
+    }
+    return treatmentCode;
+  });
+}
+
+describe("CANONICAL_COMPARISON_TREATMENTS stays synchronized with Python's resolve_treatment", () => {
+  it("has the exact treatment code resolve_treatment maps each canonical strategy to, in order", () => {
+    // This is derived from `_STRATEGY_TO_TREATMENT` and `Treatment`
+    // independently of `CANONICAL_COMPARISON_ORDER`/`readPythonCanonicalComparisonOrder`
+    // above, so it cannot pass merely because both sides happen to read the
+    // same already-correct constant.
+    const pythonTreatments = readPythonCanonicalComparisonTreatmentCodes();
+
+    expect(CANONICAL_COMPARISON_TREATMENTS).toEqual(pythonTreatments);
   });
 });
