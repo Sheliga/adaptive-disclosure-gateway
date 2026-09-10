@@ -34,7 +34,7 @@ function preview(overrides: Partial<PreviewResponse> = {}): PreviewResponse {
       policy_version: "v1",
       provider_class: "FakeProvider",
       requester_role: null,
-      requested_pseudonym_scope: "none",
+      requested_pseudonym_scope: "session",
     },
     provider_mode: { provider_class: "FakeProvider" },
     ...overrides,
@@ -44,7 +44,7 @@ function preview(overrides: Partial<PreviewResponse> = {}): PreviewResponse {
 function execute(overrides: Partial<ExecuteResponse> = {}): ExecuteResponse {
   return {
     contract_version: "t20-application-api-v1",
-    status: "completed",
+    status: "allowed",
     summary: {
       status: "allowed",
       categories: [],
@@ -76,7 +76,7 @@ function execute(overrides: Partial<ExecuteResponse> = {}): ExecuteResponse {
       policy_version: "v1",
       provider_class: "FakeProvider",
       requester_role: null,
-      requested_pseudonym_scope: "none",
+      requested_pseudonym_scope: "session",
     },
     total_ms: 42,
     ...overrides,
@@ -283,7 +283,7 @@ function compare(overrides: Partial<CompareResponse> = {}): CompareResponse {
       policy_version: "v1",
       provider_class: "FakeProvider",
       requester_role: null,
-      requested_pseudonym_scope: "none",
+      requested_pseudonym_scope: "session",
     },
     provider_mode: { provider_class: "FakeProvider" },
     ...overrides,
@@ -313,6 +313,75 @@ describe("flowReducer -- result screen", () => {
 
   it("does not call/represent a comparison on any other event here", () => {
     expect(flowReducer(state, { type: "CONFIRM_REVIEW" })).toBe(state);
+  });
+
+  it("OPEN_TECHNICAL_DETAILS moves to the technicalDetails screen, carrying preview/execute/compareError forward -- no request involved", () => {
+    const next = flowReducer(state, { type: "OPEN_TECHNICAL_DETAILS" });
+    expect(next).toEqual({
+      screen: "technicalDetails",
+      compose: initialComposeState,
+      preview: p,
+      execute: e,
+      compareError: null,
+    });
+  });
+
+  it("OPEN_TECHNICAL_DETAILS preserves a prior compareError instead of silently clearing it", () => {
+    const withError: FlowState = { ...state, compareError: genericError };
+    const next = flowReducer(withError, { type: "OPEN_TECHNICAL_DETAILS" });
+    expect(next).toEqual({
+      screen: "technicalDetails",
+      compose: initialComposeState,
+      preview: p,
+      execute: e,
+      compareError: genericError,
+    });
+  });
+});
+
+describe("flowReducer -- technicalDetails screen (Ver detalhes técnicos)", () => {
+  const p = preview();
+  const e = execute();
+  const state: FlowState = {
+    screen: "technicalDetails",
+    compose: initialComposeState,
+    preview: p,
+    execute: e,
+    compareError: null,
+  };
+
+  it("RETURN_TO_RESULT goes back to result, preserving the original execute/preview and compareError untouched", () => {
+    const next = flowReducer(state, { type: "RETURN_TO_RESULT" });
+    expect(next).toEqual({
+      screen: "result",
+      compose: initialComposeState,
+      preview: p,
+      execute: e,
+      compareError: null,
+    });
+  });
+
+  it("RETURN_TO_RESULT restores a prior compareError rather than clearing it -- this screen never touches comparison state", () => {
+    const withError: FlowState = { ...state, compareError: genericError };
+    const next = flowReducer(withError, { type: "RETURN_TO_RESULT" });
+    expect(next).toEqual({
+      screen: "result",
+      compose: initialComposeState,
+      preview: p,
+      execute: e,
+      compareError: genericError,
+    });
+  });
+
+  it("RESTART still returns to a fresh compose screen from the technicalDetails screen", () => {
+    const next = flowReducer(state, { type: "RESTART" });
+    expect(next).toEqual({ screen: "compose", compose: initialComposeState, submitError: null });
+  });
+
+  it("does not re-invoke preview/execute/compare from here -- those events are no-ops", () => {
+    expect(flowReducer(state, { type: "CONFIRM_REVIEW" })).toBe(state);
+    expect(flowReducer(state, { type: "EXECUTE_SUCCEEDED", execute: e })).toBe(state);
+    expect(flowReducer(state, { type: "REQUEST_COMPARISON" })).toBe(state);
   });
 });
 

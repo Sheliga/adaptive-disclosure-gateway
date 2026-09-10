@@ -68,7 +68,7 @@ function previewResponse(): PreviewResponse {
       policy_version: "v1",
       provider_class: "FakeProvider",
       requester_role: null,
-      requested_pseudonym_scope: "none",
+      requested_pseudonym_scope: "session",
     },
     provider_mode: { provider_class: "FakeProvider" },
   };
@@ -77,7 +77,7 @@ function previewResponse(): PreviewResponse {
 function executeResponse(): ExecuteResponse {
   return {
     contract_version: "t20-application-api-v1",
-    status: "completed",
+    status: "allowed",
     summary: previewResponse().summary,
     final_answer: "Resposta final reconstruída localmente.",
     provider: {
@@ -100,7 +100,7 @@ function executeResponse(): ExecuteResponse {
       policy_version: "v1",
       provider_class: "FakeProvider",
       requester_role: null,
-      requested_pseudonym_scope: "none",
+      requested_pseudonym_scope: "session",
     },
     total_ms: 100,
   };
@@ -434,5 +434,78 @@ describe("GuidedFlow -- Comparar estratégias (T21 second slice)", () => {
 
     resolveCompare({ ok: true, data: compareResponse() });
     await screen.findByRole("heading", { name: copy.comparison.heading });
+  });
+});
+
+describe("GuidedFlow -- Ver detalhes técnicos (T21 third slice)", () => {
+  it("shows the Ver detalhes técnicos action on Resultado", async () => {
+    await goToResult();
+
+    expect(screen.getByRole("button", { name: copy.buttons.viewTechnicalDetails })).toBeInTheDocument();
+  });
+
+  it("opens the technical details screen on click, without calling preview/execute/compare again", async () => {
+    await goToResult();
+
+    await userEvent.click(screen.getByRole("button", { name: copy.buttons.viewTechnicalDetails }));
+
+    await screen.findByRole("heading", { name: copy.sectionHeadings.technicalDetails });
+    expect(mockedPreviewDisclosure).toHaveBeenCalledTimes(1);
+    expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+    expect(mockedCompareStrategies).not.toHaveBeenCalled();
+  });
+
+  it("reuses the same ExecuteResponse already held by Resultado -- strategy and treatment render correctly", async () => {
+    await goToResult();
+
+    await userEvent.click(screen.getByRole("button", { name: copy.buttons.viewTechnicalDetails }));
+    await screen.findByRole("heading", { name: copy.sectionHeadings.technicalDetails });
+
+    const e = executeResponse();
+    expect(screen.getByText(e.strategy)).toBeInTheDocument();
+    expect(screen.getByText(e.treatment)).toBeInTheDocument();
+  });
+
+  it("returning restores the original Resultado without re-running preview, execute or compare", async () => {
+    await goToResult();
+
+    const finalAnswer = executeResponse().final_answer as string;
+    expect(screen.getByText(finalAnswer)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: copy.buttons.viewTechnicalDetails }));
+    await screen.findByRole("heading", { name: copy.sectionHeadings.technicalDetails });
+
+    await userEvent.click(screen.getByRole("button", { name: copy.technicalDetails.backToResult }));
+
+    await screen.findByRole("heading", { name: copy.result.heading });
+    expect(screen.getByText(finalAnswer)).toBeInTheDocument();
+    expect(mockedPreviewDisclosure).toHaveBeenCalledTimes(1);
+    expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+    expect(mockedCompareStrategies).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Adversarial leak test (CLAUDE.md's no-leak invariant): plants a marker
+   * in `PreviewResponse.external_payload` -- a field that IS on the same
+   * flow state the technical-details screen is wired from, but that screen
+   * must never read (its own explicit-reveal surface is Revisão/Comparação,
+   * not this screen). This is the realistic failure mode a careless
+   * implementation could hit: passing `preview` into `TechnicalDetailsScreen`
+   * or otherwise threading `external_payload` through.
+   */
+  it("never renders external_payload on the technical details screen", async () => {
+    const preview = previewResponse();
+    preview.external_payload = "SESSION_SECRET_MARKER";
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: preview });
+    mockedExecuteDisclosure.mockResolvedValue({ ok: true, data: executeResponse() });
+
+    await goToReview();
+    await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+    await screen.findByRole("heading", { name: copy.result.heading });
+
+    await userEvent.click(screen.getByRole("button", { name: copy.buttons.viewTechnicalDetails }));
+    await screen.findByRole("heading", { name: copy.sectionHeadings.technicalDetails });
+
+    expect(screen.queryByText(/SESSION_SECRET_MARKER/)).not.toBeInTheDocument();
   });
 });

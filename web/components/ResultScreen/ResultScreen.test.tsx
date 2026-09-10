@@ -11,7 +11,7 @@ import { ResultScreen } from "./ResultScreen";
 function execute(overrides: Partial<ExecuteResponse> = {}): ExecuteResponse {
   return {
     contract_version: "t20-application-api-v1",
-    status: "completed",
+    status: "allowed",
     summary: {
       status: "allowed",
       categories: [],
@@ -43,7 +43,7 @@ function execute(overrides: Partial<ExecuteResponse> = {}): ExecuteResponse {
       policy_version: "v1",
       provider_class: "FakeProvider",
       requester_role: null,
-      requested_pseudonym_scope: "none",
+      requested_pseudonym_scope: "session",
     },
     total_ms: 42,
     ...overrides,
@@ -71,7 +71,7 @@ function healthBody(deterministicDemoMode: boolean): HealthResponse {
 describe("ResultScreen -- final answer is the primary output", () => {
   it("renders the final answer and the trust-boundary path on success", () => {
     const e = execute();
-    render(<ResultScreen execute={e} health={{ status: "loading" }} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} />);
+    render(<ResultScreen execute={e} health={{ status: "loading" }} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} onViewTechnicalDetails={vi.fn()} />);
 
     expect(screen.getByText(e.final_answer as string)).toBeInTheDocument();
     expect(screen.getAllByText(copy.result.pathLocal).length).toBe(2);
@@ -82,7 +82,7 @@ describe("ResultScreen -- final answer is the primary output", () => {
 describe("ResultScreen -- blocked execution", () => {
   it("renders the blocked state, not a crash or a fabricated answer", () => {
     const e = execute({ summary: { status: "blocked", categories: [], detected_span_count: 0, detected_categories: [] } });
-    render(<ResultScreen execute={e} health={{ status: "loading" }} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} />);
+    render(<ResultScreen execute={e} health={{ status: "loading" }} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} onViewTechnicalDetails={vi.fn()} />);
 
     expect(screen.getByText(copy.result.blockedHeading)).toBeInTheDocument();
     expect(screen.queryByText(e.final_answer as string)).not.toBeInTheDocument();
@@ -105,7 +105,7 @@ describe("ResultScreen -- failed provider call", () => {
         failure_kind: "timeout",
       },
     });
-    render(<ResultScreen execute={e} health={{ status: "loading" }} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} />);
+    render(<ResultScreen execute={e} health={{ status: "loading" }} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} onViewTechnicalDetails={vi.fn()} />);
 
     expect(screen.getByText(copy.result.providerFailedHeading)).toBeInTheDocument();
     expect(screen.getByText("timeout")).toBeInTheDocument();
@@ -115,17 +115,17 @@ describe("ResultScreen -- failed provider call", () => {
 
 describe("ResultScreen -- deterministic demo mode label", () => {
   it("appears when health.provider.deterministic_demo_mode is true", () => {
-    render(<ResultScreen execute={execute()} health={healthState(true)} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} />);
+    render(<ResultScreen execute={execute()} health={healthState(true)} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} onViewTechnicalDetails={vi.fn()} />);
     expect(screen.getByText(copy.provider.deterministicDemoLabel)).toBeInTheDocument();
   });
 
   it("does not appear when it is false", () => {
-    render(<ResultScreen execute={execute()} health={healthState(false)} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} />);
+    render(<ResultScreen execute={execute()} health={healthState(false)} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} onViewTechnicalDetails={vi.fn()} />);
     expect(screen.queryByText(copy.provider.deterministicDemoLabel)).not.toBeInTheDocument();
   });
 
   it("does not appear while the health check is still in flight", () => {
-    render(<ResultScreen execute={execute()} health={{ status: "loading" }} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} />);
+    render(<ResultScreen execute={execute()} health={{ status: "loading" }} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} onViewTechnicalDetails={vi.fn()} />);
     expect(screen.queryByText(copy.provider.deterministicDemoLabel)).not.toBeInTheDocument();
   });
 });
@@ -140,6 +140,7 @@ describe("ResultScreen -- restart", () => {
         onRestart={onRestart}
         compareError={null}
         onCompareStrategies={vi.fn()}
+        onViewTechnicalDetails={vi.fn()}
       />,
     );
     await userEvent.click(screen.getByRole("button", { name: copy.result.restart }));
@@ -185,7 +186,7 @@ describe("ResultScreen -- the protections summary speaks human, not identifiers"
   }
 
   it("uses the pt-BR category labels, not the raw identifiers", () => {
-    render(<ResultScreen execute={withCategories()} health={{ status: "loading" }} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} />);
+    render(<ResultScreen execute={withCategories()} health={{ status: "loading" }} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} onViewTechnicalDetails={vi.fn()} />);
 
     expect(screen.getByText(copy.categories.labels.employee_name, { exact: false })).toBeInTheDocument();
     expect(screen.getByText(copy.categories.labels.cpf, { exact: false })).toBeInTheDocument();
@@ -209,6 +210,7 @@ describe("ResultScreen -- the provider mode when /health could not be checked", 
         onRestart={vi.fn()}
         compareError={null}
         onCompareStrategies={vi.fn()}
+        onViewTechnicalDetails={vi.fn()}
       />,
     );
 
@@ -223,6 +225,7 @@ describe("ResultScreen -- the provider mode when /health could not be checked", 
         onRestart={vi.fn()}
         compareError={null}
         onCompareStrategies={vi.fn()}
+        onViewTechnicalDetails={vi.fn()}
       />,
     );
 
@@ -230,7 +233,7 @@ describe("ResultScreen -- the provider mode when /health could not be checked", 
   });
 
   it("does not show the unverified notice once health has actually answered", () => {
-    render(<ResultScreen execute={execute()} health={healthState(true)} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} />);
+    render(<ResultScreen execute={execute()} health={healthState(true)} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} onViewTechnicalDetails={vi.fn()} />);
 
     expect(screen.queryByText(copy.provider.modeUnverifiedLabel)).not.toBeInTheDocument();
     expect(screen.getByText(copy.provider.deterministicDemoLabel)).toBeInTheDocument();
@@ -251,6 +254,7 @@ describe("ResultScreen -- Comparar estratégias entry point", () => {
         onRestart={vi.fn()}
         compareError={null}
         onCompareStrategies={vi.fn()}
+        onViewTechnicalDetails={vi.fn()}
       />,
     );
 
@@ -266,6 +270,7 @@ describe("ResultScreen -- Comparar estratégias entry point", () => {
         onRestart={vi.fn()}
         compareError={null}
         onCompareStrategies={onCompareStrategies}
+        onViewTechnicalDetails={vi.fn()}
       />,
     );
 
@@ -282,6 +287,7 @@ describe("ResultScreen -- Comparar estratégias entry point", () => {
         onRestart={vi.fn()}
         compareError={{ message: copy.errors.generic, kind: null, fields: null }}
         onCompareStrategies={vi.fn()}
+        onViewTechnicalDetails={vi.fn()}
       />,
     );
 
@@ -296,9 +302,50 @@ describe("ResultScreen -- Comparar estratégias entry point", () => {
         onRestart={vi.fn()}
         compareError={null}
         onCompareStrategies={vi.fn()}
+        onViewTechnicalDetails={vi.fn()}
       />,
     );
 
     expect(screen.queryByText(copy.errors.generic)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * T21 third slice: the "Ver detalhes técnicos" entry point. Same posture as
+ * "Comparar estratégias" above -- always offered, never gated on a
+ * successful outcome, since the point is explaining what actually ran.
+ */
+describe("ResultScreen -- Ver detalhes técnicos entry point", () => {
+  it("renders a Ver detalhes técnicos action on every result", () => {
+    render(
+      <ResultScreen
+        execute={execute()}
+        health={{ status: "loading" }}
+        onRestart={vi.fn()}
+        compareError={null}
+        onCompareStrategies={vi.fn()}
+        onViewTechnicalDetails={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: copy.buttons.viewTechnicalDetails })).toBeInTheDocument();
+  });
+
+  it("calls onViewTechnicalDetails when clicked -- it never calls executeDisclosure itself", async () => {
+    const onViewTechnicalDetails = vi.fn();
+    render(
+      <ResultScreen
+        execute={execute()}
+        health={{ status: "loading" }}
+        onRestart={vi.fn()}
+        compareError={null}
+        onCompareStrategies={vi.fn()}
+        onViewTechnicalDetails={onViewTechnicalDetails}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: copy.buttons.viewTechnicalDetails }));
+
+    expect(onViewTechnicalDetails).toHaveBeenCalledTimes(1);
   });
 });

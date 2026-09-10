@@ -42,7 +42,7 @@ function preview(categories: CategoryDisclosureSummary[], status: "allowed" | "b
       policy_version: "v1",
       provider_class: "FakeProvider",
       requester_role: null,
-      requested_pseudonym_scope: "none",
+      requested_pseudonym_scope: "session",
     },
     provider_mode: { provider_class: "FakeProvider" },
   };

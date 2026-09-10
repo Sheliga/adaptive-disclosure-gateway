@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-09-09 — T21 second slice (Comparar estratégias) in validation.
+Last updated: 2026-09-10 — T21 third slice (Ver detalhes técnicos) in validation.
 
 This file tracks the current engineering/research state and execution order. Architectural decisions belong in ADRs; experimental definitions belong in `docs/experimental-design.md`; factual pilot results belong in `docs/milestone-2-pilot.md`; the parallel advisor-facing application plan belongs in `docs/advisor-demo.md`; historical PR/Issue descriptions remain in GitHub.
 
@@ -237,9 +237,25 @@ This slice adds no treatment, policy, corpus, oracle or metric semantics. B0–B
 
 ### T21 / Issue #29 — Next.js advisor-facing UI
 
-Status: **second vertical slice in validation (PR open) / non-blocking for M3**. T21 is NOT complete — see "Deliberately not in the second slice" below.
+Status: **third vertical slice in validation (PR open) / non-blocking for M3**. T21 is NOT complete — see "Deliberately not in the third slice" below.
 
-The UI lets a reviewer select a prepared HR example or controlled text, see what crosses the trust boundary before anything is sent, receive the locally reconstructed answer, and — as of the second slice — see the same content compared across all five B0–B4 strategies as a preview-only teaching surface. It consumes T20's real HTTP API — there is no fixture phase.
+The UI lets a reviewer select a prepared HR example or controlled text, see what crosses the trust boundary before anything is sent, receive the locally reconstructed answer, see the same content compared across all five B0–B4 strategies as a preview-only teaching surface, and — as of the third slice — inspect a safe technical/operational view of the SAME execution already shown on Resultado. It consumes T20's real HTTP API — there is no fixture phase.
+
+#### Delivered in the third slice
+
+**Detalhes técnicos** (`Ver detalhes técnicos`), reached as a secondary action from Resultado, alongside `Comparar estratégias`. Pure client-side navigation over the `ExecuteResponse` Resultado already holds — `lib/flow.ts` gained a `technicalDetails` screen and an `OPEN_TECHNICAL_DETAILS` event; it reuses the existing `RETURN_TO_RESULT` event to go back rather than inventing a second one, and (unlike the comparison screen's return) threads `compareError` through unchanged, since opening/closing this screen never touches comparison state. No new request is made: opening or closing this screen never calls `/disclosure/preview`, `/disclosure/execute` or `/disclosure/compare`.
+
+`components/TechnicalDetailsScreen` takes ONLY `execute: ExecuteResponse` as its data prop (never `preview`) — a structural guard, not just a behavioral one, against `PreviewResponse.external_payload` ever reaching this screen. It renders five sections:
+
+- **Execução** — `strategy` (the requested interface/API choice: `"recommended"` OR an explicit `b0`–`b4` code, both legal on `DisclosureStrategy`) and `treatment` (the `b0`–`b4` code actually executed); `_STRATEGY_TO_TREATMENT` is a static mapping, not a decision procedure — every explicit strategy maps to the treatment it names, and only `recommended` currently resolves (a product/UX default, not a scientific claim that B4 dominates every comparison) to Policy-governed/B4. The screen states this distinction and draws no conclusion from either value;
+- **Governança** — only `SafeGovernanceView` fields; a null `requester_role` renders as "Não informado", never as an error;
+- **Provedor** — only the safe `ProviderStage` fields. `decoding_config` renders as bounded, non-recursive key/value rows (`formatDecodingValue`, capped at 200 chars), never a dump of the whole response. The not-called state shows only a notice; a failed call shows ONLY `failure_kind` (the safe exception-class-name category — see `audit.py`'s `ProviderStage` docstring) and nothing else provider-related;
+- **Reconstrução local** — `attempted`, `changed_from_provider_response`, with a brief explanation of what local reconstruction means; never shows pseudonym mappings or attempts to recover original values;
+- **Tempo operacional** — `total_ms`, with explicit pt-BR text stating this is an operational measure of the application run and NOT the scientific latency metric used in the experiments. No T10/`experiments/stage_timing.py` metric, percentile or benchmark is imported, recreated or computed; `total_ms` is never turned into a score.
+
+**Hash tension, flagged for Paulo rather than decided silently:** `response_hash`/`reconstructed_hash` are rendered as technical metadata, but only behind their own nested `<details>` disclosure, kept OUT of the React tree (not merely CSS-hidden) until explicitly opened — the same pattern `ComparisonScreen` uses for `external_payload`. This follows CLAUDE.md's no-leak invariant, which treats a public, reproducible digest of low-entropy content as guessable/dictionary-reversible (one of this project's three historical side-channel defects was exactly an unkeyed public SHA-256 in an audit record). Both hashes are actually HMAC-SHA256 digests keyed by a process-local, non-reproducible secret (`audit.py`'s `_content_hash`/`_DEFAULT_AUDIT_HASH_KEY`), not a plain digest — a materially different risk profile than that historical defect — but the PR leaves the keep/truncate/presence-indicator-only decision to Paulo rather than assuming the keying makes it moot.
+
+`external_payload` does not appear anywhere on this screen; neither do the original document, the task, provider raw response text, pseudonym mappings, or any lifecycle id (`requester_id`/`session_id`/`document_id`/`request_id` — excluded structurally, since `SafeGovernanceView`/`ExecuteResponse` never carry them).
 
 #### Delivered in the second slice
 
@@ -281,11 +297,15 @@ The primary path never requires knowing B0–B4: the UI simply omits `strategy`,
 
 #### Deliberately not in the second slice
 
-`Ver detalhes técnicos` (the full technical-details screen — the comparison screen's own per-entry technical disclosure is a small expandable, not that screen), the English locale, `Histórico`, `Experimentos`, `Configurações`, a real provider, auth, rate limiting, and structured PDF/DOCX/XLSX upload. T21/Issue #29 stays open pending these.
+`Ver detalhes técnicos` (the full technical-details screen — the comparison screen's own per-entry technical disclosure is a small expandable, not that screen), the English locale, `Histórico`, `Experimentos`, `Configurações`, a real provider, auth, rate limiting, and structured PDF/DOCX/XLSX upload.
+
+#### Deliberately not in the third slice
+
+The English locale, `Histórico`, `Experimentos`, `Configurações`, remaining navigation polish, T12 structured-document ingestion (PDF/DOCX/XLSX), T22 real provider, and T25 deploy. **T21/Issue #29 stays open** pending these.
 
 #### Scientific state unchanged
 
-The UI adds no treatment, policy, corpus, oracle or metric semantics. It renders what the API returns and never decides what is safe. The comparison screen imports no scoring/oracle/metric module and computes no aggregate across strategies beyond what each strategy's own preview already reports.
+The UI adds no treatment, policy, corpus, oracle or metric semantics. It renders what the API returns and never decides what is safe. The comparison screen imports no scoring/oracle/metric module and computes no aggregate across strategies beyond what each strategy's own preview already reports. The technical-details screen computes no scientific metric either: `total_ms` is operational-only, never a substitute for T10's stage-aware latency metric.
 
 ### T25 / Issue #42 — containerized demo/deploy infrastructure
 
