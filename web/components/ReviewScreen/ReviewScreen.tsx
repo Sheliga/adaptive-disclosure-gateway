@@ -22,9 +22,9 @@
 
 import { useState } from "react";
 
+import { useCopy } from "@/i18n/useLocale";
 import type { DisplayError } from "@/lib/api";
 import type { PreviewResponse } from "@/lib/contracts";
-import { copy } from "@/lib/copy";
 
 import { CategoryOutcomeRow } from "../CategoryOutcomeRow/CategoryOutcomeRow";
 import styles from "./ReviewScreen.module.css";
@@ -37,6 +37,7 @@ export interface ReviewScreenProps {
 }
 
 export function ReviewScreen({ preview, executeError, onConfirm, onCancel }: ReviewScreenProps) {
+  const copy = useCopy();
   const [payloadOpen, setPayloadOpen] = useState(false);
 
   const isBlocked = preview.summary.status === "blocked";

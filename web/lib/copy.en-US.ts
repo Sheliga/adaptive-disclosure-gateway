@@ -1,0 +1,319 @@
+/**
+ * English (en-US) presentation copy -- the sibling locale to `./copy.ts`'s
+ * `ptBR` (T21 / issue #29's fourth slice).
+ *
+ * This is a fresh, natural-English rendering of the same UI, not a
+ * word-for-word translation of the Portuguese sentences -- see `copy.test.ts`
+ * for the pins that keep the scientific framing intact in this language
+ * specifically (CLAUDE.md warns English prose drifts toward evaluative
+ * adjectives that Portuguese happened not to need pinning against):
+ *
+ *  - B0 is described as a baseline/reference control, never "bad", "wrong"
+ *    or "worst";
+ *  - B4 is described by what it does, never as "best", "most secure" or
+ *    "scientifically superior" -- it may stay the recommended strategy for
+ *    the demonstration flow, stated as a product/UX choice;
+ *  - `strategyVsTreatmentExplanation` keeps stating, in English, that
+ *    `recommended` is a request-time option that currently resolves
+ *    STATICALLY to B4 -- never that a policy "chooses"/"decides" it, and
+ *    never "automatically";
+ *  - `timingExplanation` keeps `total_ms` framed as an operational
+ *    measurement of this run, explicitly not the scientific latency metric
+ *    used in the experiments.
+ *
+ * Scientific/internal identifiers stay OUT of this module, exactly like
+ * `ptBR`: `b0`-`b4`, category identifiers, `recommended`, contract values
+ * and similar are never translated -- only the prose ABOUT them lives here.
+ *
+ * `AppCopy` (from `./copy.ts`) is what actually enforces parity with `ptBR`:
+ * a missing key, an extra key, or a wrong-shaped nested value below is a
+ * compile error, not a runtime gap. See `copy.ts`'s `Widen<T>` for why that
+ * type is not simply `typeof ptBR`.
+ */
+
+import type { AppCopy } from "./copy";
+
+export const enUS: AppCopy = {
+  howItWorks: {
+    title: "How it works",
+    steps: [
+      {
+        title: "Local analysis",
+        description: "The document is inspected before anything leaves the trusted environment.",
+      },
+      {
+        title: "Controlled disclosure",
+        description: "Only the permitted/transformed representation is sent to the external provider.",
+      },
+      {
+        title: "Local reconstruction",
+        description: "Authorized pseudonyms can be reconstructed after the model's response.",
+      },
+    ],
+    ctaPrimary: "Try it now",
+    ctaSecondary: "How does the research work?",
+  },
+
+  entryModes: {
+    heading: "How would you like to test it?",
+    useExample: "Use an example",
+    uploadFile: "Upload my file",
+    pasteText: "Paste text",
+  },
+
+  newTest: {
+    heading: "New test",
+    exampleFieldLabel: "Choose an example",
+    exampleLoading: "Loading examples...",
+    exampleTechnicalIdLabel: "Technical identifier for this example:",
+    exampleLoadError: "Could not load the examples.",
+    examplePlaceholder: "Select an example",
+    pasteLabel: "Paste the text you want to test",
+    pastePlaceholder: "Paste the content you want to test here.",
+    uploadFieldLabel: "Choose a file",
+    uploadDropHint: "Drag a .txt or .md file here, or choose a file.",
+    uploadUnsupportedType: "Only .txt or .md files are accepted.",
+    uploadReadError: "Could not read the selected file.",
+    removeFile: "Remove file",
+    fileNameLabel: "File name",
+    fileTypeLabel: "Type",
+    fileSizeLabel: "Size",
+    taskLabel: "What do you want the model to do with this content?",
+    taskPlaceholder: "E.g.: Summarize the main points of this document.",
+    taskHintForExample: "Leave blank to use the task suggested by the chosen example.",
+    continueToReview: "Review before sending",
+    incompleteHint: "Choose an example, upload a file, or paste text to continue.",
+  },
+
+  review: {
+    heading: "Review before sending",
+    detectedCountLabel: "sensitive items detected",
+    noneDetected: "No sensitive data was detected in this content.",
+    nothingInSection: "No items in this category.",
+    showPayloadToggle: "View the exact payload that would be sent",
+    payloadByteCountLabel: "bytes",
+    blockedHeading: "Request blocked",
+    blockedExplanation:
+      "The disclosure policy blocked this request. Nothing will be sent to the external provider.",
+    confirmSend: "Confirm and send",
+    backToCompose: "Back and edit",
+  },
+
+  result: {
+    heading: "Result",
+    pathHeading: "Information path",
+    pathLocal: "Local",
+    pathProvider: "External provider",
+    protectionsAppliedHeading: "Protections applied",
+    blockedHeading: "Execution blocked",
+    blockedExplanation:
+      "The disclosure policy blocked this execution. No content was sent to the external provider.",
+    providerFailedHeading: "Provider call failed",
+    providerFailedExplanation: "The external provider did not respond successfully. No answer was fabricated.",
+    restart: "Test again",
+  },
+
+  provider: {
+    deterministicDemoLabel: "Deterministic demonstration provider — not a real model.",
+    modeUnverifiedLabel: "Provider mode could not be verified.",
+  },
+
+  processingStages: {
+    readingFile: "Reading the file",
+    detectingSensitiveData: "Detecting sensitive data",
+    applyingDisclosurePolicy: "Applying disclosure policy",
+    consultingModel: "Consulting the model",
+    reconstructingAnswer: "Reconstructing the answer",
+    comparingStrategies: "Comparing how each strategy would treat the same document…",
+  },
+
+  comparison: {
+    heading: "How do the strategies differ?",
+    intro:
+      "The same content was analyzed in five different ways. Below is exactly what each one would send to the external provider.",
+    simulationNotice:
+      "This comparison is a disclosure simulation. None of the five strategies sends the document to the provider during this step.",
+    recommendedBadge: "Strategy recommended for the demonstration flow",
+    unsafeControlHeading: "Unprotected experimental control",
+    unsafeControlExplanation:
+      "This is the reference baseline used in the research to measure the effect of applying no protection at all. It is not a recommended option for real use, and it is never actually sent in this demonstration.",
+    unsafeControlPayloadContext: "This is the content that would be sent with no protection under the reference control.",
+    categoriesDetectedLabel: "sensitive categories detected",
+    showPayloadToggle: "View what would be sent under this strategy",
+    technicalDetailsToggle: "Technical details",
+    strategyIdLabel: "Strategy identifier:",
+    treatmentIdLabel: "Treatment:",
+    backToResult: "Back to result",
+    loadError: "Could not load the strategy comparison.",
+  },
+
+  treatments: {
+    b0: {
+      name: "Direct (unprotected experimental control)",
+      description:
+        "Sends the original content with no transformation at all. It is the research's reference control, not a recommended option for real use.",
+    },
+    b1: {
+      name: "Static sanitization",
+      description:
+        "Applies a fixed, task-independent transformation to each detected sensitive item before anything is sent.",
+    },
+    b2: {
+      name: "Reversible pseudonymization",
+      description:
+        "Keeps the static, local transformation. A sensitive value can be swapped for a pseudonym isolated in a local vault, which can only be reversed locally.",
+    },
+    b3: {
+      name: "Task-aware",
+      description:
+        "Keeps reversible pseudonymization and chooses each category's action based on the requested task, within a fixed set of possible actions.",
+    },
+    b4: {
+      name: "Policy-governed",
+      description:
+        "Keeps the previous mechanisms, but first applies a contextual organizational policy that defines what is permitted; the task can only further restrict what the policy already allows.",
+    },
+  } as Record<string, { name: string; description: string }>,
+
+  technicalDetails: {
+    executionHeading: "Execution",
+    strategyLabel: "Requested strategy",
+    treatmentLabel: "Executed treatment",
+    strategyVsTreatmentExplanation:
+      '"Requested strategy" is the option asked for by the interface or API: it can be "recommended" or an explicit B0–B4 strategy. In the current demo configuration, "recommended" resolves to B4. "Executed treatment" shows the B0–B4 code of the treatment that actually ran. The two can differ by design; this screen draws no conclusion from either value.',
+
+    governanceHeading: "Governance",
+    domainLabel: "Domain",
+    purposeLabel: "Purpose",
+    policyVersionLabel: "Policy version",
+    providerClassLabel: "Provider class",
+    requesterRoleLabel: "Requester role",
+    requestedPseudonymScopeLabel: "Requested pseudonym scope",
+    notInformed: "Not provided",
+
+    providerHeading: "Provider",
+    providerNotCalledText: "The external provider was not called for this execution.",
+    providerCalledLabel: "Provider called",
+    providerModelIdLabel: "Model identifier",
+    providerModelSnapshotLabel: "Model snapshot",
+    providerDecodingConfigHeading: "Decoding configuration",
+    providerDecodingConfigEmpty: "No decoding configuration was reported.",
+    providerTransmittedBytesLabel: "Bytes transmitted to the provider",
+    providerHashToggle: "View technical response hash (advanced metadata)",
+    providerResponseHashLabel: "Technical response hash",
+    providerFailedHeading: "Provider call failed",
+    providerFailedExplanation:
+      "The call to the external provider failed. For safety, only the failure category is shown — never the raw provider or error text.",
+    providerFailureKindLabel: "Failure category",
+
+    reconstructionHeading: "Local reconstruction",
+    reconstructionExplanation:
+      "Local reconstruction assembles the final answer from the provider's response while keeping the pseudonyms in the local vault. This screen never shows the pseudonym mapping or attempts to recover original values.",
+    reconstructionAttemptedLabel: "Reconstruction attempted",
+    reconstructionChangedLabel: "Differed from the raw provider response",
+    reconstructionHashToggle: "View technical reconstruction hash (advanced metadata)",
+    reconstructionHashLabel: "Technical local reconstruction hash",
+
+    timingHeading: "Operational time",
+    timingExplanation:
+      "This is an operational measure of this application run — the total time, in milliseconds, elapsed for this call. It is not the scientific latency metric used in the experiments, and it should not be read as a measure of how well any strategy performed.",
+    totalMsLabel: "Total time for this run",
+    millisecondsUnit: "ms",
+
+    yes: "Yes",
+    no: "No",
+    backToResult: "Back to result",
+  },
+
+  examplePurposes: {
+    department_aggregation: "Department aggregation",
+    team_summary: "Team summary",
+    salary_analysis: "Salary analysis",
+    compensation_review: "Compensation review",
+    fitness_for_duty_review: "Fitness-for-duty review",
+  } as Record<string, string>,
+
+  categories: {
+    unrecognized: "Unrecognized category",
+    technicalIdLabel: "Technical identifier:",
+    labels: {
+      employee_name: "Employee name",
+      cpf: "National ID (CPF)",
+      salary: "Salary",
+      department: "Department",
+      medical_data: "Medical data",
+    },
+  },
+
+  outcomes: {
+    removed: {
+      label: "Removed",
+      explanation: "This data was stripped from the content before anything was sent externally.",
+    },
+    pseudonymized: {
+      label: "Replaced with a pseudonym",
+      explanation:
+        "The original value was swapped for a local pseudonym; the original never leaves the trusted environment.",
+    },
+    generalized: {
+      label: "Generalized",
+      explanation: "The value was swapped for a less specific version before being sent.",
+    },
+    preserved: {
+      label: "Preserved because it is required for the task",
+      explanation: "This data was kept as-is because it is required to carry out the requested task.",
+    },
+    blocked: {
+      label: "Blocked",
+      explanation: "The request was blocked and no content was sent to the external provider.",
+    },
+    protectedLocally: {
+      label: "Protected locally",
+    },
+    sentToProvider: {
+      label: "Sent to the model",
+    },
+    unknown: {
+      label: "Unrecognized action — needs review",
+      explanation:
+        "The system returned an action this version of the interface does not recognize. For safety, it is treated as neither local nor safe until reviewed.",
+      boundaryLabel: "Cannot be confirmed — needs review",
+    },
+  },
+
+  buttons: {
+    testNow: "Try it now",
+    howResearchWorks: "How does the research work?",
+    compareStrategies: "Compare strategies",
+    viewTechnicalDetails: "View technical details",
+    submit: "Submit",
+    cancel: "Cancel",
+    tryAgain: "Try again",
+  },
+
+  errors: {
+    generic: "The operation could not be completed. Please try again.",
+    upstreamUnreachable: "Could not reach the service right now. Please try again shortly.",
+    validationFailed: "The submitted data is not valid. Please review and try again.",
+  },
+
+  sectionHeadings: {
+    whatWasDetected: "What was detected",
+    whatStaysLocal: "What stays local",
+    whatWasSent: "What was sent",
+    finalAnswer: "Final answer",
+    technicalDetails: "Technical details",
+    compareStrategies: "Compare strategies",
+  },
+
+  theme: {
+    light: "Light",
+    dark: "Dark",
+    system: "Automatic (system)",
+    toggleLabel: "Theme",
+  },
+
+  language: {
+    toggleLabel: "Language",
+  },
+};

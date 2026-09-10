@@ -2,9 +2,11 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { readStoredLocale } from "@/i18n/localeStorage";
 import { compareStrategies, executeDisclosure, getExamples, getHealth, previewDisclosure } from "@/lib/api";
 import type { CompareResponse, ExecuteResponse, HealthResponse, PreviewResponse } from "@/lib/contracts";
 import { copy } from "@/lib/copy";
+import { enUS } from "@/lib/copy.en-US";
 
 import { GuidedFlow } from "./GuidedFlow";
 
@@ -208,6 +210,19 @@ async function goToReview() {
   await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
 
   await screen.findByRole("heading", { name: copy.review.heading });
+}
+
+/** The one locale control in the header -- see `LocaleSwitcher.tsx`. */
+function localeSwitcherButton() {
+  return screen.getByRole("button", { name: /idioma|language/i });
+}
+
+async function switchToEnglish() {
+  const button = localeSwitcherButton();
+  if (button.textContent?.includes("English")) {
+    return;
+  }
+  await userEvent.click(button);
 }
 
 async function goToResult() {
@@ -505,6 +520,163 @@ describe("GuidedFlow -- Ver detalhes técnicos (T21 third slice)", () => {
 
     await userEvent.click(screen.getByRole("button", { name: copy.buttons.viewTechnicalDetails }));
     await screen.findByRole("heading", { name: copy.sectionHeadings.technicalDetails });
+
+    expect(screen.queryByText(/SESSION_SECRET_MARKER/)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * T21 fourth slice / #29: pt-BR / English localization. The locale
+ * control lives in the header (`GuidedFlow`'s `styles.header`, next to
+ * `ThemeToggle`) and stays mounted across every screen, so these tests
+ * exercise it from wherever the flow currently is.
+ */
+describe("GuidedFlow -- locale switcher (T21 fourth slice)", () => {
+  it("first visit uses pt-BR and the switcher shows the current locale", () => {
+    render(<GuidedFlow />);
+    expect(screen.getByRole("heading", { name: copy.howItWorks.title })).toBeInTheDocument();
+    expect(localeSwitcherButton().textContent).toMatch(/português/i);
+  });
+
+  it("switching to English updates the UI without a reload", async () => {
+    render(<GuidedFlow />);
+    await switchToEnglish();
+
+    expect(screen.getByRole("heading", { name: enUS.howItWorks.title })).toBeInTheDocument();
+    expect(localeSwitcherButton().textContent).toMatch(/english/i);
+    expect(screen.queryByText(copy.howItWorks.title)).not.toBeInTheDocument();
+  });
+
+  it("switching back to Portuguese works", async () => {
+    render(<GuidedFlow />);
+    await switchToEnglish();
+    await userEvent.click(localeSwitcherButton());
+
+    expect(screen.getByRole("heading", { name: copy.howItWorks.title })).toBeInTheDocument();
+    expect(localeSwitcherButton().textContent).toMatch(/português/i);
+  });
+
+  it("persists the choice to localStorage", async () => {
+    render(<GuidedFlow />);
+    await switchToEnglish();
+
+    expect(readStoredLocale()).toBe("en-US");
+  });
+
+  it("a remount restores the stored locale", async () => {
+    const { unmount } = render(<GuidedFlow />);
+    await switchToEnglish();
+    unmount();
+
+    render(<GuidedFlow />);
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: enUS.howItWorks.title })).toBeInTheDocument(),
+    );
+  });
+
+  it("an invalid stored locale falls back to pt-BR", async () => {
+    window.localStorage.setItem("adg-locale", "klingon");
+    render(<GuidedFlow />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: copy.howItWorks.title })).toBeInTheDocument(),
+    );
+  });
+});
+
+describe("GuidedFlow -- switching locale never re-fetches preview/execute/compare (T21 fourth slice)", () => {
+  it("does not re-call previewDisclosure/executeDisclosure when switching locale on Resultado", async () => {
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+    mockedExecuteDisclosure.mockResolvedValue({ ok: true, data: executeResponse() });
+    await goToResult();
+
+    await switchToEnglish();
+
+    expect(mockedPreviewDisclosure).toHaveBeenCalledTimes(1);
+    expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+    expect(mockedCompareStrategies).not.toHaveBeenCalled();
+    // The result data itself is unchanged by the locale switch -- only its
+    // presentation is.
+    expect(screen.getByText(executeResponse().final_answer as string)).toBeInTheDocument();
+  });
+
+  it("does not re-call compareStrategies when switching locale on the comparison screen, and keeps the same entries", async () => {
+    mockedCompareStrategies.mockResolvedValue({ ok: true, data: compareResponse() });
+    await goToResult();
+    await userEvent.click(screen.getByRole("button", { name: copy.buttons.compareStrategies }));
+    await screen.findByRole("heading", { name: copy.comparison.heading });
+
+    await switchToEnglish();
+
+    expect(mockedCompareStrategies).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("heading", { name: enUS.comparison.heading })).toBeInTheDocument();
+    expect(screen.getByText(enUS.treatments.b0.name)).toBeInTheDocument();
+    expect(screen.getByText(enUS.treatments.b4.name)).toBeInTheDocument();
+    expect(screen.getByText(enUS.comparison.unsafeControlHeading)).toBeInTheDocument();
+  });
+
+  it("does not re-call anything when switching locale on the technical details screen, and keeps the same ExecuteResponse", async () => {
+    await goToResult();
+    await userEvent.click(screen.getByRole("button", { name: copy.buttons.viewTechnicalDetails }));
+    await screen.findByRole("heading", { name: copy.sectionHeadings.technicalDetails });
+
+    await switchToEnglish();
+
+    expect(mockedPreviewDisclosure).toHaveBeenCalledTimes(1);
+    expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+    expect(mockedCompareStrategies).not.toHaveBeenCalled();
+    const e = executeResponse();
+    expect(screen.getByText(e.strategy)).toBeInTheDocument();
+    expect(screen.getByText(e.treatment)).toBeInTheDocument();
+    expect(screen.getByText(enUS.technicalDetails.executionHeading)).toBeInTheDocument();
+  });
+});
+
+describe("GuidedFlow -- error messages switch with the locale", () => {
+  it("shows the English generic error message when a preview fails after switching to English", async () => {
+    mockedPreviewDisclosure.mockResolvedValue({
+      ok: false,
+      status: 500,
+      error: { message: enUS.errors.generic, kind: null, fields: null },
+    });
+
+    render(<GuidedFlow />);
+    await switchToEnglish();
+    await userEvent.click(screen.getByRole("button", { name: enUS.howItWorks.ctaPrimary }));
+    const select = await screen.findByLabelText(enUS.newTest.exampleFieldLabel);
+    await userEvent.selectOptions(select, "ex-1");
+    await userEvent.click(screen.getByRole("button", { name: enUS.newTest.continueToReview }));
+
+    await screen.findByText(enUS.errors.generic);
+    expect(screen.queryByText(copy.errors.generic)).not.toBeInTheDocument();
+  });
+});
+
+describe("GuidedFlow -- no sensitive information reaches the DOM because of the locale switch", () => {
+  it("switching locale on the review screen never renders external_payload before its own disclosure is opened", async () => {
+    const preview = previewResponse();
+    preview.external_payload = "LOCALE_SWITCH_MARKER";
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: preview });
+
+    await goToReview();
+    await switchToEnglish();
+
+    expect(screen.queryByText(/LOCALE_SWITCH_MARKER/)).not.toBeInTheDocument();
+  });
+
+  it("switching locale on the technical details screen still never renders external_payload", async () => {
+    const preview = previewResponse();
+    preview.external_payload = "SESSION_SECRET_MARKER";
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: preview });
+    mockedExecuteDisclosure.mockResolvedValue({ ok: true, data: executeResponse() });
+
+    await goToReview();
+    await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+    await screen.findByRole("heading", { name: copy.result.heading });
+    await userEvent.click(screen.getByRole("button", { name: copy.buttons.viewTechnicalDetails }));
+    await screen.findByRole("heading", { name: copy.sectionHeadings.technicalDetails });
+
+    await switchToEnglish();
 
     expect(screen.queryByText(/SESSION_SECRET_MARKER/)).not.toBeInTheDocument();
   });

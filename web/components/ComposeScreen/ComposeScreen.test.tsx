@@ -1,13 +1,19 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useReducer } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { renderWithLocale } from "@/i18n/renderWithLocale";
 import type { ExampleSummary } from "@/lib/contracts";
 import { copy } from "@/lib/copy";
+import { enUS } from "@/lib/copy.en-US";
 import { flowReducer, initialComposeState, type ComposeState, type FlowEvent } from "@/lib/flow";
 
 import { ComposeScreen } from "./ComposeScreen";
+
+beforeEach(() => {
+  window.localStorage.clear();
+});
 
 const EXAMPLES: ExampleSummary[] = [
   {
@@ -154,5 +160,18 @@ describe("ComposeScreen -- submit", () => {
     await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
 
     expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("ComposeScreen -- switches to English (T21 fourth slice)", () => {
+  it("renders English entry-mode/field labels when en-US is the active locale", async () => {
+    await renderWithLocale(<Harness />, "en-US");
+
+    expect(screen.getByRole("heading", { name: enUS.newTest.heading })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: enUS.entryModes.useExample })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: enUS.entryModes.uploadFile })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: enUS.entryModes.pasteText })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: enUS.newTest.continueToReview })).toBeInTheDocument();
+    expect(screen.queryByText(copy.newTest.heading)).not.toBeInTheDocument();
   });
 });

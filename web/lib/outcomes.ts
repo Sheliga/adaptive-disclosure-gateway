@@ -24,7 +24,8 @@
 
 import type { CategoryDisclosureSummary, DisclosureOutcome, KnownDisclosureOutcome } from "./contracts";
 import { KNOWN_DISCLOSURE_OUTCOMES } from "./contracts";
-import { copy } from "./copy";
+import type { AppCopy } from "./copy";
+import { copy as defaultCopy } from "./copy";
 
 /**
  * Semantic tone token names. These correspond 1:1 to the CSS custom
@@ -73,13 +74,15 @@ const OUTCOME_GLYPHS: Record<KnownDisclosureOutcome, string> = {
   blocked: "block",
 };
 
-const OUTCOME_ACTION_COPY: Record<KnownDisclosureOutcome, { label: string; explanation: string }> = {
-  removed: copy.outcomes.removed,
-  pseudonymized: copy.outcomes.pseudonymized,
-  generalized: copy.outcomes.generalized,
-  preserved: copy.outcomes.preserved,
-  blocked: copy.outcomes.blocked,
-};
+function actionCopyFor(appCopy: AppCopy): Record<KnownDisclosureOutcome, { label: string; explanation: string }> {
+  return {
+    removed: appCopy.outcomes.removed,
+    pseudonymized: appCopy.outcomes.pseudonymized,
+    generalized: appCopy.outcomes.generalized,
+    preserved: appCopy.outcomes.preserved,
+    blocked: appCopy.outcomes.blocked,
+  };
+}
 
 /**
  * Derives the tone for a KNOWN outcome strictly from
@@ -100,16 +103,16 @@ function toneForKnownOutcome(
   return crossesTrustBoundary ? "sent" : "protected";
 }
 
-function boundaryLabelFor(tone: DisclosureTone): string {
+function boundaryLabelFor(tone: DisclosureTone, appCopy: AppCopy): string {
   switch (tone) {
     case "protected":
-      return copy.outcomes.protectedLocally.label;
+      return appCopy.outcomes.protectedLocally.label;
     case "sent":
-      return copy.outcomes.sentToProvider.label;
+      return appCopy.outcomes.sentToProvider.label;
     case "blocked":
-      return copy.outcomes.blocked.label;
+      return appCopy.outcomes.blocked.label;
     case "unknown":
-      return copy.outcomes.unknown.boundaryLabel;
+      return appCopy.outcomes.unknown.boundaryLabel;
   }
 }
 
@@ -117,31 +120,38 @@ function boundaryLabelFor(tone: DisclosureTone): string {
  * The single entry point this module exists to provide: given one
  * category's disclosure summary, return everything a "what happens to my
  * data" row needs to render -- fail-closed for anything unrecognized.
+ *
+ * `appCopy` defaults to the pt-BR table so existing callers/tests keep
+ * behaving unchanged; a component under `LocaleProvider` passes its
+ * resolved `useCopy()` value explicitly (T21 fourth slice / #29).
  */
-export function describeCategoryOutcome(category: CategoryDisclosureSummary): OutcomeDescriptor {
+export function describeCategoryOutcome(
+  category: CategoryDisclosureSummary,
+  appCopy: AppCopy = defaultCopy,
+): OutcomeDescriptor {
   const { outcome, crosses_trust_boundary: crossesTrustBoundary } = category;
 
   if (!isKnownOutcome(outcome)) {
     const tone: DisclosureTone = "unknown";
     return {
-      label: copy.outcomes.unknown.label,
-      explanation: copy.outcomes.unknown.explanation,
+      label: appCopy.outcomes.unknown.label,
+      explanation: appCopy.outcomes.unknown.explanation,
       glyph: "alert-triangle",
       tone,
-      boundaryLabel: boundaryLabelFor(tone),
+      boundaryLabel: boundaryLabelFor(tone, appCopy),
       known: false,
       crossesTrustBoundary,
     };
   }
 
   const tone = toneForKnownOutcome(outcome, crossesTrustBoundary);
-  const actionCopy = OUTCOME_ACTION_COPY[outcome];
+  const actionCopy = actionCopyFor(appCopy)[outcome];
   return {
     label: actionCopy.label,
     explanation: actionCopy.explanation,
     glyph: OUTCOME_GLYPHS[outcome],
     tone,
-    boundaryLabel: boundaryLabelFor(tone),
+    boundaryLabel: boundaryLabelFor(tone, appCopy),
     known: true,
     crossesTrustBoundary,
   };

@@ -42,8 +42,9 @@
 
 import { useState } from "react";
 
+import { useCopy } from "@/i18n/useLocale";
 import type { CompareResponse, StrategyComparisonEntry } from "@/lib/contracts";
-import { copy } from "@/lib/copy";
+import type { AppCopy } from "@/lib/copy";
 
 import { CategoryOutcomeRow } from "../CategoryOutcomeRow/CategoryOutcomeRow";
 import styles from "./ComparisonScreen.module.css";
@@ -54,6 +55,7 @@ export interface ComparisonScreenProps {
 }
 
 export function ComparisonScreen({ comparison, onBack }: ComparisonScreenProps) {
+  const copy = useCopy();
   return (
     <section aria-labelledby="comparison-heading" className={styles.section}>
       <h1 id="comparison-heading" className={styles.heading}>
@@ -66,7 +68,7 @@ export function ComparisonScreen({ comparison, onBack }: ComparisonScreenProps) 
 
       <div className={styles.entries}>
         {comparison.entries.map((entry) => (
-          <ComparisonEntryCard key={entry.strategy} entry={entry} />
+          <ComparisonEntryCard key={entry.strategy} entry={entry} copy={copy} />
         ))}
       </div>
 
@@ -77,7 +79,7 @@ export function ComparisonScreen({ comparison, onBack }: ComparisonScreenProps) 
   );
 }
 
-function treatmentCopyFor(strategy: string): { name: string; description: string } {
+function treatmentCopyFor(strategy: string, copy: AppCopy): { name: string; description: string } {
   const known = copy.treatments[strategy];
   // Fail-closed presentation, same posture as `describeCategory`: an
   // unrecognized strategy code shows itself honestly rather than a made-up
@@ -86,11 +88,11 @@ function treatmentCopyFor(strategy: string): { name: string; description: string
   return known ?? { name: strategy, description: "" };
 }
 
-function ComparisonEntryCard({ entry }: { entry: StrategyComparisonEntry }) {
+function ComparisonEntryCard({ entry, copy }: { entry: StrategyComparisonEntry; copy: AppCopy }) {
   const [payloadOpen, setPayloadOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
 
-  const treatmentCopy = treatmentCopyFor(entry.strategy);
+  const treatmentCopy = treatmentCopyFor(entry.strategy, copy);
   const categories = entry.summary.categories;
   const localCategories = categories.filter((category) => !category.crosses_trust_boundary);
   const sentCategories = categories.filter((category) => category.crosses_trust_boundary);

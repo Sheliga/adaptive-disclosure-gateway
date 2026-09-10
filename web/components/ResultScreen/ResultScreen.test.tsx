@@ -1,12 +1,18 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { renderWithLocale } from "@/i18n/renderWithLocale";
 import type { ExecuteResponse, HealthResponse } from "@/lib/contracts";
 import type { ProviderModeState } from "@/lib/providerMode";
 import { copy } from "@/lib/copy";
+import { enUS } from "@/lib/copy.en-US";
 
 import { ResultScreen } from "./ResultScreen";
+
+beforeEach(() => {
+  window.localStorage.clear();
+});
 
 function execute(overrides: Partial<ExecuteResponse> = {}): ExecuteResponse {
   return {
@@ -347,5 +353,51 @@ describe("ResultScreen -- Ver detalhes técnicos entry point", () => {
     await userEvent.click(screen.getByRole("button", { name: copy.buttons.viewTechnicalDetails }));
 
     expect(onViewTechnicalDetails).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("ResultScreen -- switches to English (T21 fourth slice)", () => {
+  it("renders English headings, path labels, category labels, and buttons when en-US is active", async () => {
+    const executeWithCategory = execute({
+      summary: {
+        status: "allowed",
+        categories: [
+          {
+            category: "employee_name",
+            outcome: "pseudonymized",
+            action: "pseudonymize",
+            crosses_trust_boundary: true,
+            occurrence_count: 1,
+            required_for_task: null,
+            technical_reason: "policy hr-v1 rule",
+            policy_version: "hr-v1",
+            policy_restricted: null,
+            impossible_under_policy: null,
+          },
+        ],
+        detected_span_count: 1,
+        detected_categories: ["employee_name"],
+      },
+    });
+    await renderWithLocale(
+      <ResultScreen
+        execute={executeWithCategory}
+        health={healthState(true)}
+        onRestart={vi.fn()}
+        compareError={{ message: enUS.errors.generic, kind: null, fields: null }}
+        onCompareStrategies={vi.fn()}
+        onViewTechnicalDetails={vi.fn()}
+      />,
+      "en-US",
+    );
+
+    expect(screen.getByRole("heading", { name: enUS.result.heading })).toBeInTheDocument();
+    expect(screen.getByText(enUS.result.pathProvider)).toBeInTheDocument();
+    expect(screen.getByText(enUS.provider.deterministicDemoLabel)).toBeInTheDocument();
+    expect(screen.getByText(enUS.categories.labels.employee_name, { exact: false })).toBeInTheDocument();
+    expect(screen.getByText(enUS.errors.generic)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: enUS.buttons.compareStrategies })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: enUS.buttons.viewTechnicalDetails })).toBeInTheDocument();
+    expect(screen.queryByText(copy.result.heading)).not.toBeInTheDocument();
   });
 });

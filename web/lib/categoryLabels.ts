@@ -33,10 +33,11 @@
  * outcome degrades on both axes instead of either one guessing.
  */
 
-import { copy } from "./copy";
+import type { AppCopy } from "./copy";
+import { copy as defaultCopy } from "./copy";
 
 export interface CategoryDescriptor {
-  /** What the reviewer reads. Plain pt-BR for a recognized category. */
+  /** What the reviewer reads, in the caller's locale. */
   label: string;
   /** The raw policy identifier, for display as a technical detail only. */
   technicalId: string;
@@ -52,18 +53,24 @@ export interface CategoryDescriptor {
  * own keys says what is actually meant -- an API-supplied string is never
  * allowed to reach into anything this table did not declare.
  */
-function labelFor(identifier: string): string | undefined {
-  const labels: Record<string, string> = copy.categories.labels;
+function labelFor(identifier: string, appCopy: AppCopy): string | undefined {
+  const labels: Record<string, string> = appCopy.categories.labels;
   return Object.hasOwn(labels, identifier) ? labels[identifier] : undefined;
 }
 
-/** Describe one category identifier as received from the API, verbatim. */
-export function describeCategory(identifier: string): CategoryDescriptor {
-  const label = labelFor(identifier);
+/**
+ * Describe one category identifier as received from the API, verbatim.
+ *
+ * `appCopy` defaults to the pt-BR table so existing callers/tests keep
+ * behaving unchanged; a component under `LocaleProvider` passes its
+ * resolved `useCopy()` value explicitly (T21 fourth slice / #29).
+ */
+export function describeCategory(identifier: string, appCopy: AppCopy = defaultCopy): CategoryDescriptor {
+  const label = labelFor(identifier, appCopy);
 
   if (label === undefined) {
     return {
-      label: copy.categories.unrecognized,
+      label: appCopy.categories.unrecognized,
       technicalId: identifier,
       known: false,
     };

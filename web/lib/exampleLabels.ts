@@ -29,11 +29,12 @@
  * than silently mislabeled.
  */
 
+import type { AppCopy } from "./copy";
 import type { ExampleSummary } from "./contracts";
-import { copy } from "./copy";
+import { copy as defaultCopy } from "./copy";
 
 export interface ExampleDescriptor {
-  /** What the reviewer reads. Plain pt-BR for a known purpose. */
+  /** What the reviewer reads, in the caller's locale. */
   label: string;
   /** The raw corpus sample id, for display as a technical detail only. */
   technicalId: string;
@@ -41,8 +42,8 @@ export interface ExampleDescriptor {
   known: boolean;
 }
 
-function purposeLabel(purpose: string): string | undefined {
-  return (copy.examplePurposes as Record<string, string | undefined>)[purpose];
+function purposeLabel(purpose: string, appCopy: AppCopy): string | undefined {
+  return (appCopy.examplePurposes as Record<string, string | undefined>)[purpose];
 }
 
 /**
@@ -52,13 +53,20 @@ function purposeLabel(purpose: string): string | undefined {
  * purpose (six are `team_summary` in the frozen HR corpus), so a bare
  * purpose label would render six identical options. Numbering follows the
  * order the API returned, which is the corpus's own stable file order.
+ *
+ * `appCopy` defaults to the pt-BR table (`./copy`'s `copy`) so existing
+ * callers/tests that do not pass one keep behaving exactly as before; a
+ * component under `LocaleProvider` passes its resolved `useCopy()` value
+ * explicitly so the label switches with the active locale (T21 fourth
+ * slice / #29).
  */
 export function describeExample(
   example: ExampleSummary,
   listing: readonly ExampleSummary[],
+  appCopy: AppCopy = defaultCopy,
 ): ExampleDescriptor {
   const technicalId = example.example_id;
-  const label = purposeLabel(example.purpose);
+  const label = purposeLabel(example.purpose, appCopy);
 
   if (label === undefined) {
     return { label: technicalId, technicalId, known: false };
