@@ -40,6 +40,12 @@ export interface ResultScreenProps {
    * screen exists to explain the mechanism, not just a successful run).
    */
   onCompareStrategies: () => void;
+  /**
+   * Opens "Ver detalhes técnicos" (T21/#29 third slice) -- always available,
+   * same posture as `onCompareStrategies`, since the technical view exists
+   * to explain what actually ran regardless of the outcome.
+   */
+  onViewTechnicalDetails: () => void;
 }
 
 export function ResultScreen({
@@ -48,6 +54,7 @@ export function ResultScreen({
   compareError,
   onRestart,
   onCompareStrategies,
+  onViewTechnicalDetails,
 }: ResultScreenProps) {
   const isBlocked = execute.summary.status === "blocked";
   const providerFailed = execute.provider.failed;
@@ -131,6 +138,9 @@ export function ResultScreen({
         </button>
         <button type="button" className={styles.compareButton} onClick={onCompareStrategies}>
           {copy.buttons.compareStrategies}
+        </button>
+        <button type="button" className={styles.compareButton} onClick={onViewTechnicalDetails}>
+          {copy.buttons.viewTechnicalDetails}
         </button>
       </div>
     </section>

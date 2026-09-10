@@ -218,6 +218,77 @@ const ptBR = {
   } as Record<string, { name: string; description: string }>,
 
   /**
+   * Screen "Detalhes técnicos" -- T21 / issue #29's third slice. Reached
+   * from Resultado via `buttons.viewTechnicalDetails`; renders operational
+   * metadata already present on the SAME `ExecuteResponse` Resultado holds
+   * -- no new request, no scientific metric, no re-run of anything.
+   *
+   * `strategyVsTreatmentExplanation` is the one interpretive sentence this
+   * screen adds: `strategy` is the interface choice the request asked for
+   * (which can be `"recommended"`, never a `b0`-`b4` code by itself), while
+   * `treatment` is the `b0`-`b4` code of what the pipeline actually
+   * executed. Stating the distinction is not the same as drawing a
+   * conclusion from it -- this screen draws none, and never renders either
+   * value as a comparison/ranking code.
+   *
+   * `providerHashToggle`/`reconstructionHashToggle` keep `response_hash`/
+   * `reconstructed_hash` behind their own expandable disclosure, one level
+   * deeper than the rest of the safe metadata -- CLAUDE.md's no-leak
+   * invariant treats a public, reproducible digest of low-entropy content as
+   * guessable/dictionary-reversible, so these are presented as opaque
+   * technical metadata, never as content to inspect casually.
+   */
+  technicalDetails: {
+    executionHeading: "Execução",
+    strategyLabel: "Estratégia solicitada",
+    treatmentLabel: "Tratamento executado",
+    strategyVsTreatmentExplanation:
+      '"Estratégia solicitada" é a opção de interface pedida nesta chamada (pode ser "recommended", ou seja, deixar a política decidir automaticamente). "Tratamento executado" é o código B0–B4 do tratamento que realmente rodou. Os dois podem ser diferentes por design; esta tela não tira nenhuma conclusão a partir de nenhum dos dois valores.',
+
+    governanceHeading: "Governança",
+    domainLabel: "Domínio",
+    purposeLabel: "Finalidade",
+    policyVersionLabel: "Versão da política",
+    providerClassLabel: "Classe do provedor",
+    requesterRoleLabel: "Papel do solicitante",
+    requestedPseudonymScopeLabel: "Escopo de pseudonimização solicitado",
+    notInformed: "Não informado",
+
+    providerHeading: "Provedor",
+    providerNotCalledText: "O provedor externo não foi chamado nesta execução.",
+    providerCalledLabel: "Provedor chamado",
+    providerModelIdLabel: "Identificador do modelo",
+    providerModelSnapshotLabel: "Snapshot do modelo",
+    providerDecodingConfigHeading: "Configuração de decodificação",
+    providerDecodingConfigEmpty: "Nenhuma configuração de decodificação informada.",
+    providerTransmittedBytesLabel: "Bytes transmitidos ao provedor",
+    providerHashToggle: "Ver hash técnico da resposta (metadado avançado)",
+    providerResponseHashLabel: "Hash técnico da resposta",
+    providerFailedHeading: "Falha na chamada ao provedor",
+    providerFailedExplanation:
+      "A chamada ao provedor externo falhou. Por segurança, apenas a categoria da falha é exibida — nunca o texto bruto do provedor ou do erro.",
+    providerFailureKindLabel: "Categoria da falha",
+
+    reconstructionHeading: "Reconstrução local",
+    reconstructionExplanation:
+      "A reconstrução local recompõe a resposta final a partir da resposta do provedor mantendo os pseudônimos no cofre local. Esta tela nunca exibe o mapeamento de pseudônimos nem tenta recuperar valores originais.",
+    reconstructionAttemptedLabel: "Reconstrução tentada",
+    reconstructionChangedLabel: "Divergiu da resposta bruta do provedor",
+    reconstructionHashToggle: "Ver hash técnico da reconstrução (metadado avançado)",
+    reconstructionHashLabel: "Hash técnico da reconstrução local",
+
+    timingHeading: "Tempo operacional",
+    timingExplanation:
+      "Esta é uma medida operacional desta execução da aplicação — o tempo total, em milissegundos, decorrido nesta chamada. Não é a métrica científica de latência usada nos experimentos e não deve ser interpretada como uma pontuação de desempenho.",
+    totalMsLabel: "Tempo total desta execução",
+    millisecondsUnit: "ms",
+
+    yes: "Sim",
+    no: "Não",
+    backToResult: "Voltar ao resultado",
+  },
+
+  /**
    * pt-BR labels for the prepared examples' `purpose` values -- the only
    * human-readable thing the API gives us about an example besides its raw
    * corpus sample id (see lib/exampleLabels.ts for why the label is derived

@@ -76,6 +76,19 @@ export type FlowState =
       compareError: DisplayError | null;
     }
   | {
+      screen: "technicalDetails";
+      compose: ComposeState;
+      preview: PreviewResponse;
+      execute: ExecuteResponse;
+      /**
+       * Carried through unchanged from the Result screen the user opened
+       * this from -- opening/closing "Ver detalhes técnicos" is pure
+       * client-side navigation over the SAME `execute`/`preview` already in
+       * state and must not touch a prior comparison error either way.
+       */
+      compareError: DisplayError | null;
+    }
+  | {
       screen: "comparing";
       compose: ComposeState;
       preview: PreviewResponse;
@@ -109,6 +122,7 @@ export type FlowEvent =
   | { type: "COMPARE_SUCCEEDED"; comparison: CompareResponse }
   | { type: "COMPARE_FAILED"; error: DisplayError }
   | { type: "RETURN_TO_RESULT" }
+  | { type: "OPEN_TECHNICAL_DETAILS" }
   | { type: "RESTART" };
 
 export const initialFlowState: FlowState = { screen: "welcome" };
@@ -130,6 +144,8 @@ export function flowReducer(state: FlowState, event: FlowEvent): FlowState {
       return executingReducer(state, event);
     case "result":
       return resultReducer(state, event);
+    case "technicalDetails":
+      return technicalDetailsReducer(state, event);
     case "comparing":
       return comparingReducer(state, event);
     case "comparison":
@@ -232,11 +248,17 @@ function executingReducer(
 }
 
 /**
- * The Result screen's only screen-specific event: the user asking to see
- * the B0-B4 comparison. `REQUEST_COMPARISON` is the ONLY event that reaches
- * the "comparing" screen -- mirrors `CONFIRM_REVIEW` being the only path to
- * "executing" (see this module's docstring) -- so a comparison can never be
- * fetched as a side effect of any other action on Result.
+ * The Result screen's screen-specific events: requesting the B0-B4
+ * comparison, and opening "Ver detalhes técnicos". `REQUEST_COMPARISON` is
+ * the ONLY event that reaches the "comparing" screen -- mirrors
+ * `CONFIRM_REVIEW` being the only path to "executing" (see this module's
+ * docstring) -- so a comparison can never be fetched as a side effect of any
+ * other action on Result. `OPEN_TECHNICAL_DETAILS` is the ONLY event that
+ * reaches "technicalDetails", and unlike the comparison path it triggers no
+ * request at all: it carries the SAME `preview`/`execute`/`compareError`
+ * already in state straight through, so opening the technical-details
+ * screen can never call `/disclosure/preview`, `/disclosure/execute` or
+ * `/disclosure/compare`.
  */
 function resultReducer(
   state: Extract<FlowState, { screen: "result" }>,
@@ -249,6 +271,42 @@ function resultReducer(
         compose: state.compose,
         preview: state.preview,
         execute: state.execute,
+      };
+    case "OPEN_TECHNICAL_DETAILS":
+      return {
+        screen: "technicalDetails",
+        compose: state.compose,
+        preview: state.preview,
+        execute: state.execute,
+        compareError: state.compareError,
+      };
+    default:
+      return state;
+  }
+}
+
+/**
+ * `RETURN_TO_RESULT` is shared with the comparison screen (see
+ * `comparisonReducer` below) rather than a second invented return event --
+ * both screens go back to the SAME Result state over the SAME
+ * `preview`/`execute` already held, never re-fetched. Unlike
+ * `comparisonReducer`, `compareError` is threaded through UNCHANGED here:
+ * nothing on the technical-details screen can affect or resolve a prior
+ * failed comparison, so the Result screen the user returns to must be
+ * byte-for-byte the one they left, error state included.
+ */
+function technicalDetailsReducer(
+  state: Extract<FlowState, { screen: "technicalDetails" }>,
+  event: FlowEvent,
+): FlowState {
+  switch (event.type) {
+    case "RETURN_TO_RESULT":
+      return {
+        screen: "result",
+        compose: state.compose,
+        preview: state.preview,
+        execute: state.execute,
+        compareError: state.compareError,
       };
     default:
       return state;

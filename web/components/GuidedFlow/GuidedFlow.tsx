@@ -43,6 +43,7 @@ import { ComposeScreen } from "../ComposeScreen/ComposeScreen";
 import { ProcessingStatus } from "../ProcessingStatus/ProcessingStatus";
 import { ResultScreen } from "../ResultScreen/ResultScreen";
 import { ReviewScreen } from "../ReviewScreen/ReviewScreen";
+import { TechnicalDetailsScreen } from "../TechnicalDetailsScreen/TechnicalDetailsScreen";
 import { ThemeToggle } from "../ThemeToggle/ThemeToggle";
 import { WelcomeScreen } from "../WelcomeScreen/WelcomeScreen";
 import styles from "./GuidedFlow.module.css";
@@ -181,6 +182,14 @@ export function GuidedFlow() {
             compareError={state.compareError}
             onRestart={() => dispatch({ type: "RESTART" })}
             onCompareStrategies={() => handleRequestComparison(state.compose)}
+            onViewTechnicalDetails={() => dispatch({ type: "OPEN_TECHNICAL_DETAILS" })}
+          />
+        )}
+
+        {state.screen === "technicalDetails" && (
+          <TechnicalDetailsScreen
+            execute={state.execute}
+            onBack={() => dispatch({ type: "RETURN_TO_RESULT" })}
           />
         )}
 
