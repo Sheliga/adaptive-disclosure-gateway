@@ -34,7 +34,7 @@ function preview(overrides: Partial<PreviewResponse> = {}): PreviewResponse {
       policy_version: "v1",
       provider_class: "FakeProvider",
       requester_role: null,
-      requested_pseudonym_scope: "none",
+      requested_pseudonym_scope: "session",
     },
     provider_mode: { provider_class: "FakeProvider" },
     ...overrides,
@@ -44,7 +44,7 @@ function preview(overrides: Partial<PreviewResponse> = {}): PreviewResponse {
 function execute(overrides: Partial<ExecuteResponse> = {}): ExecuteResponse {
   return {
     contract_version: "t20-application-api-v1",
-    status: "completed",
+    status: "allowed",
     summary: {
       status: "allowed",
       categories: [],
@@ -76,7 +76,7 @@ function execute(overrides: Partial<ExecuteResponse> = {}): ExecuteResponse {
       policy_version: "v1",
       provider_class: "FakeProvider",
       requester_role: null,
-      requested_pseudonym_scope: "none",
+      requested_pseudonym_scope: "session",
     },
     total_ms: 42,
     ...overrides,
@@ -283,7 +283,7 @@ function compare(overrides: Partial<CompareResponse> = {}): CompareResponse {
       policy_version: "v1",
       provider_class: "FakeProvider",
       requester_role: null,
-      requested_pseudonym_scope: "none",
+      requested_pseudonym_scope: "session",
     },
     provider_mode: { provider_class: "FakeProvider" },
     ...overrides,

@@ -68,7 +68,7 @@ function previewResponse(): PreviewResponse {
       policy_version: "v1",
       provider_class: "FakeProvider",
       requester_role: null,
-      requested_pseudonym_scope: "none",
+      requested_pseudonym_scope: "session",
     },
     provider_mode: { provider_class: "FakeProvider" },
   };
@@ -77,7 +77,7 @@ function previewResponse(): PreviewResponse {
 function executeResponse(): ExecuteResponse {
   return {
     contract_version: "t20-application-api-v1",
-    status: "completed",
+    status: "allowed",
     summary: previewResponse().summary,
     final_answer: "Resposta final reconstruída localmente.",
     provider: {
@@ -100,7 +100,7 @@ function executeResponse(): ExecuteResponse {
       policy_version: "v1",
       provider_class: "FakeProvider",
       requester_role: null,
-      requested_pseudonym_scope: "none",
+      requested_pseudonym_scope: "session",
     },
     total_ms: 100,
   };

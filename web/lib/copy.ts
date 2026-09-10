@@ -224,12 +224,19 @@ const ptBR = {
    * -- no new request, no scientific metric, no re-run of anything.
    *
    * `strategyVsTreatmentExplanation` is the one interpretive sentence this
-   * screen adds: `strategy` is the interface choice the request asked for
-   * (which can be `"recommended"`, never a `b0`-`b4` code by itself), while
-   * `treatment` is the `b0`-`b4` code of what the pipeline actually
-   * executed. Stating the distinction is not the same as drawing a
-   * conclusion from it -- this screen draws none, and never renders either
-   * value as a comparison/ranking code.
+   * screen adds: `strategy` is the interface/API choice the request asked
+   * for -- `application/contracts.py`'s `DisclosureStrategy` admits
+   * `recommended` AND each explicit `b0`-`b4` code, so an explicit B0-B4
+   * strategy is perfectly legal here, not just `"recommended"`. `treatment`
+   * is the `b0`-`b4` code of what the pipeline actually executed.
+   * `_STRATEGY_TO_TREATMENT` is a static dict, not a decision procedure:
+   * every explicit strategy maps to the treatment it names, and only
+   * `RECOMMENDED` maps (today, as a product/UX default for the guided demo)
+   * to `Treatment.POLICY_GOVERNED` -- nothing is resolved dynamically, and
+   * nothing inspects the document or the policy engine to pick a treatment.
+   * Stating the distinction is not the same as drawing a conclusion from it
+   * -- this screen draws none, never claims B4 is scientifically better,
+   * and never renders either value as a comparison/ranking code.
    *
    * `providerHashToggle`/`reconstructionHashToggle` keep `response_hash`/
    * `reconstructed_hash` behind their own expandable disclosure, one level
@@ -243,7 +250,7 @@ const ptBR = {
     strategyLabel: "Estratégia solicitada",
     treatmentLabel: "Tratamento executado",
     strategyVsTreatmentExplanation:
-      '"Estratégia solicitada" é a opção de interface pedida nesta chamada (pode ser "recommended", ou seja, deixar a política decidir automaticamente). "Tratamento executado" é o código B0–B4 do tratamento que realmente rodou. Os dois podem ser diferentes por design; esta tela não tira nenhuma conclusão a partir de nenhum dos dois valores.',
+      '"Estratégia solicitada" é a opção pedida pela interface ou API: pode ser "recommended" ou uma estratégia B0–B4 explícita. Na configuração atual da demonstração, "recommended" resolve para B4. "Tratamento executado" mostra o código B0–B4 do tratamento que efetivamente rodou. Os dois podem ser diferentes por design; esta tela não tira nenhuma conclusão a partir de nenhum dos dois valores.',
 
     governanceHeading: "Governança",
     domainLabel: "Domínio",

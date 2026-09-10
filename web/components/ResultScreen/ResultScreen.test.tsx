@@ -11,7 +11,7 @@ import { ResultScreen } from "./ResultScreen";
 function execute(overrides: Partial<ExecuteResponse> = {}): ExecuteResponse {
   return {
     contract_version: "t20-application-api-v1",
-    status: "completed",
+    status: "allowed",
     summary: {
       status: "allowed",
       categories: [],
@@ -43,7 +43,7 @@ function execute(overrides: Partial<ExecuteResponse> = {}): ExecuteResponse {
       policy_version: "v1",
       provider_class: "FakeProvider",
       requester_role: null,
-      requested_pseudonym_scope: "none",
+      requested_pseudonym_scope: "session",
     },
     total_ms: 42,
     ...overrides,

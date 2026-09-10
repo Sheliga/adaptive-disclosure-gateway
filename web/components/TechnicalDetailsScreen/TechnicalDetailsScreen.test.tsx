@@ -10,7 +10,7 @@ import { TechnicalDetailsScreen } from "./TechnicalDetailsScreen";
 function execute(overrides: Partial<ExecuteResponse> = {}): ExecuteResponse {
   return {
     contract_version: "t20-application-api-v1",
-    status: "completed",
+    status: "allowed",
     summary: {
       status: "allowed",
       categories: [],
