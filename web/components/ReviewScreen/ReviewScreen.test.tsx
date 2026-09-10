@@ -34,7 +34,7 @@ function preview(categories: CategoryDisclosureSummary[], status: "allowed" | "b
     },
     external_payload: "exact payload text that would be sent",
     payload_byte_count: 37,
-    treatment: "policy_governed",
+    treatment: "b4",
     strategy: "recommended",
     governance: {
       domain: "demo",

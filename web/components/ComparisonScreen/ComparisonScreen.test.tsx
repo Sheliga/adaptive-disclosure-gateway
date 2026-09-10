@@ -10,7 +10,7 @@ import { ComparisonScreen } from "./ComparisonScreen";
 function entry(overrides: Partial<StrategyComparisonEntry> = {}): StrategyComparisonEntry {
   return {
     strategy: "b1",
-    treatment: "static_sanitization",
+    treatment: "b1",
     recommended: false,
     unsafe_control_baseline: false,
     summary: {
@@ -56,11 +56,11 @@ function comparison(entries: StrategyComparisonEntry[]): CompareResponse {
 
 function fiveCanonicalEntries(): StrategyComparisonEntry[] {
   return [
-    entry({ strategy: "b0", treatment: "direct", unsafe_control_baseline: true, external_payload: "PAYLOAD_B0" }),
-    entry({ strategy: "b1", treatment: "static_sanitization", external_payload: "PAYLOAD_B1" }),
-    entry({ strategy: "b2", treatment: "reversible_pseudonymization", external_payload: "PAYLOAD_B2" }),
-    entry({ strategy: "b3", treatment: "task_aware", external_payload: "PAYLOAD_B3" }),
-    entry({ strategy: "b4", treatment: "policy_governed", recommended: true, external_payload: "PAYLOAD_B4" }),
+    entry({ strategy: "b0", treatment: "b0", unsafe_control_baseline: true, external_payload: "PAYLOAD_B0" }),
+    entry({ strategy: "b1", treatment: "b1", external_payload: "PAYLOAD_B1" }),
+    entry({ strategy: "b2", treatment: "b2", external_payload: "PAYLOAD_B2" }),
+    entry({ strategy: "b3", treatment: "b3", external_payload: "PAYLOAD_B3" }),
+    entry({ strategy: "b4", treatment: "b4", recommended: true, external_payload: "PAYLOAD_B4" }),
   ];
 }
 
@@ -235,10 +235,10 @@ describe("ComparisonScreen -- what stays local vs what crosses the trust boundar
 
 describe("ComparisonScreen -- technical identifiers are secondary/expandable, not headline text", () => {
   it("shows the raw strategy/treatment codes only inside the technical-details toggle", () => {
-    render(<ComparisonScreen comparison={comparison([entry({ strategy: "b1", treatment: "static_sanitization" })])} onBack={vi.fn()} />);
+    render(<ComparisonScreen comparison={comparison([entry({ strategy: "b1", treatment: "b1" })])} onBack={vi.fn()} />);
 
     // Not visible before opening any technical-details disclosure.
-    expect(screen.queryByText("static_sanitization")).not.toBeInTheDocument();
+    expect(screen.queryByText("b1")).not.toBeInTheDocument();
   });
 });
 

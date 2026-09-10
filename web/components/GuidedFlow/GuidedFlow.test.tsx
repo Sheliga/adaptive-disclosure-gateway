@@ -60,7 +60,7 @@ function previewResponse(): PreviewResponse {
     },
     external_payload: "conteudo transformado",
     payload_byte_count: 22,
-    treatment: "policy_governed",
+    treatment: "b4",
     strategy: "recommended",
     governance: {
       domain: "demo",
@@ -92,7 +92,7 @@ function executeResponse(): ExecuteResponse {
       failure_kind: null,
     },
     reconstruction: { attempted: true, reconstructed_hash: "hash2", changed_from_provider_response: false },
-    treatment: "policy_governed",
+    treatment: "b4",
     strategy: "recommended",
     governance: {
       domain: "demo",
@@ -112,7 +112,7 @@ function compareResponse(): CompareResponse {
     entries: [
       {
         strategy: "b0",
-        treatment: "direct",
+        treatment: "b0",
         recommended: false,
         unsafe_control_baseline: true,
         summary: previewResponse().summary,
@@ -121,7 +121,7 @@ function compareResponse(): CompareResponse {
       },
       {
         strategy: "b1",
-        treatment: "static_sanitization",
+        treatment: "b1",
         recommended: false,
         unsafe_control_baseline: false,
         summary: previewResponse().summary,
@@ -130,7 +130,7 @@ function compareResponse(): CompareResponse {
       },
       {
         strategy: "b2",
-        treatment: "reversible_pseudonymization",
+        treatment: "b2",
         recommended: false,
         unsafe_control_baseline: false,
         summary: previewResponse().summary,
@@ -139,7 +139,7 @@ function compareResponse(): CompareResponse {
       },
       {
         strategy: "b3",
-        treatment: "task_aware",
+        treatment: "b3",
         recommended: false,
         unsafe_control_baseline: false,
         summary: previewResponse().summary,
@@ -148,7 +148,7 @@ function compareResponse(): CompareResponse {
       },
       {
         strategy: "b4",
-        treatment: "policy_governed",
+        treatment: "b4",
         recommended: true,
         unsafe_control_baseline: false,
         summary: previewResponse().summary,

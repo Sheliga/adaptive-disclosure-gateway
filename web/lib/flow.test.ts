@@ -26,7 +26,7 @@ function preview(overrides: Partial<PreviewResponse> = {}): PreviewResponse {
     },
     external_payload: "hello",
     payload_byte_count: 5,
-    treatment: "policy_governed",
+    treatment: "b4",
     strategy: "recommended",
     governance: {
       domain: "demo",
@@ -68,7 +68,7 @@ function execute(overrides: Partial<ExecuteResponse> = {}): ExecuteResponse {
       reconstructed_hash: "def",
       changed_from_provider_response: false,
     },
-    treatment: "policy_governed",
+    treatment: "b4",
     strategy: "recommended",
     governance: {
       domain: "demo",
@@ -233,7 +233,7 @@ function compare(overrides: Partial<CompareResponse> = {}): CompareResponse {
     entries: [
       {
         strategy: "b0",
-        treatment: "direct",
+        treatment: "b0",
         recommended: false,
         unsafe_control_baseline: true,
         summary: { status: "allowed", categories: [], detected_span_count: 0, detected_categories: [] },
@@ -241,8 +241,35 @@ function compare(overrides: Partial<CompareResponse> = {}): CompareResponse {
         payload_byte_count: 18,
       },
       {
+        strategy: "b1",
+        treatment: "b1",
+        recommended: false,
+        unsafe_control_baseline: false,
+        summary: { status: "allowed", categories: [], detected_span_count: 0, detected_categories: [] },
+        external_payload: "conteudo b1",
+        payload_byte_count: 19,
+      },
+      {
+        strategy: "b2",
+        treatment: "b2",
+        recommended: false,
+        unsafe_control_baseline: false,
+        summary: { status: "allowed", categories: [], detected_span_count: 0, detected_categories: [] },
+        external_payload: "conteudo b2",
+        payload_byte_count: 19,
+      },
+      {
+        strategy: "b3",
+        treatment: "b3",
+        recommended: false,
+        unsafe_control_baseline: false,
+        summary: { status: "allowed", categories: [], detected_span_count: 0, detected_categories: [] },
+        external_payload: "conteudo b3",
+        payload_byte_count: 19,
+      },
+      {
         strategy: "b4",
-        treatment: "policy_governed",
+        treatment: "b4",
         recommended: true,
         unsafe_control_baseline: false,
         summary: { status: "allowed", categories: [], detected_span_count: 0, detected_categories: [] },

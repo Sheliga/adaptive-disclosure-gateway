@@ -35,7 +35,7 @@ function execute(overrides: Partial<ExecuteResponse> = {}): ExecuteResponse {
       reconstructed_hash: "def",
       changed_from_provider_response: false,
     },
-    treatment: "policy_governed",
+    treatment: "b4",
     strategy: "recommended",
     governance: {
       domain: "demo",

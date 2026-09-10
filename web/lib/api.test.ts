@@ -128,7 +128,7 @@ function compareBody(): CompareResponse {
     entries: [
       {
         strategy: "b0",
-        treatment: "direct",
+        treatment: "b0",
         recommended: false,
         unsafe_control_baseline: true,
         summary: {
@@ -141,8 +141,35 @@ function compareBody(): CompareResponse {
         payload_byte_count: 30,
       },
       {
+        strategy: "b1",
+        treatment: "b1",
+        recommended: false,
+        unsafe_control_baseline: false,
+        summary: previewBody().summary,
+        external_payload: "conteudo b1",
+        payload_byte_count: 20,
+      },
+      {
+        strategy: "b2",
+        treatment: "b2",
+        recommended: false,
+        unsafe_control_baseline: false,
+        summary: previewBody().summary,
+        external_payload: "conteudo b2",
+        payload_byte_count: 20,
+      },
+      {
+        strategy: "b3",
+        treatment: "b3",
+        recommended: false,
+        unsafe_control_baseline: false,
+        summary: previewBody().summary,
+        external_payload: "conteudo b3",
+        payload_byte_count: 20,
+      },
+      {
         strategy: "b4",
-        treatment: "policy_governed",
+        treatment: "b4",
         recommended: true,
         unsafe_control_baseline: false,
         summary: previewBody().summary,
@@ -835,6 +862,98 @@ describe("200 response validation — compare fails closed on a broken contract"
       expect(serialized).not.toContain("unsafe_control_baseline");
       expect(serialized).not.toContain("external_payload");
     }
+  });
+});
+
+describe("200 response validation — compare requires exactly the canonical B0-B4 order", () => {
+  // These pin the T21/#49 hardening: a `CompareResponse` is accepted only
+  // when `entries` is exactly the five canonical strategies, in canonical
+  // order, each with the treatment code the real wire emits for it. Count,
+  // order, duplicates and unknown codes are all folded into the single
+  // position-against-`CANONICAL_COMPARISON_ORDER` check in
+  // `isCompareResponse` -- these tests exercise each failure mode that
+  // check is meant to catch.
+
+  it("accepts a body with exactly b0, b1, b2, b3, b4 in canonical order", async () => {
+    const body = compareBody();
+    stub200(body);
+
+    const result = await compareStrategies({ text: "x" });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.entries.map((e) => e.strategy)).toEqual(["b0", "b1", "b2", "b3", "b4"]);
+    }
+  });
+
+  it("rejects a body with only four entries", async () => {
+    const draft = draftOf(compareBody());
+    (draft["entries"] as unknown[]).pop();
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a body with six entries (an extra, valid-looking sixth entry appended)", async () => {
+    const draft = draftOf(compareBody());
+    const entries = draft["entries"] as Draft[];
+    entries.push(JSON.parse(JSON.stringify(entries[4])));
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a body with an empty entries array", async () => {
+    const draft = draftOf(compareBody());
+    draft["entries"] = [];
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a body whose entries are out of canonical order (b0, b2, b1, b3, b4)", async () => {
+    const draft = draftOf(compareBody());
+    const entries = draft["entries"] as Draft[];
+    [entries[1], entries[2]] = [entries[2], entries[1]];
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a body with a duplicated strategy (b0 repeated in place of b1)", async () => {
+    const draft = draftOf(compareBody());
+    const entries = draft["entries"] as Draft[];
+    entries[1] = JSON.parse(JSON.stringify(entries[0]));
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+  });
+
+  it.each(["b5", "recommended", "banana"])(
+    "rejects a body with an unknown strategy code %j at position 0",
+    async (badStrategy) => {
+      const draft = draftOf(compareBody());
+      firstEntry(draft)["strategy"] = badStrategy;
+      stub200(draft);
+
+      expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+    },
+  );
+
+  it("rejects a body with an unknown treatment code", async () => {
+    const draft = draftOf(compareBody());
+    firstEntry(draft)["treatment"] = "banana";
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a body whose treatment does not match its entry's strategy/position (b1 entry carrying b2's treatment)", async () => {
+    const draft = draftOf(compareBody());
+    (draft["entries"] as Draft[])[1]["treatment"] = "b2";
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
   });
 });
 

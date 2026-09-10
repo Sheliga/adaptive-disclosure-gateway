@@ -213,11 +213,42 @@ export const CANONICAL_COMPARISON_ORDER = ["b0", "b1", "b2", "b3", "b4"] as cons
 export type ComparisonStrategyCode = (typeof CANONICAL_COMPARISON_ORDER)[number];
 
 /**
+ * The treatment code the real wire emits for each position in
+ * `CANONICAL_COMPARISON_ORDER`. `StrategyComparisonEntryModel.from_domain`
+ * (`application/wire.py`) serializes `treatment=entry.treatment.value`,
+ * and `application/contracts.py`'s `resolve_treatment` (backed by
+ * `_STRATEGY_TO_TREATMENT`) maps every one of the five canonical
+ * `DisclosureStrategy` values to the `Treatment` of the IDENTICAL `b0`-`b4`
+ * code -- `DisclosureStrategy.DIRECT` ("b0") to `Treatment.DIRECT` ("b0"),
+ * and so on through `POLICY_GOVERNED`/"b4". So today this equals
+ * `CANONICAL_COMPARISON_ORDER` verbatim.
+ *
+ * That identity is verified against the Python source, not assumed: kept
+ * as its own named constant (rather than reusing
+ * `CANONICAL_COMPARISON_ORDER` again at each call site) so the assumption
+ * is visible by name, and `contracts.test.ts` derives this same
+ * strategy-to-treatment-code mapping independently from
+ * `resolve_treatment`/`_STRATEGY_TO_TREATMENT` in `application/contracts.py`
+ * and `Treatment` in `domain.py`, diffing it against this constant -- so if
+ * a future change ever made a canonical strategy resolve to a
+ * differently-coded treatment, that drift test fails instead of the
+ * runtime guard in `responseGuards.ts` silently accepting or rejecting the
+ * wrong thing.
+ */
+export const CANONICAL_COMPARISON_TREATMENTS: readonly ComparisonStrategyCode[] = CANONICAL_COMPARISON_ORDER;
+
+/**
  * One strategy's entry in a `/disclosure/compare` response. `strategy` is
  * always an explicit `b0`-`b4` code, never `"recommended"` (see
- * `application/contracts.py`'s `StrategyComparisonEntry` docstring) -- but
- * modeled as `string` here, matching every other identifier field this
- * module mirrors verbatim rather than narrowing to a literal union.
+ * `application/contracts.py`'s `StrategyComparisonEntry` docstring), and
+ * `treatment` is always the `b0`-`b4` code of the treatment that strategy
+ * resolved to (see `CANONICAL_COMPARISON_TREATMENTS` above) -- so both
+ * fields are narrowed to `ComparisonStrategyCode` rather than left as bare
+ * `string`, unlike the other identifier fields this module mirrors
+ * verbatim. This is what lets `responseGuards.ts` and its fixtures be
+ * checked by the type system, not just at runtime: a fixture assigning
+ * `treatment: "policy_governed"` (a human-readable name, never a real wire
+ * value) fails to compile instead of only failing a runtime guard test.
  *
  * `unsafe_control_baseline` is the ONLY field the UI may use to detect the
  * B0 -- Direct control: never `strategy === "b0"`. It is derived
@@ -228,8 +259,8 @@ export type ComparisonStrategyCode = (typeof CANONICAL_COMPARISON_ORDER)[number]
  * `ComparisonScreen.test.tsx`.
  */
 export interface StrategyComparisonEntry {
-  strategy: string;
-  treatment: string;
+  strategy: ComparisonStrategyCode;
+  treatment: ComparisonStrategyCode;
   recommended: boolean;
   unsafe_control_baseline: boolean;
   summary: DisclosureSummary;
