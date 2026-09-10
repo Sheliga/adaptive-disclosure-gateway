@@ -37,6 +37,7 @@
  */
 
 import type {
+  CompareResponse,
   DisclosureRequestBody,
   ExamplesResponse,
   ExecuteResponse,
@@ -45,6 +46,7 @@ import type {
 } from "./contracts";
 import { copy } from "./copy";
 import {
+  isCompareResponse,
   isExamplesResponse,
   isExecuteResponse,
   isHealthResponse,
@@ -190,6 +192,22 @@ export function previewDisclosure(body: DisclosureRequestBody): Promise<ApiResul
 
 export function executeDisclosure(body: DisclosureRequestBody): Promise<ApiResult<ExecuteResponse>> {
   return requestJson("/api/disclosure/execute", isExecuteResponse, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+/**
+ * Runs the same content through every B0-B4 strategy and returns all five
+ * previews side by side -- never a provider call, for any of them (see
+ * `application/contracts.py`'s `StrategyComparisonEntry` docstring). Takes
+ * the same `DisclosureRequestBody` as `previewDisclosure`/`executeDisclosure`
+ * -- the route ignores `body.strategy`, so callers reuse `buildRequestBody`
+ * unchanged rather than needing a second, comparison-specific body shape.
+ */
+export function compareStrategies(body: DisclosureRequestBody): Promise<ApiResult<CompareResponse>> {
+  return requestJson("/api/disclosure/compare", isCompareResponse, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),

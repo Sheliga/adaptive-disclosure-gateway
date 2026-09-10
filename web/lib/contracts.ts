@@ -193,6 +193,57 @@ export interface ExecuteResponse {
   total_ms: number;
 }
 
+// --- POST /disclosure/compare -----------------------------------------------
+
+/**
+ * `application/contracts.py`'s `CANONICAL_COMPARISON_ORDER`, mirrored as the
+ * frozen `b0`-`b4` codes in the exact order `service.compare_strategies`
+ * iterates it -- DIRECT, STATIC_SANITIZATION, REVERSIBLE_PSEUDONYMIZATION,
+ * TASK_AWARE, POLICY_GOVERNED. `contracts.test.ts` diffs this against the
+ * Python source on disk. This is presentation order only: the UI never
+ * re-sorts `CompareResponse.entries` by this array -- the API already
+ * returns them in this order, and re-sorting here would be exactly the
+ * kind of "UI reimplements semantics" CLAUDE.md forbids. It exists so
+ * per-strategy copy (`copy.treatments`) can be looked up/iterated in a
+ * fixed, tested order for things like a legend, independent of what any
+ * given response happens to contain.
+ */
+export const CANONICAL_COMPARISON_ORDER = ["b0", "b1", "b2", "b3", "b4"] as const;
+
+export type ComparisonStrategyCode = (typeof CANONICAL_COMPARISON_ORDER)[number];
+
+/**
+ * One strategy's entry in a `/disclosure/compare` response. `strategy` is
+ * always an explicit `b0`-`b4` code, never `"recommended"` (see
+ * `application/contracts.py`'s `StrategyComparisonEntry` docstring) -- but
+ * modeled as `string` here, matching every other identifier field this
+ * module mirrors verbatim rather than narrowing to a literal union.
+ *
+ * `unsafe_control_baseline` is the ONLY field the UI may use to detect the
+ * B0 -- Direct control: never `strategy === "b0"`. It is derived
+ * server-side from the treatment's own capability marker
+ * (`pipeline.UnsafeControlTreatment`), not from a hardcoded identifier
+ * comparison, and the UI must not reintroduce that hardcoding on its own
+ * side either -- see `outcomes.test.ts`-style pin in
+ * `ComparisonScreen.test.tsx`.
+ */
+export interface StrategyComparisonEntry {
+  strategy: string;
+  treatment: string;
+  recommended: boolean;
+  unsafe_control_baseline: boolean;
+  summary: DisclosureSummary;
+  external_payload: string;
+  payload_byte_count: number;
+}
+
+export interface CompareResponse {
+  contract_version: string;
+  entries: StrategyComparisonEntry[];
+  governance: SafeGovernanceView;
+  provider_mode: ProviderMode;
+}
+
 // --- error bodies ------------------------------------------------------------
 
 /** The safe body for every non-validation error response (400/404/500). */

@@ -137,7 +137,85 @@ const ptBR = {
     applyingDisclosurePolicy: "Aplicando política de divulgação",
     consultingModel: "Consultando o modelo",
     reconstructingAnswer: "Reconstruindo a resposta",
+    /**
+     * Deliberately does NOT say "consultando cinco modelos" or anything
+     * implying five provider calls happen -- the comparison never calls a
+     * provider for any strategy (see `copy.comparison.simulationNotice`).
+     */
+    comparingStrategies: "Comparando como cada estratégia trataria o mesmo documento…",
   },
+
+  /**
+   * Screen "Comparação B0-B4" -- T21 / issue #29's second slice. Reached
+   * from Result via `buttons.compareStrategies`; consumes
+   * `POST /disclosure/compare` (`lib/api.ts`'s `compareStrategies`).
+   *
+   * `simulationNotice` is the single most important string here: the
+   * comparison is preview-only for every strategy, including B0 -- Direct,
+   * and this is the one place that fact is stated to the reviewer in plain
+   * language rather than left implicit.
+   */
+  comparison: {
+    heading: "Como as estratégias diferem?",
+    intro:
+      "O mesmo conteúdo foi analisado de cinco maneiras diferentes. A seguir está exatamente o que cada uma enviaria ao provedor externo.",
+    simulationNotice:
+      "Esta comparação é uma simulação de divulgação. Nenhuma das cinco estratégias envia o documento ao provedor durante esta etapa.",
+    recommendedBadge: "Estratégia recomendada para o fluxo demonstrativo",
+    unsafeControlHeading: "Controle experimental sem proteção",
+    unsafeControlExplanation:
+      "Esta é a estratégia de referência usada na pesquisa para medir o efeito de não aplicar nenhuma proteção. Ela não é uma opção recomendada para uso real e nunca é enviada de fato nesta demonstração.",
+    unsafeControlPayloadContext:
+      "Este é o conteúdo que seria enviado sem proteção no controle de referência.",
+    categoriesDetectedLabel: "categorias sensíveis detectadas",
+    showPayloadToggle: "Ver o que seria enviado nesta estratégia",
+    technicalDetailsToggle: "Detalhes técnicos",
+    strategyIdLabel: "Identificador da estratégia:",
+    treatmentIdLabel: "Tratamento:",
+    backToResult: "Voltar ao resultado",
+    loadError: "Não foi possível carregar a comparação entre estratégias.",
+  },
+
+  /**
+   * Short, plain-language descriptions of each treatment for the
+   * comparison screen, keyed by the FROZEN `b0`-`b4` strategy code -- same
+   * split as `categories.labels`/`examplePurposes` above: the key is a
+   * verbatim identifier from the API/domain, never translated; only the
+   * value is presentation prose. Derived from `docs/experimental-design.md`
+   * ("Treatment definitions"), not from a paraphrase of it -- e.g. B0 is
+   * that document's own "unsafe control treatment" language, and B4's
+   * description mirrors its "policy resolves the permitted action space
+   * first" ordering claim. `name` is a human name; the `b0`-`b4` code and
+   * the raw `treatment` string stay in the expandable technical-details
+   * area (see `ComparisonScreen`), never in this prose.
+   */
+  treatments: {
+    b0: {
+      name: "Direto (controle experimental sem proteção)",
+      description:
+        "Envia o conteúdo original sem nenhuma transformação. É o controle de referência da pesquisa, não uma opção recomendada para uso real.",
+    },
+    b1: {
+      name: "Sanitização estática",
+      description:
+        "Aplica uma transformação fixa e independente da tarefa a cada dado sensível detectado, antes de qualquer envio.",
+    },
+    b2: {
+      name: "Pseudonimização reversível",
+      description:
+        "Mantém a transformação estática e local. Um dado sensível pode ser trocado por um pseudônimo isolado em um cofre local, que só pode ser revertido localmente.",
+    },
+    b3: {
+      name: "Consciente da tarefa",
+      description:
+        "Mantém a pseudonimização reversível e escolhe a ação de cada categoria considerando a tarefa pedida, dentro de um conjunto fixo de ações possíveis.",
+    },
+    b4: {
+      name: "Governança por política",
+      description:
+        "Mantém os mecanismos anteriores, mas primeiro aplica uma política organizacional contextual que define o que é permitido; a tarefa só pode restringir ainda mais dentro do que a política já permite.",
+    },
+  } as Record<string, { name: string; description: string }>,
 
   /**
    * pt-BR labels for the prepared examples' `purpose` values -- the only

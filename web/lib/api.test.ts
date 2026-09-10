@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { executeDisclosure, getExamples, getHealth, previewDisclosure } from "./api";
+import { compareStrategies, executeDisclosure, getExamples, getHealth, previewDisclosure } from "./api";
 import { CONTRACT_VERSION } from "./contracts";
 import type {
   CategoryDisclosureSummary,
+  CompareResponse,
   ExamplesResponse,
   ExecuteResponse,
   HealthResponse,
@@ -121,6 +122,39 @@ function executeBody(): ExecuteResponse {
   };
 }
 
+function compareBody(): CompareResponse {
+  return {
+    contract_version: CONTRACT_VERSION,
+    entries: [
+      {
+        strategy: "b0",
+        treatment: "direct",
+        recommended: false,
+        unsafe_control_baseline: true,
+        summary: {
+          status: "allowed",
+          categories: [categoryBody({ outcome: "preserved", action: "preserve", crosses_trust_boundary: true })],
+          detected_span_count: 1,
+          detected_categories: ["employee_name"],
+        },
+        external_payload: "conteudo original sem protecao",
+        payload_byte_count: 30,
+      },
+      {
+        strategy: "b4",
+        treatment: "policy_governed",
+        recommended: true,
+        unsafe_control_baseline: false,
+        summary: previewBody().summary,
+        external_payload: "conteudo transformado",
+        payload_byte_count: 21,
+      },
+    ],
+    governance: previewBody().governance,
+    provider_mode: { provider_class: "FakeProvider" },
+  };
+}
+
 /**
  * A loose, deliberately-mutable view of a decoded body. Corrupting a
  * fixture goes through this rather than through the real contract type --
@@ -141,6 +175,10 @@ function nested(draft: Draft, key: string): Draft {
 
 function firstCategory(draft: Draft): Draft {
   return (nested(draft, "summary")["categories"] as Draft[])[0];
+}
+
+function firstEntry(draft: Draft): Draft {
+  return (draft["entries"] as Draft[])[0];
 }
 
 function stub200(body: unknown): void {
@@ -644,6 +682,158 @@ describe("200 response validation — nothing from the rejected body is echoed",
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(JSON.stringify(result.error)).not.toContain("Maria Oliveira");
+    }
+  });
+});
+
+describe("previewDisclosure / executeDisclosure / compareStrategies — request shape", () => {
+  it("posts to the compare proxy route", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await compareStrategies({ text: "hello", task: "summarize" });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/disclosure/compare");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({ text: "hello", task: "summarize" });
+  });
+});
+
+describe("200 response validation — compare fails closed on a broken contract", () => {
+  it("accepts a compare body that satisfies the whole contract", async () => {
+    const body = compareBody();
+    stub200(body);
+
+    const result = await compareStrategies({ text: "x" });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data).toEqual(body);
+    }
+  });
+
+  it("rejects a 200 whose entries is not an array", async () => {
+    const draft = draftOf(compareBody());
+    draft["entries"] = { b0: {} };
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a 200 whose entry is missing strategy", async () => {
+    const draft = draftOf(compareBody());
+    delete firstEntry(draft)["strategy"];
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a 200 whose entry is missing recommended", async () => {
+    const draft = draftOf(compareBody());
+    delete firstEntry(draft)["recommended"];
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a 200 whose entry is MISSING unsafe_control_baseline", async () => {
+    // Absent reads as `undefined` -> falsy -> the B0 warning would never
+    // render for an entry that omitted the flag.
+    const draft = draftOf(compareBody());
+    delete firstEntry(draft)["unsafe_control_baseline"];
+    stub200(draft);
+
+    const result = await compareStrategies({ text: "x" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toBe(copy.errors.generic);
+    }
+  });
+
+  it('rejects a 200 whose unsafe_control_baseline is the STRING "false"', async () => {
+    // The opposite direction, equally wrong: a truthy string would light up
+    // the B0 warning on an entry that is not the unsafe control.
+    const draft = draftOf(compareBody());
+    firstEntry(draft)["unsafe_control_baseline"] = "false";
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+  });
+
+  it('rejects a 200 whose unsafe_control_baseline is the STRING "true"', async () => {
+    const draft = draftOf(compareBody());
+    firstEntry(draft)["unsafe_control_baseline"] = "true";
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a 200 whose entry's crosses_trust_boundary is not a real boolean", async () => {
+    const draft = draftOf(compareBody());
+    (nested(firstEntry(draft), "summary")["categories"] as Draft[])[0]["crosses_trust_boundary"] = "true";
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a 200 whose entry's summary.status is unknown", async () => {
+    const draft = draftOf(compareBody());
+    nested(firstEntry(draft), "summary")["status"] = "maybe";
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a 200 whose entry's external_payload is not a string", async () => {
+    const draft = draftOf(compareBody());
+    firstEntry(draft)["external_payload"] = { redacted: true };
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a 200 whose entry's payload_byte_count is not a number", async () => {
+    const draft = draftOf(compareBody());
+    firstEntry(draft)["payload_byte_count"] = "30";
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a 200 whose governance block is missing", async () => {
+    const draft = draftOf(compareBody());
+    delete draft["governance"];
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a 200 carrying a contract_version this UI was not written against", async () => {
+    const draft = draftOf(compareBody());
+    draft["contract_version"] = "t99-some-future-contract";
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+  });
+
+  it("does not echo the rejected body's payload or field names in the error", async () => {
+    const draft = draftOf(compareBody());
+    delete firstEntry(draft)["unsafe_control_baseline"];
+    firstEntry(draft)["external_payload"] = "CPF 123.456.789-00 de Maria Oliveira";
+    stub200(draft);
+
+    const result = await compareStrategies({ text: "x" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toEqual({ message: copy.errors.generic, kind: null, fields: null });
+      const serialized = JSON.stringify(result.error);
+      expect(serialized).not.toContain("123.456.789-00");
+      expect(serialized).not.toContain("Maria Oliveira");
+      expect(serialized).not.toContain("unsafe_control_baseline");
+      expect(serialized).not.toContain("external_payload");
     }
   });
 });

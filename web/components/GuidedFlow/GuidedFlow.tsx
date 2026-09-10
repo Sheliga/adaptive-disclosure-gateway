@@ -25,12 +25,20 @@
 
 import { useEffect, useReducer, useState } from "react";
 
-import { executeDisclosure, getExamples, getHealth, previewDisclosure, type DisplayError } from "@/lib/api";
+import {
+  compareStrategies,
+  executeDisclosure,
+  getExamples,
+  getHealth,
+  previewDisclosure,
+  type DisplayError,
+} from "@/lib/api";
 import type { ExampleSummary } from "@/lib/contracts";
 import { copy } from "@/lib/copy";
 import { buildRequestBody, flowReducer, initialFlowState, type ComposeState } from "@/lib/flow";
 import type { ProviderModeState } from "@/lib/providerMode";
 
+import { ComparisonScreen } from "../ComparisonScreen/ComparisonScreen";
 import { ComposeScreen } from "../ComposeScreen/ComposeScreen";
 import { ProcessingStatus } from "../ProcessingStatus/ProcessingStatus";
 import { ResultScreen } from "../ResultScreen/ResultScreen";
@@ -103,6 +111,24 @@ export function GuidedFlow() {
     }
   }
 
+  /**
+   * Reuses `buildRequestBody(compose)` unchanged -- the SAME content/task
+   * the original preview/execute calls used for this run, never re-entered
+   * or re-derived. `POST /disclosure/compare` ignores `body.strategy`
+   * regardless, so this is exactly the same body `handleSubmitCompose`/
+   * `handleConfirmReview` already send.
+   */
+  async function handleRequestComparison(compose: ComposeState) {
+    dispatch({ type: "REQUEST_COMPARISON" });
+    const body = buildRequestBody(compose);
+    const result = await compareStrategies(body);
+    if (result.ok) {
+      dispatch({ type: "COMPARE_SUCCEEDED", comparison: result.data });
+    } else {
+      dispatch({ type: "COMPARE_FAILED", error: result.error });
+    }
+  }
+
   return (
     <div className={styles.app}>
       <header className={styles.header}>
@@ -152,7 +178,20 @@ export function GuidedFlow() {
           <ResultScreen
             execute={state.execute}
             health={health}
+            compareError={state.compareError}
             onRestart={() => dispatch({ type: "RESTART" })}
+            onCompareStrategies={() => handleRequestComparison(state.compose)}
+          />
+        )}
+
+        {state.screen === "comparing" && (
+          <ProcessingStatus stages={[copy.processingStages.comparingStrategies]} />
+        )}
+
+        {state.screen === "comparison" && (
+          <ComparisonScreen
+            comparison={state.comparison}
+            onBack={() => dispatch({ type: "RETURN_TO_RESULT" })}
           />
         )}
       </main>

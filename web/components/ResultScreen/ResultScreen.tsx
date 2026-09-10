@@ -20,6 +20,7 @@
  */
 
 import { describeCategory } from "@/lib/categoryLabels";
+import type { DisplayError } from "@/lib/api";
 import type { ExecuteResponse } from "@/lib/contracts";
 import { copy } from "@/lib/copy";
 import { describeCategoryOutcome } from "@/lib/outcomes";
@@ -30,10 +31,24 @@ import styles from "./ResultScreen.module.css";
 export interface ResultScreenProps {
   execute: ExecuteResponse;
   health: ProviderModeState;
+  /** Set when the last "Comparar estratégias" request failed; safe/generic only. */
+  compareError: DisplayError | null;
   onRestart: () => void;
+  /**
+   * Always available -- comparison is offered regardless of whether this
+   * particular execution was blocked, failed, or succeeded (T21/#29: the
+   * screen exists to explain the mechanism, not just a successful run).
+   */
+  onCompareStrategies: () => void;
 }
 
-export function ResultScreen({ execute, health, onRestart }: ResultScreenProps) {
+export function ResultScreen({
+  execute,
+  health,
+  compareError,
+  onRestart,
+  onCompareStrategies,
+}: ResultScreenProps) {
   const isBlocked = execute.summary.status === "blocked";
   const providerFailed = execute.provider.failed;
   const providerModeNotice = describeProviderMode(health);
@@ -104,9 +119,20 @@ export function ResultScreen({ execute, health, onRestart }: ResultScreenProps) 
         )}
       </div>
 
-      <button type="button" className={styles.restartButton} onClick={onRestart}>
-        {copy.result.restart}
-      </button>
+      {compareError && (
+        <p role="alert" className={styles.error}>
+          {compareError.message}
+        </p>
+      )}
+
+      <div className={styles.actions}>
+        <button type="button" className={styles.restartButton} onClick={onRestart}>
+          {copy.result.restart}
+        </button>
+        <button type="button" className={styles.compareButton} onClick={onCompareStrategies}>
+          {copy.buttons.compareStrategies}
+        </button>
+      </div>
     </section>
   );
 }

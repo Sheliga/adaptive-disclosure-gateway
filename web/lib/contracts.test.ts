@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { DISCLOSURE_SUMMARY_STATUSES, KNOWN_DISCLOSURE_OUTCOMES } from "./contracts";
+import { CANONICAL_COMPARISON_ORDER, DISCLOSURE_SUMMARY_STATUSES, KNOWN_DISCLOSURE_OUTCOMES } from "./contracts";
 
 /**
  * Reads the Python `DisclosureOutcome` StrEnum's own declared values
@@ -118,5 +118,81 @@ describe("DISCLOSURE_SUMMARY_STATUSES stays synchronized with Python's status Li
     }
 
     expect(DISCLOSURE_SUMMARY_STATUSES.length).toBe(pythonValues.length);
+  });
+});
+
+/**
+ * Pins `CANONICAL_COMPARISON_ORDER` against `application/contracts.py`'s
+ * tuple of the same name -- both the SET of strategies and their ORDER.
+ * `service.compare_strategies` iterates that Python tuple, and only that
+ * tuple, to decide `CompareResponse.entries` order (T21/#29's "canonical
+ * order is preserved" requirement); a UI constant that silently drifted
+ * from it (member added/removed/reordered) would make the "always
+ * DIRECT -> STATIC_SANITIZATION -> REVERSIBLE_PSEUDONYMIZATION ->
+ * TASK_AWARE -> POLICY_GOVERNED" claim this module's docstring makes false
+ * without any test catching it.
+ */
+function readPythonCanonicalComparisonOrder(): string[] {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const contractsPath = path.resolve(
+    here,
+    "..",
+    "..",
+    "src",
+    "adaptive_disclosure_gateway",
+    "application",
+    "contracts.py",
+  );
+  const source = readFileSync(contractsPath, "utf-8");
+
+  const enumMatch = source.match(/class DisclosureStrategy\(StrEnum\):[\s\S]*?(?=\nclass |\n_STRATEGY_TO_TREATMENT)/);
+  if (!enumMatch) {
+    throw new Error(
+      "could not locate `class DisclosureStrategy(StrEnum):` block in application/contracts.py -- " +
+        "has it been renamed or moved?",
+    );
+  }
+  const memberToValue = new Map<string, string>();
+  for (const match of enumMatch[0].matchAll(/^ {4}([A-Z_]+)\s*=\s*"([a-z0-9_]+)"/gm)) {
+    memberToValue.set(match[1], match[2]);
+  }
+  if (memberToValue.size === 0) {
+    throw new Error(
+      "found the DisclosureStrategy block but extracted zero members -- regex likely stale",
+    );
+  }
+
+  const orderMatch = source.match(
+    /CANONICAL_COMPARISON_ORDER:\s*tuple\[DisclosureStrategy, \.\.\.\]\s*=\s*\(([\s\S]*?)\)/,
+  );
+  if (!orderMatch) {
+    throw new Error(
+      "could not locate `CANONICAL_COMPARISON_ORDER: tuple[DisclosureStrategy, ...] = (...)` in " +
+        "application/contracts.py -- has it been renamed or moved?",
+    );
+  }
+  const members = [...orderMatch[1].matchAll(/DisclosureStrategy\.([A-Z_]+)/g)].map(
+    (match) => match[1],
+  );
+  if (members.length === 0) {
+    throw new Error(
+      "found CANONICAL_COMPARISON_ORDER but extracted zero members -- regex likely stale",
+    );
+  }
+
+  return members.map((member) => {
+    const value = memberToValue.get(member);
+    if (value === undefined) {
+      throw new Error(`CANONICAL_COMPARISON_ORDER references unknown DisclosureStrategy member ${member}`);
+    }
+    return value;
+  });
+}
+
+describe("CANONICAL_COMPARISON_ORDER stays synchronized with Python's tuple of the same name", () => {
+  it("has the exact same strategy codes in the exact same order", () => {
+    const pythonOrder = readPythonCanonicalComparisonOrder();
+
+    expect(CANONICAL_COMPARISON_ORDER).toEqual(pythonOrder);
   });
 });

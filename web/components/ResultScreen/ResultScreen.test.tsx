@@ -71,7 +71,7 @@ function healthBody(deterministicDemoMode: boolean): HealthResponse {
 describe("ResultScreen -- final answer is the primary output", () => {
   it("renders the final answer and the trust-boundary path on success", () => {
     const e = execute();
-    render(<ResultScreen execute={e} health={{ status: "loading" }} onRestart={vi.fn()} />);
+    render(<ResultScreen execute={e} health={{ status: "loading" }} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} />);
 
     expect(screen.getByText(e.final_answer as string)).toBeInTheDocument();
     expect(screen.getAllByText(copy.result.pathLocal).length).toBe(2);
@@ -82,7 +82,7 @@ describe("ResultScreen -- final answer is the primary output", () => {
 describe("ResultScreen -- blocked execution", () => {
   it("renders the blocked state, not a crash or a fabricated answer", () => {
     const e = execute({ summary: { status: "blocked", categories: [], detected_span_count: 0, detected_categories: [] } });
-    render(<ResultScreen execute={e} health={{ status: "loading" }} onRestart={vi.fn()} />);
+    render(<ResultScreen execute={e} health={{ status: "loading" }} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} />);
 
     expect(screen.getByText(copy.result.blockedHeading)).toBeInTheDocument();
     expect(screen.queryByText(e.final_answer as string)).not.toBeInTheDocument();
@@ -105,7 +105,7 @@ describe("ResultScreen -- failed provider call", () => {
         failure_kind: "timeout",
       },
     });
-    render(<ResultScreen execute={e} health={{ status: "loading" }} onRestart={vi.fn()} />);
+    render(<ResultScreen execute={e} health={{ status: "loading" }} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} />);
 
     expect(screen.getByText(copy.result.providerFailedHeading)).toBeInTheDocument();
     expect(screen.getByText("timeout")).toBeInTheDocument();
@@ -115,17 +115,17 @@ describe("ResultScreen -- failed provider call", () => {
 
 describe("ResultScreen -- deterministic demo mode label", () => {
   it("appears when health.provider.deterministic_demo_mode is true", () => {
-    render(<ResultScreen execute={execute()} health={healthState(true)} onRestart={vi.fn()} />);
+    render(<ResultScreen execute={execute()} health={healthState(true)} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} />);
     expect(screen.getByText(copy.provider.deterministicDemoLabel)).toBeInTheDocument();
   });
 
   it("does not appear when it is false", () => {
-    render(<ResultScreen execute={execute()} health={healthState(false)} onRestart={vi.fn()} />);
+    render(<ResultScreen execute={execute()} health={healthState(false)} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} />);
     expect(screen.queryByText(copy.provider.deterministicDemoLabel)).not.toBeInTheDocument();
   });
 
   it("does not appear while the health check is still in flight", () => {
-    render(<ResultScreen execute={execute()} health={{ status: "loading" }} onRestart={vi.fn()} />);
+    render(<ResultScreen execute={execute()} health={{ status: "loading" }} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} />);
     expect(screen.queryByText(copy.provider.deterministicDemoLabel)).not.toBeInTheDocument();
   });
 });
@@ -133,7 +133,15 @@ describe("ResultScreen -- deterministic demo mode label", () => {
 describe("ResultScreen -- restart", () => {
   it("calls onRestart when the restart button is clicked", async () => {
     const onRestart = vi.fn();
-    render(<ResultScreen execute={execute()} health={{ status: "loading" }} onRestart={onRestart} />);
+    render(
+      <ResultScreen
+        execute={execute()}
+        health={{ status: "loading" }}
+        onRestart={onRestart}
+        compareError={null}
+        onCompareStrategies={vi.fn()}
+      />,
+    );
     await userEvent.click(screen.getByRole("button", { name: copy.result.restart }));
     expect(onRestart).toHaveBeenCalledTimes(1);
   });
@@ -177,7 +185,7 @@ describe("ResultScreen -- the protections summary speaks human, not identifiers"
   }
 
   it("uses the pt-BR category labels, not the raw identifiers", () => {
-    render(<ResultScreen execute={withCategories()} health={{ status: "loading" }} onRestart={vi.fn()} />);
+    render(<ResultScreen execute={withCategories()} health={{ status: "loading" }} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} />);
 
     expect(screen.getByText(copy.categories.labels.employee_name, { exact: false })).toBeInTheDocument();
     expect(screen.getByText(copy.categories.labels.cpf, { exact: false })).toBeInTheDocument();
@@ -195,7 +203,13 @@ describe("ResultScreen -- the protections summary speaks human, not identifiers"
 describe("ResultScreen -- the provider mode when /health could not be checked", () => {
   it("says the mode could not be verified instead of omitting the indication", () => {
     render(
-      <ResultScreen execute={execute()} health={{ status: "unavailable" }} onRestart={vi.fn()} />,
+      <ResultScreen
+        execute={execute()}
+        health={{ status: "unavailable" }}
+        onRestart={vi.fn()}
+        compareError={null}
+        onCompareStrategies={vi.fn()}
+      />,
     );
 
     expect(screen.getByText(copy.provider.modeUnverifiedLabel)).toBeInTheDocument();
@@ -203,16 +217,88 @@ describe("ResultScreen -- the provider mode when /health could not be checked", 
 
   it("does not claim the deterministic demo provider when the check failed", () => {
     render(
-      <ResultScreen execute={execute()} health={{ status: "unavailable" }} onRestart={vi.fn()} />,
+      <ResultScreen
+        execute={execute()}
+        health={{ status: "unavailable" }}
+        onRestart={vi.fn()}
+        compareError={null}
+        onCompareStrategies={vi.fn()}
+      />,
     );
 
     expect(screen.queryByText(copy.provider.deterministicDemoLabel)).not.toBeInTheDocument();
   });
 
   it("does not show the unverified notice once health has actually answered", () => {
-    render(<ResultScreen execute={execute()} health={healthState(true)} onRestart={vi.fn()} />);
+    render(<ResultScreen execute={execute()} health={healthState(true)} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} />);
 
     expect(screen.queryByText(copy.provider.modeUnverifiedLabel)).not.toBeInTheDocument();
     expect(screen.getByText(copy.provider.deterministicDemoLabel)).toBeInTheDocument();
+  });
+});
+
+/**
+ * T21 second slice: the "Comparar estratégias" entry point. It is a
+ * secondary action (never presented as the primary/only outcome of a
+ * result) and it is discoverable without any prior knowledge of B0-B4.
+ */
+describe("ResultScreen -- Comparar estratégias entry point", () => {
+  it("renders a Comparar estratégias action on every result, including blocked/failed ones", () => {
+    render(
+      <ResultScreen
+        execute={execute()}
+        health={{ status: "loading" }}
+        onRestart={vi.fn()}
+        compareError={null}
+        onCompareStrategies={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: copy.buttons.compareStrategies })).toBeInTheDocument();
+  });
+
+  it("calls onCompareStrategies when clicked -- it never calls executeDisclosure itself", async () => {
+    const onCompareStrategies = vi.fn();
+    render(
+      <ResultScreen
+        execute={execute()}
+        health={{ status: "loading" }}
+        onRestart={vi.fn()}
+        compareError={null}
+        onCompareStrategies={onCompareStrategies}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: copy.buttons.compareStrategies }));
+
+    expect(onCompareStrategies).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a generic error when a comparison request failed, never a fragment of a rejected response", () => {
+    render(
+      <ResultScreen
+        execute={execute()}
+        health={{ status: "loading" }}
+        onRestart={vi.fn()}
+        compareError={{ message: copy.errors.generic, kind: null, fields: null }}
+        onCompareStrategies={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(copy.errors.generic)).toBeInTheDocument();
+  });
+
+  it("shows no comparison error by default", () => {
+    render(
+      <ResultScreen
+        execute={execute()}
+        health={{ status: "loading" }}
+        onRestart={vi.fn()}
+        compareError={null}
+        onCompareStrategies={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText(copy.errors.generic)).not.toBeInTheDocument();
   });
 });

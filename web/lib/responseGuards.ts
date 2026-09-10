@@ -73,6 +73,7 @@ import {
   CONTRACT_VERSION,
   DISCLOSURE_SUMMARY_STATUSES,
   type CategoryDisclosureSummary,
+  type CompareResponse,
   type DisclosureSummary,
   type DisclosureSummaryStatus,
   type ExampleSummary,
@@ -85,6 +86,7 @@ import {
   type ProviderStage,
   type ReconstructionStage,
   type SafeGovernanceView,
+  type StrategyComparisonEntry,
 } from "./contracts";
 
 /** A runtime check that also narrows -- the shape `lib/api.ts` consumes. */
@@ -286,3 +288,31 @@ export const isExecuteResponse: ResponseGuard<ExecuteResponse> = (
   isString(value.strategy) &&
   isSafeGovernanceView(value.governance) &&
   isNumber(value.total_ms);
+
+// --- POST /disclosure/compare ----------------------------------------------------
+
+function isStrategyComparisonEntry(value: unknown): value is StrategyComparisonEntry {
+  return (
+    isRecord(value) &&
+    isString(value.strategy) &&
+    isString(value.treatment) &&
+    isBoolean(value.recommended) &&
+    // The single most important line in this section -- see
+    // `contracts.ts`'s `StrategyComparisonEntry` docstring. A truthiness
+    // check here (accepting the string "false") would silence the B0
+    // warning; a missing field reading as falsy would silence it too.
+    isBoolean(value.unsafe_control_baseline) &&
+    isDisclosureSummary(value.summary) &&
+    isString(value.external_payload) &&
+    isNumber(value.payload_byte_count)
+  );
+}
+
+export const isCompareResponse: ResponseGuard<CompareResponse> = (
+  value: unknown,
+): value is CompareResponse =>
+  isRecord(value) &&
+  declaresKnownContractVersion(value) &&
+  arrayOf(isStrategyComparisonEntry)(value.entries) &&
+  isSafeGovernanceView(value.governance) &&
+  isProviderMode(value.provider_mode);

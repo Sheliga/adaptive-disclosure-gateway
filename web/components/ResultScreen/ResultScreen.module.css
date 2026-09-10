@@ -78,8 +78,13 @@
   gap: 0.25rem;
 }
 
+.actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
 .restartButton {
-  align-self: flex-start;
   padding: 0.75rem 1.5rem;
   border-radius: 0.5rem;
   border: none;
@@ -88,6 +93,23 @@
   font-size: 1rem;
   font-weight: 600;
   cursor: pointer;
+}
+
+/* Secondary action -- "Comparar estratégias" is discoverable but never
+ * competes visually with the primary restart action. */
+.compareButton {
+  padding: 0.75rem 1.5rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.error {
+  color: var(--tone-blocked);
 }
 
 /*
