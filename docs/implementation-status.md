@@ -1,8 +1,8 @@
 # Implementation status
 
-Last updated: 2026-09-10 — T21 fourth slice (pt-BR / English localization) in validation.
+Last updated: 2026-09-11 — T23 post-pilot protocol candidate corrected in PR #53 and awaiting human review/merge; T21 fourth slice (pt-BR / English localization) completed and integrated into `master` via PRs #51/#52 — T21/Issue #29 remains open for the remaining deliberately out-of-scope items.
 
-This file tracks the current engineering/research state and execution order. Architectural decisions belong in ADRs; experimental definitions belong in `docs/experimental-design.md`; factual pilot results belong in `docs/milestone-2-pilot.md`; the parallel advisor-facing application plan belongs in `docs/advisor-demo.md`; historical PR/Issue descriptions remain in GitHub.
+This file tracks the current engineering/research state and execution order. Architectural decisions belong in ADRs; experimental definitions belong in `docs/experimental-design.md`; factual pilot results belong in `docs/milestone-2-pilot.md`; the frozen confirmatory-analysis protocol belongs in `docs/research/`; the parallel advisor-facing application plan belongs in `docs/advisor-demo.md`; historical PR/Issue descriptions remain in GitHub.
 
 ## Current phase
 
@@ -77,13 +77,14 @@ Do not describe M2 as proof that B4 outperforms other treatments.
 
 ## Post-pilot findings that now drive planning
 
-Three methodological findings must be carried forward without retroactively changing M2:
+Three methodological findings were carried forward without retroactively changing M2, and are
+now addressed by the protocol candidate in PR #53, pending review/merge:
 
-1. **Binary unnecessary disclosure penalizes pseudonymization.** The current primary binary rate counts `PSEUDONYMIZE` as transmitted. That is valid as a binary transmission fact, but can make B2 appear worse than B1 despite a lower representation exposure. Ordered exposure levels are already retained and the primary/secondary metric interpretation must be frozen before authoritative analysis.
-2. **The main HR B3→B4 pairwise uses `hr-v1`.** Contextual governance effects from `purpose`, `requester_role`, `provider_class` and `policy_version` are identified in targeted `hr-v2/hr-v3` matrix comparisons rather than the main frozen-corpus pairwise run.
-3. **FakeProvider is not evidence about a real provider.** It remains appropriate for deterministic TDD/pilot reproducibility but cannot support authoritative utility/token/cost or genuine provider-class behavior claims.
+1. **Binary unnecessary disclosure penalizes pseudonymization.** The binary rate counts `PSEUDONYMIZE` as transmitted, which can make B2 appear worse than B1 despite a lower representation exposure. **Candidate resolution:** preserve the binary rate unchanged as secondary and use an ordinal/cumulative primary family. With `N = S + B + U`, the binary rate is `T/N`, while the first threshold is `T/S`; reports include coverage `S/N` and explicit blocked/unscorable counts rather than claiming unconditional recoverability (protocol §4).
+2. **The main HR B3→B4 pairwise uses `hr-v1`.** Contextual governance effects from `purpose`, `requester_role`, `provider_class` and `policy_version` are identified in targeted `hr-v2/hr-v3` matrix comparisons rather than the main frozen-corpus pairwise run. **Resolved:** the five `hr-v2`/`hr-v3` matrix cells are frozen as the primary B3→B4 comparison; the `hr-v1` pairwise is frozen as secondary/historical (protocol §8).
+3. **FakeProvider is not evidence about a real provider.** It remains appropriate for deterministic TDD/pilot reproducibility but cannot support authoritative utility/token/cost or genuine provider-class behavior claims. **Resolved:** valid/invalid uses and the required provenance fields for an authoritative run are frozen, with an explicit no-silent-fallback rule (protocol §9).
 
-The known B3 case `hr_salary_analysis_003/salary` remains intentionally visible: B3 selects `GENERALIZE` while the oracle accepts only `PRESERVE`. It is not tuned away.
+The known B3 case `hr_salary_analysis_003/salary` remains intentionally visible: B3 selects `GENERALIZE` while the oracle accepts only `PRESERVE`. It is not tuned away (protocol §12; re-verified at T23 freeze time — 55/56 spans converged).
 
 ## Milestone 3 — active
 
@@ -91,22 +92,66 @@ Tracker: Issue #38 — **Post-pilot protocol freeze and confirmatory-readiness**
 
 ### Required research path
 
+Scientific order (frozen by T23, protocol §14 — corrects Issue #36's earlier follow-up comment,
+which had placed T24 immediately after T23):
+
+```
+T23 → T12 → Contracts domain extensions → T24 → next B0–B4 batch
+```
+
+T22 (real provider) proceeds **in parallel** with T12/Contracts/T24: it gates authoritative
+utility/token/cost claims (protocol §9), not the Contracts corpus/oracle freeze itself.
+
 #### T23 / Issue #36 — freeze post-pilot methodology
 
-Status: **next methodological gate**.
+Status: **candidate frozen in PR #53; awaiting human review and merge**.
+`docs/research/post-pilot-protocol-v1.md` (`protocol_id: post-pilot-v1`) retains
+`status: FROZEN` and its immutable candidate
+date, but is not yet the authoritative completed gate while the PR remains open.
 
-Freeze before confirmatory analysis:
+Frozen before any confirmatory analysis:
 
-- primary/secondary exposure and unnecessary-disclosure metrics;
-- interpretation of `PSEUDONYMIZE` relative to representation exposure;
-- utility-loss and performance/overhead interpretation thresholds;
-- primary B3→B4 contextual comparison procedure;
-- `hr-v1` pilot vs `hr-v2/hr-v3` reporting relationship;
-- provider/model/configuration requirements;
-- development vs held-out/confirmatory labeling;
-- statistical/descriptive analysis plan.
+- primary (ordinal/cumulative) and secondary (binary, preserved unchanged) exposure/
+  unnecessary-disclosure metrics, both computable from existing runner output; the primary
+  metric is exact per-level proportions plus the exceedance distribution
+  (`P(exposure >= PSEUDONYMIZE)`, `P(exposure >= GENERALIZE)`, `P(exposure >= PRESERVE)`),
+  never a mean of ranks. The binary secondary metric shares the first threshold's numerator but
+  uses all `NOT_REQUIRED` spans as its denominator; ordinal coverage and blocked/unscorable
+  counts make the difference explicit —
+  a mean of `level_rank` may still be reported, but only as an explicitly-caveated secondary
+  descriptive statistic, never as the primary metric;
+- interpretation of `PSEUDONYMIZE` relative to representation exposure — the primary metric
+  reads the existing ordered ladder (`REMOVE < PSEUDONYMIZE < GENERALIZE < PRESERVE`,
+  `experiments/scoring/exposure.py`) rather than redefining it, and preserves that ladder's
+  ordinal (not interval) semantics;
+- utility-loss and performance/overhead **interpretation rules** (no numeric threshold could
+  be justified from pilot-scale evidence without reverse-engineering it from that evidence, so
+  none was invented — see the protocol's §6.4/§7.5);
+- primary B3→B4 contextual comparison procedure — the five `hr-v2`/`hr-v3` matrix cells
+  (`purpose_salary`, `requester_role_salary`, `requester_role_department`,
+  `provider_class_employee_name`, `policy_version_compensation_review`) are frozen as primary;
+  the main `hr-v1` pairwise is frozen as secondary/historical (protocol §8);
+- provider/model/configuration requirements for an authoritative run, plus the no-silent-
+  fallback rule (protocol §9);
+- development vs held-out/confirmatory labeling, including the Contracts transition gate
+  (protocol §1–§2, with T12 stabilization required before the Contracts *confirmatory* freeze
+  and T22 proceeding in parallel to both);
+- statistical/descriptive analysis plan — paired, descriptive-only at current sample size, no
+  significance ritual the corpus size cannot support, and no specific inferential method
+  (bootstrap or otherwise) pre-selected for any future round (protocol §10).
 
-T23 must not tune B3/B4, frozen HR policies, the frozen corpus or M2 artifacts to improve pilot numbers.
+T23 did not tune B3/B4, frozen HR policies, the frozen corpus or M2 artifacts to improve pilot
+numbers. Two small support additions back the document: a closed protocol-id registry and
+validator (`experiments/post_pilot_protocol.py`) whose runner/manifest integration is deferred,
+and a regression test pinning that the M2 binary metric
+still counts `PSEUDONYMIZE` as transmitted (`tests/test_post_pilot_protocol.py`). The
+ordinal/cumulative primary metric's aggregation is specified formally in the protocol but its
+implementation in `experiments/aggregation.py` is explicitly deferred to the task that executes
+the next confirmatory batch; the runner today reports only the binary rate via
+`TreatmentSummary`, plus separate existing rank-based logic
+(`aggregation._exposure_rank_sum`) used only for the secondary/historical B3→B4 pairwise's
+`exposure_direction`. That legacy rank sum assumes uniform spacing and is not a confirmatory
+ordinal claim or this primary metric.
 
 #### T22 / Issue #30 — real provider
 
@@ -146,7 +191,8 @@ If Contracts requires new categories/policies/generalization strategies, those e
 
 M3 closes when:
 
-1. post-pilot metrics/thresholds/comparison/provider rules are frozen;
+1. post-pilot metrics/thresholds/comparison/provider rules are frozen — **candidate in PR #53,
+   awaiting human review/merge**, `docs/research/post-pilot-protocol-v1.md`;
 2. a real provider is available behind the shared boundary;
 3. structured Contracts ingestion is available without becoming a treatment variable;
 4. Contracts v1 corpus/oracle is frozen with its run classification decided before result inspection;
@@ -237,7 +283,7 @@ This slice adds no treatment, policy, corpus, oracle or metric semantics. B0–B
 
 ### T21 / Issue #29 — Next.js advisor-facing UI
 
-Status: **fourth vertical slice in validation (PR open) / non-blocking for M3**. T21 is NOT complete — see "Deliberately not in the fourth slice" below.
+Status: **fourth vertical slice completed and integrated into `master`** (PR #51 into `develop`, then PR #52 `develop` → `master`) / non-blocking for M3. T21/Issue #29 is **not** complete and stays open — see "Deliberately not in the fourth slice" below.
 
 The UI lets a reviewer select a prepared HR example or controlled text, see what crosses the trust boundary before anything is sent, receive the locally reconstructed answer, see the same content compared across all five B0–B4 strategies as a preview-only teaching surface, inspect a safe technical/operational view of the SAME execution already shown on Resultado, and — as of the fourth slice — do all of that in either pt-BR or English. It consumes T20's real HTTP API — there is no fixture phase.
 
