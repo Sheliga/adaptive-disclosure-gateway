@@ -1,7 +1,7 @@
 ---
 protocol_id: post-pilot-v1
 status: FROZEN
-frozen_date: 2026-09-10
+frozen_date: 2026-09-11
 supersedes: none
 ticket: T23 / Issue #36
 ---
@@ -125,8 +125,20 @@ fact), and a new, independently frozen held-out corpus must be produced before t
 confirmatory attempt. This is the general anti-tuning rule (§11) applied specifically to the
 Contracts transition, per Issue #36's follow-up comment.
 
-T12/Docling and T22/real-provider work may proceed in parallel with Contracts corpus
-freezing; neither is itself a Contracts held-out result and neither is blocked by this gate.
+**T22 (real provider) proceeds in parallel** with the Contracts transition gate: it is required
+before any authoritative real-provider claim (§9), but it is not itself a Contracts held-out
+result and is neither blocked by, nor a precondition for, this gate.
+
+**Preliminary Contracts work may proceed in parallel with T12** only for work that does not
+depend on T12's final, stabilized representation — conceptual survey, candidate category
+taxonomy, domain analysis and requirements-gathering are not blocked by T12 being unstable.
+**The confirmatory Contracts freeze may not happen while T12 is still unstable.** Before
+corpus, oracle, offsets, canonical representation and fixtures/scoring representation
+(items 3-5 above, and §3's canonical-representation rule) are definitively frozen, T12 (item 1)
+must be stabilized — a Contracts corpus frozen against a still-moving parser/representation
+would be frozen against a variable this protocol requires held constant (§3), and would need to
+be re-frozen once T12 stabilizes. In one line: **T12 is a prerequisite for the final
+confirmatory Contracts freeze; T22 is parallel.**
 
 ## 3. Canonical representation
 
@@ -201,11 +213,16 @@ left"), which is exactly the M2 finding — it does not distinguish a protected 
 from direct preservation, and it is retained specifically so that limitation stays visible and
 comparable to M2's own numbers, not because it is the more informative metric of the two.
 
-### 4.3 Primary metric — level-sensitive unnecessary exposure
+This rate is not merely a separate, coexisting number alongside §4.3's primary metric: it is
+**recoverable as that family's first threshold** — see §4.3's "The historical secondary metric
+is one threshold of this family" for the exact correspondence.
+
+### 4.3 Primary metric — ordinal/cumulative unnecessary exposure
 
 **This is an aggregation over data `score_exposure` already produces — no new scoring concept,
 no new detector or oracle field.** It answers a different question from §4.2: *when a
-not-required unit was transmitted, how exposed was it?*
+not-required unit was transmitted, how exposed was it, without assuming the ladder's rungs are
+evenly spaced?*
 
 **Unit of analysis:** one oracle `expected_span` (`ExpectedSpan`), scored once per case per
 treatment — identical unit to `score_exposure`/`score_unnecessary_disclosure`.
@@ -214,87 +231,137 @@ treatment — identical unit to `score_exposure`/`score_unnecessary_disclosure`.
 "exposure_level"` (i.e. excludes `block_request` and `unscorable` spans from the population
 being scored for *level*, exactly as the ladder itself excludes them from ranking — see §4.1).
 
-**Per-span score:** `level_rank` as already computed by `score_exposure`
+**Why an ordinal/cumulative representation, not a mean of ranks:** §4.1 already establishes
+`REMOVE < PSEUDONYMIZE < GENERALIZE < PRESERVE` as an **ordinal** scale — B3/B4 use it only to
+pick "the least disclosing available option", never to claim e.g. that PRESERVE is "three times
+as exposing" as REMOVE. Taking the arithmetic mean of the integer `level_rank`
 (`CANONICAL_DISCLOSURE_ORDER.index(level)`, so `REMOVE=0, PSEUDONYMIZE=1, GENERALIZE=2,
-PRESERVE=3`). No unit ever reaches this metric with `level_rank is None` and
-`outcome == "exposure_level"` simultaneously — that combination cannot occur given
-`score_exposure`'s implementation.
+PRESERVE=3`) silently treats the three gaps between consecutive levels as equal in size — an
+**interval** assumption the ladder's own ordering carries no empirical justification for, and
+which an earlier draft of this section froze as primary without acknowledging. The primary
+representation frozen here instead uses only the information the ordering actually supports:
+how the population distributes *across* levels, and how far up the ladder it reaches — never an
+arithmetic distance between levels.
 
-**Per-case aggregation:** for one case/treatment, report:
+**Per-case and per-treatment primary statistics**, reported over the scorable `NOT_REQUIRED`
+population (denominator `not_required_count`, always explicit, never implied):
 
-- `not_required_count` — spans in the population (denominator candidates);
-- `not_required_mean_level_rank` — arithmetic mean of `level_rank` over the population,
-  `None` if the population is empty for that case;
-- `not_required_max_level_rank` — the single most-exposed not-required unit in the case
-  (worst-case exposure), `None` if empty;
-- `not_required_block_count` / `not_required_unscorable_count` — reported alongside, never
-  silently dropped, so a reader can see how many not-required units the level-sensitive
-  metric could not rank for that case.
+- **exact per-level counts and proportions** — `not_required_level_counts` (the count at each
+  of the four levels) and the corresponding proportions
+  (`proportion_remove`/`proportion_pseudonymize`/`proportion_generalize`/`proportion_preserve`,
+  summing to 1 over a non-empty population) — both reported together, so a reader is never left
+  reconstructing a count from a rounded percentage;
+- **exceedance distribution** — the cumulative complement of the level proportions, computed
+  directly from them (never independently, so the two can never drift apart):
+  - `p_exposure_at_least_pseudonymize` = `1 - proportion_remove`
+  - `p_exposure_at_least_generalize` = `proportion_generalize + proportion_preserve`
+  - `p_exposure_at_least_preserve` = `proportion_preserve`
 
-**Per-treatment aggregation:** the corpus-level value is the mean of `level_rank` over the
-pooled population across every case for that treatment (equivalent to summing `level_rank`
-over every scored not-required span and dividing by the pooled count) — a micro-average over
-spans, mirroring `DetectorAggregateScore`'s existing micro/macro distinction
-(`experiments/scoring/detector_scoring.py`). Report **both**:
+  each answers "what fraction of not-required content was exposed at or beyond this level" —
+  exactly the ordinal question the ladder supports, without inventing a distance between rungs;
+- **maximum level reached** (`not_required_max_level`) — the single most-exposed not-required
+  unit's level, reported by name (e.g. `"GENERALIZE"`), not only its rank; ordinal-safe, since
+  "more exposed than" is well-defined without needing a distance; `None` if the population is
+  empty;
+- **median level** (`not_required_median_level`) — the middle value of the sorted level
+  sequence for a non-empty population (for an even-sized population, the lower of the two
+  middle values, so the reported median is always a level that actually occurred, never an
+  interpolated non-level); also ordinal-safe, unlike a mean;
+- **counts, always alongside the above, never folded into them** — `not_required_count`,
+  `not_required_block_count`, `not_required_unscorable_count`.
 
-- `micro_mean_level_rank` — every not-required span weighted equally, regardless of which
-  case it came from;
-- `macro_mean_level_rank` — the mean of each case's own `not_required_mean_level_rank`,
-  skipping cases with an empty population — every *case* weighted equally.
+**Per-treatment (corpus-level) aggregation** mirrors `DetectorAggregateScore`'s existing
+micro/macro distinction (`experiments/scoring/detector_scoring.py`), applied to the
+proportions/exceedance values above rather than to a mean of ranks. Averaging a *proportion* (a
+value in `[0, 1]` representing "what fraction of this population reached at least this level")
+does not carry the interval-scale assumption the rejected `mean(level_rank)` formulation would,
+because it never treats the *distance between levels* as meaningful — only membership at or
+beyond a named level:
+
+- `micro_*` — pool every not-required span across the whole corpus first (weighting every span
+  equally, regardless of case), then compute the proportions/exceedance/max/median over the
+  pooled population;
+- `macro_*` — compute each case's own proportions/exceedance/max/median first, then average
+  those per-case values across cases with a non-empty population (weighting every *case*
+  equally).
 
 Neither is "more correct" than the other, exactly as documented for detector scoring; both are
 reported.
 
-**Handling `block_request`:** a `BLOCK_REQUEST` outcome is never assigned a `level_rank` and
-never enters the mean — a case that blocks entirely removed every not-required unit from
-readable transmission, which is a categorically different (better, on the exposure axis)
-outcome than any of the four ranked levels, not equivalent to `REMOVE` (rank 0) and not
-comparable to a numeric mean. It is reported as a separate count
-(`not_required_block_count`) so a reader can see it without it silently pulling a mean toward
-zero or being excluded without a trace.
+**The historical secondary metric is one threshold of this family, not a separate concept.**
+`unnecessary_disclosure.py`'s binary rate (§4.2) counts a span as "transmitted" when exposure
+`outcome == "exposure_level"` and `level is not DisclosureAction.REMOVE` — i.e. `level` in
+`{PSEUDONYMIZE, GENERALIZE, PRESERVE}`. That is, by construction, exactly
+`p_exposure_at_least_pseudonymize` as defined above. The two metrics are therefore
+**commensurable, not merely coexisting**: §4.2's binary rate is recoverable, without
+re-deriving it, as the first exceedance threshold of this primary family — a genuine continuity
+argument M2's own report could not make, since the exceedance family did not exist yet. This is
+stated once, here, rather than duplicated at every mention of either metric.
+
+**Handling `block_request`:** a `BLOCK_REQUEST` outcome is never assigned a level and never
+enters any proportion, exceedance, maximum or median computed above — a case that blocks
+entirely removed every not-required unit from readable transmission, which is a categorically
+different (better, on the exposure axis) outcome than any of the four ranked levels, not
+equivalent to `REMOVE` and not folded into any statistic here. It is reported as a separate
+count (`not_required_block_count`) so a reader can see it without it silently pulling any
+statistic toward "fully removed" or being excluded without a trace.
 
 **Handling `unscorable`:** a span whose category's transformation pool ran out
-(`span_matching.py`'s documented behavior when detection recall is imperfect for a
-category) is excluded from the mean and reported separately
-(`not_required_unscorable_count`), never treated as a `REMOVE` and never silently dropped from
+(`span_matching.py`'s documented behavior when detection recall is imperfect for a category) is
+excluded from every statistic above and reported separately
+(`not_required_unscorable_count`), never treated as `REMOVE` and never silently dropped from
 the reported denominator context.
 
 **Behavior when no relevant spans exist:** if a case (or, in the corpus-level aggregate, the
 whole corpus/treatment) has zero `NOT_REQUIRED` spans with a scorable exposure level, every
-mean field is `None` — never `0` (which would misleadingly claim "perfectly exposed at rank
-zero") and never omitted (which would hide that the case contributed nothing to the metric).
+proportion/exceedance/maximum/median field is `None` — never `0` or `0.0` (which, for
+exceedance specifically, would misleadingly assert "definitely not exposed at this level") and
+never omitted (which would hide that the case contributed nothing to the metric).
 
-**How to read a value:** lower is better on this metric (closer to `REMOVE`, rank 0). A value
-between `PSEUDONYMIZE` (1) and `GENERALIZE` (2) means a mix of pseudonymized and generalized
-not-required content; comparing two treatments' `micro_mean_level_rank` answers "on average,
-how exposed was not-required content under this treatment", distinguishing a treatment that
-consistently pseudonymizes not-required content (rank ≈1) from one that regularly preserves it
-(rank ≈3) — exactly the distinction §4.2's binary rate collapses (both would show up as
-"100% transmitted").
+**How to read a value:** a higher `p_exposure_at_least_generalize` (or any other threshold)
+means more not-required content was exposed at or beyond that level. Comparing two treatments'
+`micro_p_exposure_at_least_pseudonymize` answers exactly what §4.2's binary rate already answers
+(by construction — see above), while `micro_p_exposure_at_least_generalize` and
+`micro_p_exposure_at_least_preserve` add the ordinal detail the binary rate collapses: a
+treatment that consistently pseudonymizes not-required content shows a high value at the
+`pseudonymize` threshold but a low value at the `preserve` threshold, distinguishing it from a
+treatment that regularly preserves it (high at every threshold) — exactly the distinction §4.2's
+binary rate collapses (both would show up as "100% transmitted") — without asserting that any of
+the thresholds are equally spaced from one another.
 
-**Why no weighting beyond the ladder's own ordinal position is used:** the brief instructs
-against choosing weights that make B4 look better, and to prefer a formulation that avoids an
-indefensible weighting where none exists. The ladder itself is ordinal (`REMOVE < PSEUDONYMIZE
-< GENERALIZE < PRESERVE`), not interval — B3/B4 use it only to pick "the least disclosing
-available option", never to claim e.g. that PRESERVE is "three times as exposing" as REMOVE.
-Using the ladder's own integer position as the score is the most literal, least-invented
-choice available (it adds no information beyond what B3/B4's own decision logic already
-treats as meaningful — an ordering), and reporting **both** the mean (which implicitly treats
-positions as equally spaced) and the max (which is ordinal-safe, immune to the interval
-assumption) lets a reader discount the mean's interval assumption if they consider it
-unjustified. No alternative weighting (e.g. giving PRESERVE a disproportionately large penalty)
-is adopted, because no such weighting was derivable from the ordering's own documented meaning
-("least disclosing useful action") without inventing an additional, unfrozen judgment call —
-exactly the kind of post hoc choice §11 forbids once results exist to be improved.
+**`mean_level_rank` — an optional secondary descriptive statistic, never the primary one.** A
+report may additionally compute `micro_mean_level_rank`/`macro_mean_level_rank` (the arithmetic
+mean of `level_rank` over the same population — what an earlier draft of this section froze as
+*the* primary metric) **only** alongside an explicit note that it assumes the four levels are
+uniformly spaced purely for summarization convenience, and **never** as the sole basis of a
+scientific claim comparing treatments. The exceedance/proportion family above is the frozen
+primary representation; a mean-of-ranks figure, if reported at all, is decoration on top of it,
+not a substitute for it.
+
+**Why no weighting beyond exact per-level proportions and cumulative exceedance is used:** the
+brief instructs against choosing weights that make B4 look better, and to prefer a formulation
+that avoids an indefensible weighting where none exists. Exact per-level proportions and their
+cumulative exceedance use only the ordering the ladder's own definition supports — "at or beyond
+this level" — without asserting a size for any gap between levels. No alternative weighting
+(e.g. giving `PRESERVE` a disproportionately large penalty, or any interval-scale distance
+between rungs) is adopted, because no such weighting was derivable from the ordering's own
+documented meaning ("least disclosing useful action") without inventing an additional, unfrozen
+judgment call — exactly the kind of post hoc choice §11 forbids once results exist to be
+improved.
 
 **Requirement for future execution:** the runner (`experiments/aggregation.py`) does not yet
-compute `not_required_mean_level_rank` / `micro_mean_level_rank` / `macro_mean_level_rank`
-today — `TreatmentSummary` currently reports only the binary rate (§4.2). Implementing this
-aggregation (reading `CaseResult.score.exposure.spans`, already present on every serialized
-result, and `CaseResult.score.conformance.spans[*].task_necessity` for the `NOT_REQUIRED`
-filter) is in-scope for the next runner change that executes a confirmatory batch under this
-protocol — **not** for T23 itself, which freezes the formula, not the implementation. No
-number in this document should be read as already computed by the current runner.
+compute `not_required_level_counts`, the per-level proportions, the exceedance distribution,
+`not_required_max_level`, `not_required_median_level` (micro or macro), or the optional
+`mean_level_rank` today — `TreatmentSummary` currently reports only the binary rate (§4.2); it
+does, separately, already contain some rank-based logic elsewhere in the runner
+(`aggregation._exposure_rank_sum`, used only for `B3ToB4CaseComparison.exposure_direction`
+in the B3→B4 pairwise comparison, §8 — a per-case ordinal direction check, not a corpus-level
+mean and not this primary metric). Implementing this section's aggregation (reading
+`CaseResult.score.exposure.spans`, already present on every serialized result, and
+`CaseResult.score.conformance.spans[*].task_necessity` for the `NOT_REQUIRED` filter) is
+in-scope for the next runner change that executes a confirmatory batch under this protocol —
+**not** for T23 itself, which freezes the formula, not the implementation. No number in this
+document should be read as already computed by the current runner.
 
 ## 5. Necessity
 
@@ -362,12 +429,27 @@ already implemented and frozen by this protocol):
 
 ### 6.2 B0 is a reference, never a recommendation
 
-B0 — Direct is the unsafe-control baseline: sending the original text with no disclosure
-control necessarily maximizes utility by construction (everything the task could possibly need
-is present). Any comparison that treats "B0 achieves higher utility" as evidence that B0 is
-operationally preferable inverts the experiment's own premise — B0 exists to bound what utility
-is achievable at zero disclosure control, not to recommend zero disclosure control. Every
-report under this protocol states this explicitly whenever a B0 utility figure is shown
+B0 — Direct is the unsafe-control/reference baseline, never an operational recommendation. Its
+utility-maximization claim must be scoped to where it actually holds, not stated unconditionally:
+
+- **Under `FakeProvider`'s information-sufficiency proxy (§6.3):** B0 sends the original text
+  with no disclosure control, so it preserves all original information and therefore provides
+  the *ceiling of information availability* under that proxy — every category the task could
+  possibly need is present in the payload by construction. This is a claim about *information
+  availability* under the current proxy, not about real task success.
+- **Under a real provider (T22):** more context does not guarantee a better answer. Irrelevant
+  or excessive information can affect provider behavior in ways the FakeProvider proxy cannot
+  model (distraction, dilution of the relevant signal, and similar effects). **B0 must not be
+  assumed a priori to show the highest observed utility once a real provider scores the
+  response** — whether B0 in fact achieves the highest utility under a real provider is an
+  empirical question that provider's run must answer, not a conclusion this protocol fixes in
+  advance.
+
+Any comparison that treats "B0 achieves higher utility" as evidence that B0 is operationally
+preferable inverts the experiment's own premise regardless of provider — B0 exists to bound what
+*information is available* at zero disclosure control, not to recommend zero disclosure control,
+and (under a real provider) not even guaranteed to bound observed task success. Every report
+under this protocol states both of these points explicitly whenever a B0 utility figure is shown
 alongside B1–B4.
 
 ### 6.3 Provider-dependence of the utility measurement itself
@@ -649,8 +731,15 @@ from a different subset) is not a valid substitute.
 ### 10.2 What is reported, per comparison
 
 - **per-treatment statistics** — `TreatmentSummary` (`aggregation.summarize_treatment`):
-  counts, rates and means already covering conformance, both exposure metrics (§4), utility,
-  reconstruction, policy outcomes, detector scores and performance (§7);
+  counts, rates and means already implemented and covering conformance, the **binary**
+  unnecessary-disclosure/exposure metric (§4.2), utility, reconstruction, policy outcomes,
+  detector scores and performance (§7). This is not the whole of §4: the runner also already
+  contains `aggregation._exposure_rank_sum`, separate rank-based logic used only to compute
+  `B3ToB4CaseComparison.exposure_direction` for the B3→B4 pairwise (§8), which is a per-case
+  ordinal comparison, not a corpus-level metric. **The primary ordinal/cumulative exposure
+  metric (§4.3) is frozen by this protocol but is not yet aggregated by `TreatmentSummary`** —
+  see §4.3's "Requirement for future execution". This document must never be read as implying
+  §4.3's metric is already computed by the current runner;
 - **paired differences** — per matched case, the two treatments' own already-independently-
   computed values placed side by side (`PairwiseSummary`, `B3ToB4CaseComparison`'s
   `exposure_direction`/`utility_direction` fields: `"b4_less"/"b4_more"/"same"/"incomparable"`
@@ -664,15 +753,19 @@ from a different subset) is not a valid substitute.
   never pooled into one combined rate; a domain-level finding is scoped explicitly to that
   domain and is not generalized to "B0–B4 in general" without a second domain's confirmatory
   result to support that generalization;
-- **primary vs secondary metrics** — labeled explicitly per §4 (level-sensitive exposure
-  primary, binary secondary) and §8 (contextual matrix primary, `hr-v1` pairwise secondary/
-  historical) in every report, not left for a reader to infer;
-- **uncertainty-interval procedure** — none is computed at pilot/small-N scale (see §10.3);
-  if a future confirmatory batch's N justifies one, a nonparametric approach (e.g. a
-  bootstrap over paired differences) is preferred over a normal-approximation interval, given
-  the metrics here are rates/ranks, not obviously normally distributed quantities — but this
-  remains a "future, if justified" note, not a frozen procedure, because no batch to date has
-  the scale to make the choice meaningful;
+- **primary vs secondary metrics** — labeled explicitly per §4 (ordinal/cumulative exposure
+  primary, binary secondary — recoverable as its first threshold, §4.3) and §8 (contextual
+  matrix primary, `hr-v1` pairwise secondary/historical) in every report, not left for a reader
+  to infer;
+- **uncertainty-interval / inferential-statistics procedure** — none is computed at
+  pilot/small-N scale (see §10.3). **No specific inferential method is pre-selected by this
+  protocol** — not a bootstrap, not a normal-approximation interval, not any other procedure.
+  If a future round's scale is ever judged to justify confidence intervals, hypothesis testing,
+  significance testing or any other statistical inference, the exact procedure must be defined
+  and frozen in a new protocol version (`post-pilot-v2` or later) **before** that batch's
+  results are inspected, per §10.3 — the same freeze-before-inspection discipline §1/§11
+  already require for every other methodological choice, applied here to the choice of
+  inferential method itself;
 - **individual results and distributions stay auditable** — this protocol's own instruction:
   do not reduce everything to one mean. Every mean reported under §4/§6/§7 is reported
   alongside its own N and, where feasible, its per-case source values.
@@ -688,21 +781,37 @@ correction). This mirrors `docs/experimental-design.md`'s existing "no sophistic
 statistical inference at pilot N" rule and `aggregation.py`'s own module docstring
 ("Deliberately descriptive only... never a significance test or confidence interval").
 
-A hypothesis test becomes appropriate only when **all** of the following hold for a specific,
-pre-registered comparison:
+**No specific inferential procedure is frozen by this document, and none may be selected after a
+future batch's results already exist.** This section is not merely "no test has been run yet" —
+it is a rule about *when* a method may ever be chosen: choosing a bootstrap, a
+normal-approximation interval, a specific hypothesis test, or any other inferential procedure
+*after* seeing what the data look like is exactly the kind of post hoc selection this protocol
+exists to prevent, even when the choice looks technically reasonable in isolation (e.g.
+"the metrics are rates/ranks, so a nonparametric method fits better" is still a choice made with
+the data in view once the corpus that would supply it already exists).
 
-1. the comparison and its metric were specified in this protocol (or a later frozen version)
-   **before** the batch that would supply the test's data was run;
-2. the sample size was itself chosen (or at least assessed) for the intended test's power,
+If a future round's scale is judged to justify statistical inference at all, the exact procedure
+(which test or interval method, against which specific pre-registered comparison, with which
+stated assumptions and correction for multiple comparisons) must be defined and frozen in
+`post-pilot-v2` (or a later version) — **before** the batch that would supply its data is run —
+following §1's freeze-before-inspection discipline. At minimum, before a future protocol version
+freezes such a procedure it must address, for each comparison the procedure would cover:
+
+1. the comparison and its metric are specified in that frozen protocol version **before** the
+   batch that would supply the data is run;
+2. the sample size is itself chosen (or at least assessed) for the intended procedure's power,
    not simply "however many cases the corpus happens to have";
-3. the test's assumptions (independence of paired differences across cases, the metric's
-   distributional shape) are stated and checked, not assumed by default.
+3. the procedure's assumptions (independence of paired differences across cases, the metric's
+   distributional shape) are stated and checked in that frozen version, not assumed by default.
 
-Until a future batch satisfies all three, every reported difference in this protocol's scope is
-descriptive (a rate, a mean, a count, a per-case direction breakdown) — never accompanied by a
-p-value, confidence interval or "statistically significant" claim. This is a **ceiling**, not a
-promise that a later, larger batch will add inferential statistics; it exists to prevent a
-significance ritual the corpus size cannot support, per the brief's explicit instruction.
+Until a future, independently frozen protocol version satisfies this, every reported difference
+in this protocol's scope — including under `post-pilot-v1` — is descriptive (a rate, a
+proportion, a count, a per-case direction breakdown) — never accompanied by a p-value,
+confidence interval, bootstrap estimate or "statistically significant" claim. This is a
+**ceiling**, not a promise that a later, larger batch will add inferential statistics; it exists
+to prevent both a significance ritual the corpus size cannot support and a post hoc choice of
+inferential method after a batch's results are already visible, per the brief's explicit
+instruction.
 
 ### 10.4 Failure handling in the analysis
 
@@ -861,10 +970,17 @@ T23 (this protocol)
         → next confirmatory B0–B4 batch
 ```
 
-**T22 (real provider) proceeds in parallel** with T12/Contracts-domain/T24 — it is required
-before any *authoritative* utility/token/cost claim (§9) but does not gate T12 or the Contracts
-corpus/oracle freeze itself, since Contracts categories/policies/oracle can be defined and
-frozen against FakeProvider first, exactly as HR's B3/B4 development did.
+**T22 (real provider) proceeds in parallel** with T12 and the Contracts domain extensions — it
+is required before any *authoritative* utility/token/cost claim (§9), but it neither gates nor
+is gated by T12 stabilization or the Contracts corpus/oracle freeze; Contracts
+categories/policies/oracle can be defined and confirmatorily frozen against FakeProvider first,
+exactly as HR's B3/B4 development did.
+
+**T12 itself is not parallel with the Contracts *confirmatory* freeze.** Per §2, only
+preliminary, representation-independent Contracts work (taxonomy, domain analysis,
+requirements) may proceed alongside T12; the confirmatory freeze of Contracts corpus, oracle
+and canonical representation requires T12 to have stabilized first. §2 is the authoritative
+statement of this rule; this section restates only the resulting order, not a separate rule.
 
 This section supersedes Issue #36's original follow-up-comment ordering for this one point; the
 comment's other content (the Contracts-transition checklist) is preserved and elaborated in §2.
@@ -892,6 +1008,6 @@ targeted set of automatic checks where drift would otherwise be silent:
   reference rather than duplicating them.
 
 No new framework, scoring module or runner infrastructure is introduced by T23. The
-level-sensitive primary metric (§4.3) is specified formally here; its implementation in
+ordinal/cumulative primary metric (§4.3) is specified formally here; its implementation in
 `experiments/aggregation.py` is explicitly deferred to the next task that executes a batch
 under this protocol.

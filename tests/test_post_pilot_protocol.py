@@ -84,6 +84,38 @@ def test_frozen_protocol_document_status_is_frozen():
     assert match.group(1) == "FROZEN"
 
 
+IMPLEMENTATION_STATUS_DOC = Path(__file__).parents[1] / "docs" / "implementation-status.md"
+
+
+def test_frozen_protocol_date_is_the_frozen_value():
+    """Pins ``frozen_date`` to the immutable value it was corrected to
+    (2026-09-11). ``frozen_date`` is immutable by design -- that immutability
+    is the freeze itself -- so this test intentionally does NOT compare it
+    against anything mutable (e.g. a living status document's own "last
+    updated" date): coupling an immutable value to a routinely-changing one
+    would fail on every unrelated status edit and make "bump frozen_date to
+    match" look like the correct fix, which would silently unfreeze the
+    protocol -- precisely what this pin exists to prevent.
+    """
+    text = PROTOCOL_DOC.read_text(encoding="utf-8")
+    match = re.search(r"^frozen_date:\s*(\S+)\s*$", text, re.MULTILINE)
+    assert match is not None, "post-pilot-protocol-v1.md must declare frozen_date: <DATE>"
+    assert match.group(1) == "2026-09-11"
+
+
+def test_implementation_status_still_references_the_current_protocol_id():
+    """Cross-document guard that asserts something actually invariant: the
+    living status document (docs/implementation-status.md) must keep citing
+    the frozen protocol by its id, so a status rewrite that silently drops
+    the reference to post-pilot-v1 (e.g. replacing it with an unversioned
+    description of the metrics) is caught. Deliberately asserts nothing about
+    either document's own date -- a status update's date changes routinely
+    and legitimately, while the protocol_id reference should not disappear.
+    """
+    status_text = IMPLEMENTATION_STATUS_DOC.read_text(encoding="utf-8")
+    assert CURRENT_PROTOCOL_ID in status_text
+
+
 # --- 3. the historical binary metric must survive unchanged ---
 
 

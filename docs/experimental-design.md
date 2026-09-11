@@ -209,10 +209,17 @@ This binary rate treats `PSEUDONYMIZE` as transmitted. The pilot showed that thi
 
 **Post-pilot rule (frozen by T23):** the M2 metric is not changed retrospectively. Per
 `docs/research/post-pilot-protocol-v1.md` (§4), the binary rate is **preserved unchanged as a
-secondary metric**; a level-sensitive metric over the same ordered exposure ladder — an
-aggregation over data the runner already produces, not a new scoring concept — is frozen as
-**primary** for confirmatory analysis. Its implementation in `experiments/aggregation.py` is
-deferred to the task that executes the next confirmatory batch.
+secondary metric**; an ordinal/cumulative metric over the same ordered exposure ladder — exact
+per-level proportions and the exceedance distribution `P(exposure >= PSEUDONYMIZE)` /
+`P(exposure >= GENERALIZE)` / `P(exposure >= PRESERVE)`, plus ordinal statistics (maximum,
+median, counts) — is frozen as **primary** for confirmatory analysis. It is an aggregation over
+data the runner already produces, not a new scoring concept or new interval-scale assumption;
+the binary secondary metric above is recoverable as its first threshold
+(`P(exposure >= PSEUDONYMIZE)`), so the two are commensurable rather than merely coexisting. A
+mean of `level_rank` may still be reported as a secondary descriptive statistic, but only with
+an explicit uniform-spacing caveat and never as the primary basis for a comparison. Its
+implementation in `experiments/aggregation.py` is deferred to the task that executes the next
+confirmatory batch.
 
 ### Utility
 
