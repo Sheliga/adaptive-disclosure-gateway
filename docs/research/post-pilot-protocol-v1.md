@@ -213,16 +213,17 @@ left"), which is exactly the M2 finding — it does not distinguish a protected 
 from direct preservation, and it is retained specifically so that limitation stays visible and
 comparable to M2's own numbers, not because it is the more informative metric of the two.
 
-This rate is not merely a separate, coexisting number alongside §4.3's primary metric: it is
-**recoverable as that family's first threshold** — see §4.3's "The historical secondary metric
-is one threshold of this family" for the exact correspondence.
+This rate and §4.3's first threshold use the same transmitted-span numerator, but they do not
+always use the same denominator. Their exact relationship and the conditions under which they
+coincide are specified in §4.3.
 
 ### 4.3 Primary metric — ordinal/cumulative unnecessary exposure
 
 **This is an aggregation over data `score_exposure` already produces — no new scoring concept,
-no new detector or oracle field.** It answers a different question from §4.2: *when a
-not-required unit was transmitted, how exposed was it, without assuming the ladder's rungs are
-evenly spaced?*
+no new detector or oracle field.** It answers a different question from §4.2: *among
+not-required units with a rankable/scorable exposure outcome (including `REMOVE`), how does
+exposure distribute across the ordered levels without assuming the ladder's rungs are evenly
+spaced?*
 
 **Unit of analysis:** one oracle `expected_span` (`ExpectedSpan`), scored once per case per
 treatment — identical unit to `score_exposure`/`score_unnecessary_disclosure`.
@@ -244,7 +245,7 @@ how the population distributes *across* levels, and how far up the ladder it rea
 arithmetic distance between levels.
 
 **Per-case and per-treatment primary statistics**, reported over the scorable `NOT_REQUIRED`
-population (denominator `not_required_count`, always explicit, never implied):
+population (denominator `not_required_scorable_count = S`, always explicit, never implied):
 
 - **exact per-level counts and proportions** — `not_required_level_counts` (the count at each
   of the four levels) and the corresponding proportions
@@ -267,8 +268,9 @@ population (denominator `not_required_count`, always explicit, never implied):
   sequence for a non-empty population (for an even-sized population, the lower of the two
   middle values, so the reported median is always a level that actually occurred, never an
   interpolated non-level); also ordinal-safe, unlike a mean;
-- **counts, always alongside the above, never folded into them** — `not_required_count`,
-  `not_required_block_count`, `not_required_unscorable_count`.
+- **counts, always alongside the above, never folded into them** —
+  `not_required_total = N`, `not_required_scorable_count = S`,
+  `not_required_block_count = B`, `not_required_unscorable_count = U`.
 
 **Per-treatment (corpus-level) aggregation** mirrors `DetectorAggregateScore`'s existing
 micro/macro distinction (`experiments/scoring/detector_scoring.py`), applied to the
@@ -278,25 +280,38 @@ does not carry the interval-scale assumption the rejected `mean(level_rank)` for
 because it never treats the *distance between levels* as meaningful — only membership at or
 beyond a named level:
 
-- `micro_*` — pool every not-required span across the whole corpus first (weighting every span
-  equally, regardless of case), then compute the proportions/exceedance/max/median over the
-  pooled population;
-- `macro_*` — compute each case's own proportions/exceedance/max/median first, then average
-  those per-case values across cases with a non-empty population (weighting every *case*
-  equally).
+- `micro_*` — pool every scorable not-required span across the whole corpus first (weighting
+  every span equally, regardless of case), then compute the proportions/exceedance/max/median
+  over the pooled population;
+- `macro_*` proportions/exceedance — compute each eligible case's own
+  proportions/exceedance first, then take the arithmetic mean of each binary-membership
+  proportion across cases with `S > 0` (weighting every eligible *case* equally). Cases with
+  `S = 0` are ineligible for these macro means and are counted explicitly rather than treated
+  as zero;
+- corpus summaries of per-case `max` and `median` — report the distribution/count of
+  eligible cases at each named level. An ordinal median across those per-case named levels may
+  also be reported using the same lower-middle convention as above. Never arithmetically
+  average the ranks of per-case maxima or medians.
 
 Neither is "more correct" than the other, exactly as documented for detector scoring; both are
 reported.
 
-**The historical secondary metric is one threshold of this family, not a separate concept.**
-`unnecessary_disclosure.py`'s binary rate (§4.2) counts a span as "transmitted" when exposure
-`outcome == "exposure_level"` and `level is not DisclosureAction.REMOVE` — i.e. `level` in
-`{PSEUDONYMIZE, GENERALIZE, PRESERVE}`. That is, by construction, exactly
-`p_exposure_at_least_pseudonymize` as defined above. The two metrics are therefore
-**commensurable, not merely coexisting**: §4.2's binary rate is recoverable, without
-re-deriving it, as the first exceedance threshold of this primary family — a genuine continuity
-argument M2's own report could not make, since the exceedance family did not exist yet. This is
-stated once, here, rather than duplicated at every mention of either metric.
+**Relationship to the historical secondary metric.** For any aggregation unit, define:
+
+- `N` = all `NOT_REQUIRED` spans present;
+- `S` = those spans with `outcome == "exposure_level"`;
+- `B` = those spans with `outcome == "block_request"`;
+- `U` = those spans with `outcome == "unscorable"`, so `N = S + B + U`;
+- `T` = spans in `S` whose level is `PSEUDONYMIZE`, `GENERALIZE` or `PRESERVE`.
+
+The historical binary rate is `T / N`; the first cumulative threshold is `T / S`. They
+have the same numerator but different denominators. They coincide when `B + U = 0` (and both
+are defined), and also trivially when `T = 0` with non-zero denominators. Otherwise, when
+`T > 0` and `B + U > 0`, they diverge. Every report must therefore publish ordinal coverage
+`S / N` alongside the primary family and report `B` and `U` explicitly; neither metric may
+be presented as unconditionally recoverable from the other. If `N = 0`, the binary rate and
+coverage are `None`; if `N > 0` but `S = 0`, coverage is `0`, the binary rate is `0`,
+and all ordinal proportion/exceedance/max/median fields are `None`.
 
 **Handling `block_request`:** a `BLOCK_REQUEST` outcome is never assigned a level and never
 enters any proportion, exceedance, maximum or median computed above — a case that blocks
@@ -320,8 +335,9 @@ never omitted (which would hide that the case contributed nothing to the metric)
 
 **How to read a value:** a higher `p_exposure_at_least_generalize` (or any other threshold)
 means more not-required content was exposed at or beyond that level. Comparing two treatments'
-`micro_p_exposure_at_least_pseudonymize` answers exactly what §4.2's binary rate already answers
-(by construction — see above), while `micro_p_exposure_at_least_generalize` and
+`micro_p_exposure_at_least_pseudonymize` describes severity among scorable spans; §4.2 also
+reflects blocked/unscorable spans through its broader denominator. The
+`micro_p_exposure_at_least_generalize` and
 `micro_p_exposure_at_least_preserve` add the ordinal detail the binary rate collapses: a
 treatment that consistently pseudonymizes not-required content shows a high value at the
 `pseudonymize` threshold but a low value at the `preserve` threshold, distinguishing it from a
@@ -354,9 +370,11 @@ compute `not_required_level_counts`, the per-level proportions, the exceedance d
 `not_required_max_level`, `not_required_median_level` (micro or macro), or the optional
 `mean_level_rank` today — `TreatmentSummary` currently reports only the binary rate (§4.2); it
 does, separately, already contain some rank-based logic elsewhere in the runner
-(`aggregation._exposure_rank_sum`, used only for `B3ToB4CaseComparison.exposure_direction`
-in the B3→B4 pairwise comparison, §8 — a per-case ordinal direction check, not a corpus-level
-mean and not this primary metric). Implementing this section's aggregation (reading
+(`aggregation._exposure_rank_sum`, used only for the historical/secondary
+`B3ToB4CaseComparison.exposure_direction` in the B3→B4 pairwise comparison, §8). That helper
+sums integer ranks and therefore assumes uniform spacing for its directional summary; it is not
+a confirmatory claim, a corpus-level mean or this primary metric. Implementing this section's
+aggregation (reading
 `CaseResult.score.exposure.spans`, already present on every serialized result, and
 `CaseResult.score.conformance.spans[*].task_necessity` for the `NOT_REQUIRED` filter) is
 in-scope for the next runner change that executes a confirmatory batch under this protocol —
@@ -734,9 +752,10 @@ from a different subset) is not a valid substitute.
   counts, rates and means already implemented and covering conformance, the **binary**
   unnecessary-disclosure/exposure metric (§4.2), utility, reconstruction, policy outcomes,
   detector scores and performance (§7). This is not the whole of §4: the runner also already
-  contains `aggregation._exposure_rank_sum`, separate rank-based logic used only to compute
-  `B3ToB4CaseComparison.exposure_direction` for the B3→B4 pairwise (§8), which is a per-case
-  ordinal comparison, not a corpus-level metric. **The primary ordinal/cumulative exposure
+  contains `aggregation._exposure_rank_sum`, legacy rank-sum logic used only to compute
+  `B3ToB4CaseComparison.exposure_direction` for the secondary/historical B3→B4 pairwise (§8).
+  Because summing ranks assumes uniform spacing, that field is descriptive legacy output and
+  is not a confirmatory ordinal claim or a corpus-level metric. **The primary ordinal/cumulative exposure
   metric (§4.3) is frozen by this protocol but is not yet aggregated by `TreatmentSummary`** —
   see §4.3's "Requirement for future execution". This document must never be read as implying
   §4.3's metric is already computed by the current runner;
@@ -754,7 +773,8 @@ from a different subset) is not a valid substitute.
   domain and is not generalized to "B0–B4 in general" without a second domain's confirmatory
   result to support that generalization;
 - **primary vs secondary metrics** — labeled explicitly per §4 (ordinal/cumulative exposure
-  primary, binary secondary — recoverable as its first threshold, §4.3) and §8 (contextual
+  primary, binary secondary — same numerator but a different denominator when `B + U > 0`,
+  §4.3) and §8 (contextual
   matrix primary, `hr-v1` pairwise secondary/historical) in every report, not left for a reader
   to infer;
 - **uncertainty-interval / inferential-statistics procedure** — none is computed at
@@ -990,10 +1010,10 @@ comment's other content (the Contracts-transition checklist) is preserved and el
 This protocol is deliberately narrative where narrative is sufficient, and backed by a small,
 targeted set of automatic checks where drift would otherwise be silent:
 
-- `src/adaptive_disclosure_gateway/experiments/post_pilot_protocol.py` — a closed registry of
-  frozen protocol ids (`FROZEN_PROTOCOL_IDS`), mirroring `RunClassification`'s existing
-  closed-set treatment, so a manifest recording an unregistered/misspelled `protocol_id` fails
-  fast rather than silently passing;
+- `src/adaptive_disclosure_gateway/experiments/post_pilot_protocol.py` — a closed registry and
+  validator for frozen protocol ids (`FROZEN_PROTOCOL_IDS`, `validate_protocol_id`). The
+  validator is available, but runner/manifest integration is deferred; current manifests do
+  not yet call it, so T23 does not claim run-time enforcement at that boundary;
 - `tests/test_post_pilot_protocol.py` —
   - pins that `CURRENT_PROTOCOL_ID` can never silently drift from this document's own
     `protocol_id`/`status` front matter (a drift test, the same pattern already used elsewhere
