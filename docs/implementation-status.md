@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-09-11 — T23 post-pilot protocol frozen and corrected per review (`docs/research/post-pilot-protocol-v1.md`); T21 fourth slice (pt-BR / English localization) completed and integrated into `master` via PRs #51/#52 — T21/Issue #29 remains open for the remaining deliberately out-of-scope items.
+Last updated: 2026-09-11 — T23 post-pilot protocol candidate corrected in PR #53 and awaiting human review/merge; T21 fourth slice (pt-BR / English localization) completed and integrated into `master` via PRs #51/#52 — T21/Issue #29 remains open for the remaining deliberately out-of-scope items.
 
 This file tracks the current engineering/research state and execution order. Architectural decisions belong in ADRs; experimental definitions belong in `docs/experimental-design.md`; factual pilot results belong in `docs/milestone-2-pilot.md`; the frozen confirmatory-analysis protocol belongs in `docs/research/`; the parallel advisor-facing application plan belongs in `docs/advisor-demo.md`; historical PR/Issue descriptions remain in GitHub.
 
@@ -78,9 +78,9 @@ Do not describe M2 as proof that B4 outperforms other treatments.
 ## Post-pilot findings that now drive planning
 
 Three methodological findings were carried forward without retroactively changing M2, and are
-now resolved by the frozen `docs/research/post-pilot-protocol-v1.md`:
+now addressed by the protocol candidate in PR #53, pending review/merge:
 
-1. **Binary unnecessary disclosure penalizes pseudonymization.** The binary rate counts `PSEUDONYMIZE` as transmitted, which can make B2 appear worse than B1 despite a lower representation exposure. **Resolved:** the binary rate is preserved unchanged as a secondary metric; an ordinal/cumulative metric over the existing ordered exposure ladder (per-level proportions and the exceedance distribution `P(exposure >= PSEUDONYMIZE/GENERALIZE/PRESERVE)`, never a mean of ranks) is frozen as primary — the binary rate is recoverable as that family's first threshold (protocol §4).
+1. **Binary unnecessary disclosure penalizes pseudonymization.** The binary rate counts `PSEUDONYMIZE` as transmitted, which can make B2 appear worse than B1 despite a lower representation exposure. **Candidate resolution:** preserve the binary rate unchanged as secondary and use an ordinal/cumulative primary family. With `N = S + B + U`, the binary rate is `T/N`, while the first threshold is `T/S`; reports include coverage `S/N` and explicit blocked/unscorable counts rather than claiming unconditional recoverability (protocol §4).
 2. **The main HR B3→B4 pairwise uses `hr-v1`.** Contextual governance effects from `purpose`, `requester_role`, `provider_class` and `policy_version` are identified in targeted `hr-v2/hr-v3` matrix comparisons rather than the main frozen-corpus pairwise run. **Resolved:** the five `hr-v2`/`hr-v3` matrix cells are frozen as the primary B3→B4 comparison; the `hr-v1` pairwise is frozen as secondary/historical (protocol §8).
 3. **FakeProvider is not evidence about a real provider.** It remains appropriate for deterministic TDD/pilot reproducibility but cannot support authoritative utility/token/cost or genuine provider-class behavior claims. **Resolved:** valid/invalid uses and the required provenance fields for an authoritative run are frozen, with an explicit no-silent-fallback rule (protocol §9).
 
@@ -104,9 +104,10 @@ utility/token/cost claims (protocol §9), not the Contracts corpus/oracle freeze
 
 #### T23 / Issue #36 — freeze post-pilot methodology
 
-Status: **FROZEN**. `docs/research/post-pilot-protocol-v1.md` (`protocol_id: post-pilot-v1`) is
-the authoritative, versioned decision record. It is not rewritten in place; a future
-methodological change creates `post-pilot-v2` instead.
+Status: **candidate frozen in PR #53; awaiting human review and merge**.
+`docs/research/post-pilot-protocol-v1.md` (`protocol_id: post-pilot-v1`) retains
+`status: FROZEN` and its immutable candidate
+date, but is not yet the authoritative completed gate while the PR remains open.
 
 Frozen before any confirmatory analysis:
 
@@ -114,7 +115,9 @@ Frozen before any confirmatory analysis:
   unnecessary-disclosure metrics, both computable from existing runner output; the primary
   metric is exact per-level proportions plus the exceedance distribution
   (`P(exposure >= PSEUDONYMIZE)`, `P(exposure >= GENERALIZE)`, `P(exposure >= PRESERVE)`),
-  never a mean of ranks, with the binary secondary metric recoverable as its first threshold —
+  never a mean of ranks. The binary secondary metric shares the first threshold's numerator but
+  uses all `NOT_REQUIRED` spans as its denominator; ordinal coverage and blocked/unscorable
+  counts make the difference explicit —
   a mean of `level_rank` may still be reported, but only as an explicitly-caveated secondary
   descriptive statistic, never as the primary metric;
 - interpretation of `PSEUDONYMIZE` relative to representation exposure — the primary metric
@@ -138,15 +141,17 @@ Frozen before any confirmatory analysis:
   (bootstrap or otherwise) pre-selected for any future round (protocol §10).
 
 T23 did not tune B3/B4, frozen HR policies, the frozen corpus or M2 artifacts to improve pilot
-numbers. Two small enforcement additions back the document: a closed protocol-id registry
-(`experiments/post_pilot_protocol.py`) and a regression test pinning that the M2 binary metric
+numbers. Two small support additions back the document: a closed protocol-id registry and
+validator (`experiments/post_pilot_protocol.py`) whose runner/manifest integration is deferred,
+and a regression test pinning that the M2 binary metric
 still counts `PSEUDONYMIZE` as transmitted (`tests/test_post_pilot_protocol.py`). The
 ordinal/cumulative primary metric's aggregation is specified formally in the protocol but its
 implementation in `experiments/aggregation.py` is explicitly deferred to the task that executes
 the next confirmatory batch; the runner today reports only the binary rate via
 `TreatmentSummary`, plus separate existing rank-based logic
-(`aggregation._exposure_rank_sum`) used only for the B3→B4 pairwise's `exposure_direction`,
-not for this primary metric.
+(`aggregation._exposure_rank_sum`) used only for the secondary/historical B3→B4 pairwise's
+`exposure_direction`. That legacy rank sum assumes uniform spacing and is not a confirmatory
+ordinal claim or this primary metric.
 
 #### T22 / Issue #30 — real provider
 
@@ -186,7 +191,8 @@ If Contracts requires new categories/policies/generalization strategies, those e
 
 M3 closes when:
 
-1. post-pilot metrics/thresholds/comparison/provider rules are frozen — **done**, `docs/research/post-pilot-protocol-v1.md`;
+1. post-pilot metrics/thresholds/comparison/provider rules are frozen — **candidate in PR #53,
+   awaiting human review/merge**, `docs/research/post-pilot-protocol-v1.md`;
 2. a real provider is available behind the shared boundary;
 3. structured Contracts ingestion is available without becoming a treatment variable;
 4. Contracts v1 corpus/oracle is frozen with its run classification decided before result inspection;
