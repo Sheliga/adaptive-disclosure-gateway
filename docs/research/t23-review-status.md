@@ -2,7 +2,7 @@
 
 Last updated: 2026-09-11
 
-This document records the **current review state** of T23 / Issue #36 while PR #53 is still open. It is intentionally separate from `post-pilot-protocol-v1.md`: the protocol candidate is not yet authoritative until the remaining review blockers are resolved and the PR is approved/merged.
+This document records the **current review state** of T23 / Issue #36 while PR #53 is still open. It is intentionally separate from `post-pilot-protocol-v1.md`: the protocol candidate is not yet authoritative until it is approved/merged.
 
 ## Current state
 
@@ -10,6 +10,8 @@ This document records the **current review state** of T23 / Issue #36 while PR #
 - PR is open and mergeable.
 - T23 is **in progress / final methodological review**.
 - `post-pilot-v1` must **not** yet be treated as the completed M3 protocol-freeze gate.
+- The previously identified methodological blockers have been corrected in the candidate and
+  are awaiting human verification.
 - No B3/B4, HR corpus, HR policy or M2 artifact tuning is authorized by this review.
 
 ## Accepted corrections already in PR #53
@@ -24,27 +26,26 @@ The previous review round was incorporated successfully:
 - T21 fourth slice status corrected as integrated through PRs #51/#52 while T21 itself remains open;
 - `post-pilot-v1` remains descriptive-only: any future inferential method must be defined in a later protocol version before the relevant batch results are inspected.
 
-## Remaining blockers before merge
+## Review corrections now incorporated
 
 ### 1. Binary metric vs first cumulative threshold
 
-The historical binary unnecessary-disclosure metric is **not always mathematically identical** to `P(exposure >= PSEUDONYMIZE)` under the current proposed ordinal/cumulative population definition.
+The candidate now states that the historical binary unnecessary-disclosure metric is **not always mathematically identical** to `P(exposure >= PSEUDONYMIZE)` under the ordinal/cumulative population definition.
 
 The historical scorer uses every `NOT_REQUIRED` span as its denominator, including blocked or otherwise unscorable spans. `BLOCK_REQUEST`/unscorable spans do not enter the numerator.
 
 The proposed cumulative family currently defines its denominator from scorable `exposure_level` spans only.
 
-Therefore the two values coincide only when the relevant `NOT_REQUIRED` population is fully scorable and unblocked. The protocol, `experimental-design.md`, `implementation-status.md` and PR description must not claim unconditional identity/recoverability unless the denominator definition is deliberately changed and justified without rewriting the historical metric.
-
-Preferred correction: preserve both definitions and state the conditional equivalence explicitly.
+The protocol preserves both definitions and now formalizes `N = S + B + U`, the common
+numerator `T`, binary `T/N`, threshold `T/S`, their coincidence/divergence conditions,
+coverage `S/N`, explicit `B`/`U` counts and empty-population behavior.
 
 ### 2. Macro aggregation of ordinal max/median
 
 Per-case proportions and exceedance probabilities can be macro-averaged across cases.
 
-Per-case ordinal `max`/`median` values must **not** be converted to 0/1/2/3 and arithmetically averaged, because that would reintroduce the equal-spacing assumption T23 explicitly removed.
-
-Use an ordinal-safe corpus summary instead, such as:
+Per-case ordinal `max`/`median` values are no longer specified as arithmetic means. The
+candidate uses ordinal-safe corpus summaries:
 
 - distribution/counts of cases by maximum level;
 - distribution/counts of cases by median level;
@@ -52,9 +53,9 @@ Use an ordinal-safe corpus summary instead, such as:
 
 ### 3. Historical scorer documentation
 
-`src/adaptive_disclosure_gateway/experiments/scoring/unnecessary_disclosure.py` still labels the binary unnecessary-disclosure measure as `Primary metric` in its module docstring.
-
-Update the documentation to reflect the T23 role split while preserving the implementation and historical formula unchanged.
+`src/adaptive_disclosure_gateway/experiments/scoring/unnecessary_disclosure.py` now labels the
+binary measure as the historical M2 metric preserved as secondary. Its implementation and
+formula remain unchanged. A focused regression also pins the blocked-span denominator behavior.
 
 ## Scientific order
 
@@ -70,9 +71,8 @@ Preliminary representation-independent Contracts work may occur before T12 is co
 
 T23 can be marked complete only after:
 
-1. the three items above are corrected;
-2. review confirms the protocol and supporting docs are internally consistent;
-3. applicable gates pass;
-4. PR #53 is approved and merged into `develop`.
+1. human review confirms the corrected protocol and supporting docs are internally consistent;
+2. applicable gates pass;
+3. PR #53 is approved and merged into `develop`.
 
 Until then, Issue #36 and the T23 Trello card remain active.
