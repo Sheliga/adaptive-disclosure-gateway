@@ -1,8 +1,8 @@
 # Implementation status
 
-Last updated: 2026-09-10 — T21 fourth slice (pt-BR / English localization) in validation.
+Last updated: 2026-09-10 — T23 post-pilot protocol frozen (`docs/research/post-pilot-protocol-v1.md`); T21 fourth slice (pt-BR / English localization) in validation.
 
-This file tracks the current engineering/research state and execution order. Architectural decisions belong in ADRs; experimental definitions belong in `docs/experimental-design.md`; factual pilot results belong in `docs/milestone-2-pilot.md`; the parallel advisor-facing application plan belongs in `docs/advisor-demo.md`; historical PR/Issue descriptions remain in GitHub.
+This file tracks the current engineering/research state and execution order. Architectural decisions belong in ADRs; experimental definitions belong in `docs/experimental-design.md`; factual pilot results belong in `docs/milestone-2-pilot.md`; the frozen confirmatory-analysis protocol belongs in `docs/research/`; the parallel advisor-facing application plan belongs in `docs/advisor-demo.md`; historical PR/Issue descriptions remain in GitHub.
 
 ## Current phase
 
@@ -77,13 +77,14 @@ Do not describe M2 as proof that B4 outperforms other treatments.
 
 ## Post-pilot findings that now drive planning
 
-Three methodological findings must be carried forward without retroactively changing M2:
+Three methodological findings were carried forward without retroactively changing M2, and are
+now resolved by the frozen `docs/research/post-pilot-protocol-v1.md`:
 
-1. **Binary unnecessary disclosure penalizes pseudonymization.** The current primary binary rate counts `PSEUDONYMIZE` as transmitted. That is valid as a binary transmission fact, but can make B2 appear worse than B1 despite a lower representation exposure. Ordered exposure levels are already retained and the primary/secondary metric interpretation must be frozen before authoritative analysis.
-2. **The main HR B3→B4 pairwise uses `hr-v1`.** Contextual governance effects from `purpose`, `requester_role`, `provider_class` and `policy_version` are identified in targeted `hr-v2/hr-v3` matrix comparisons rather than the main frozen-corpus pairwise run.
-3. **FakeProvider is not evidence about a real provider.** It remains appropriate for deterministic TDD/pilot reproducibility but cannot support authoritative utility/token/cost or genuine provider-class behavior claims.
+1. **Binary unnecessary disclosure penalizes pseudonymization.** The binary rate counts `PSEUDONYMIZE` as transmitted, which can make B2 appear worse than B1 despite a lower representation exposure. **Resolved:** the binary rate is preserved unchanged as a secondary metric; a new level-sensitive metric over the existing ordered exposure ladder is frozen as primary (protocol §4).
+2. **The main HR B3→B4 pairwise uses `hr-v1`.** Contextual governance effects from `purpose`, `requester_role`, `provider_class` and `policy_version` are identified in targeted `hr-v2/hr-v3` matrix comparisons rather than the main frozen-corpus pairwise run. **Resolved:** the five `hr-v2`/`hr-v3` matrix cells are frozen as the primary B3→B4 comparison; the `hr-v1` pairwise is frozen as secondary/historical (protocol §8).
+3. **FakeProvider is not evidence about a real provider.** It remains appropriate for deterministic TDD/pilot reproducibility but cannot support authoritative utility/token/cost or genuine provider-class behavior claims. **Resolved:** valid/invalid uses and the required provenance fields for an authoritative run are frozen, with an explicit no-silent-fallback rule (protocol §9).
 
-The known B3 case `hr_salary_analysis_003/salary` remains intentionally visible: B3 selects `GENERALIZE` while the oracle accepts only `PRESERVE`. It is not tuned away.
+The known B3 case `hr_salary_analysis_003/salary` remains intentionally visible: B3 selects `GENERALIZE` while the oracle accepts only `PRESERVE`. It is not tuned away (protocol §12; re-verified at T23 freeze time — 55/56 spans converged).
 
 ## Milestone 3 — active
 
@@ -91,22 +92,50 @@ Tracker: Issue #38 — **Post-pilot protocol freeze and confirmatory-readiness**
 
 ### Required research path
 
+Scientific order (frozen by T23, protocol §14 — corrects Issue #36's earlier follow-up comment,
+which had placed T24 immediately after T23):
+
+```
+T23 → T12 → Contracts domain extensions → T24 → next B0–B4 batch
+```
+
+T22 (real provider) proceeds **in parallel** with T12/Contracts/T24: it gates authoritative
+utility/token/cost claims (protocol §9), not the Contracts corpus/oracle freeze itself.
+
 #### T23 / Issue #36 — freeze post-pilot methodology
 
-Status: **next methodological gate**.
+Status: **FROZEN**. `docs/research/post-pilot-protocol-v1.md` (`protocol_id: post-pilot-v1`) is
+the authoritative, versioned decision record. It is not rewritten in place; a future
+methodological change creates `post-pilot-v2` instead.
 
-Freeze before confirmatory analysis:
+Frozen before any confirmatory analysis:
 
-- primary/secondary exposure and unnecessary-disclosure metrics;
-- interpretation of `PSEUDONYMIZE` relative to representation exposure;
-- utility-loss and performance/overhead interpretation thresholds;
-- primary B3→B4 contextual comparison procedure;
-- `hr-v1` pilot vs `hr-v2/hr-v3` reporting relationship;
-- provider/model/configuration requirements;
-- development vs held-out/confirmatory labeling;
-- statistical/descriptive analysis plan.
+- primary (level-sensitive) and secondary (binary, preserved unchanged) exposure/
+  unnecessary-disclosure metrics, both computable from existing runner output;
+- interpretation of `PSEUDONYMIZE` relative to representation exposure — the primary metric
+  reads the existing ordered ladder (`REMOVE < PSEUDONYMIZE < GENERALIZE < PRESERVE`,
+  `experiments/scoring/exposure.py`) rather than redefining it;
+- utility-loss and performance/overhead **interpretation rules** (no numeric threshold could
+  be justified from pilot-scale evidence without reverse-engineering it from that evidence, so
+  none was invented — see the protocol's §6.4/§7.5);
+- primary B3→B4 contextual comparison procedure — the five `hr-v2`/`hr-v3` matrix cells
+  (`purpose_salary`, `requester_role_salary`, `requester_role_department`,
+  `provider_class_employee_name`, `policy_version_compensation_review`) are frozen as primary;
+  the main `hr-v1` pairwise is frozen as secondary/historical (protocol §8);
+- provider/model/configuration requirements for an authoritative run, plus the no-silent-
+  fallback rule (protocol §9);
+- development vs held-out/confirmatory labeling, including the Contracts transition gate
+  (protocol §1–§2);
+- statistical/descriptive analysis plan — paired, descriptive-only at current sample size, no
+  significance ritual the corpus size cannot support (protocol §10).
 
-T23 must not tune B3/B4, frozen HR policies, the frozen corpus or M2 artifacts to improve pilot numbers.
+T23 did not tune B3/B4, frozen HR policies, the frozen corpus or M2 artifacts to improve pilot
+numbers. Two small enforcement additions back the document: a closed protocol-id registry
+(`experiments/post_pilot_protocol.py`) and a regression test pinning that the M2 binary metric
+still counts `PSEUDONYMIZE` as transmitted (`tests/test_post_pilot_protocol.py`). The
+level-sensitive primary metric's aggregation is specified formally in the protocol but its
+implementation in `experiments/aggregation.py` is explicitly deferred to the task that executes
+the next confirmatory batch.
 
 #### T22 / Issue #30 — real provider
 
@@ -146,7 +175,7 @@ If Contracts requires new categories/policies/generalization strategies, those e
 
 M3 closes when:
 
-1. post-pilot metrics/thresholds/comparison/provider rules are frozen;
+1. post-pilot metrics/thresholds/comparison/provider rules are frozen — **done**, `docs/research/post-pilot-protocol-v1.md`;
 2. a real provider is available behind the shared boundary;
 3. structured Contracts ingestion is available without becoming a treatment variable;
 4. Contracts v1 corpus/oracle is frozen with its run classification decided before result inspection;

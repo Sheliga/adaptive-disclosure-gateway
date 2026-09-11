@@ -207,7 +207,12 @@ The M2 pilot used the binary unnecessary-disclosure rate:
 
 This binary rate treats `PSEUDONYMIZE` as transmitted. The pilot showed that this can penalize B2 relative to B1 even when the representation is less revealing.
 
-**Post-pilot rule:** do not change the M2 metric retrospectively. T23 must freeze whether the binary rate remains primary, becomes secondary, or is paired with a level-sensitive primary metric before confirmatory results are inspected. Ordered exposure levels are already retained, so this decision does not require re-running or rewriting M2.
+**Post-pilot rule (frozen by T23):** the M2 metric is not changed retrospectively. Per
+`docs/research/post-pilot-protocol-v1.md` (§4), the binary rate is **preserved unchanged as a
+secondary metric**; a level-sensitive metric over the same ordered exposure ladder — an
+aggregation over data the runner already produces, not a new scoring concept — is frozen as
+**primary** for confirmatory analysis. Its implementation in `experiments/aggregation.py` is
+deferred to the task that executes the next confirmatory batch.
 
 ### Utility
 
@@ -260,18 +265,23 @@ M2 records process CPU time and peak Python-traced allocation across the documen
 
 No numeric utility-loss or overhead threshold was selected before M2.
 
-That pilot has now occurred. Its observations may inform, but must not determine post hoc from desired treatment outcomes, the protocol frozen by T23.
+That pilot occurred, and its observations informed — without determining post hoc from desired
+treatment outcomes — the protocol T23 has now frozen: `docs/research/post-pilot-protocol-v1.md`
+(`protocol_id: post-pilot-v1`, `status: FROZEN`).
 
-T23 must freeze before confirmatory result inspection:
+T23 froze, before any confirmatory result inspection:
 
-- metric primary/secondary roles;
-- interpretation/acceptance thresholds;
-- B3→B4 primary contextual comparison procedure;
-- provider/model/configuration;
-- dataset/run classification rules;
-- statistical/descriptive analysis procedure.
+- metric primary/secondary roles (protocol §4);
+- interpretation rules where a numeric threshold could not be justified from pilot-scale
+  evidence, rather than an invented number (protocol §6.4, §7.5);
+- B3→B4 primary contextual comparison procedure (protocol §8);
+- provider/model/configuration requirements (protocol §9);
+- dataset/run classification rules, including the Contracts transition gate (protocol §1–§2);
+- statistical/descriptive analysis procedure (protocol §10).
 
-Once frozen, later results must be interpreted under that protocol rather than re-optimizing the rules.
+Later results must be interpreted under that protocol rather than re-optimizing the rules. A
+future methodological change creates `post-pilot-v2`; `post-pilot-v1` is never rewritten in
+place.
 
 ## M2 methodological findings carried forward
 
@@ -300,14 +310,14 @@ They must call/consume the same core contracts and cannot define policy logic, t
 
 Milestone 2 is complete. The next research phase is Milestone 3 / Issue #38.
 
-Immediate methodological gate:
+Methodological gate: **T23 / Issue #36 — frozen.** `docs/research/post-pilot-protocol-v1.md`
+is the authoritative protocol. Scientific order after T23 (protocol §14):
 
-- T23 / Issue #36 — freeze post-pilot methodology and confirmatory protocol.
+```
+T23 → T12 → Contracts domain extensions → T24 → next B0–B4 batch
+```
 
-Parallel M3 readiness tasks:
-
-- T22 / Issue #30 — real provider;
-- T12 / Issue #9 — Docling/normalized document ingestion;
-- T24 / Issue #37 — Contracts v1 evaluation corpus/oracle after T23's labeling/freeze rules are defined.
+T22 (real provider) proceeds in parallel with T12/Contracts/T24; it gates authoritative
+utility/token/cost claims, not the Contracts corpus/oracle freeze itself.
 
 T01 line/advisor selection remains a parallel academic track. T20/T21 remain non-blocking integration/product work.
