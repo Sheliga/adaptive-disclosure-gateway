@@ -214,8 +214,11 @@ per-level proportions and the exceedance distribution `P(exposure >= PSEUDONYMIZ
 `P(exposure >= GENERALIZE)` / `P(exposure >= PRESERVE)`, plus ordinal statistics (maximum,
 median, counts) — is frozen as **primary** for confirmatory analysis. It is an aggregation over
 data the runner already produces, not a new scoring concept or new interval-scale assumption;
-the binary secondary metric above is recoverable as its first threshold
-(`P(exposure >= PSEUDONYMIZE)`), so the two are commensurable rather than merely coexisting. A
+the binary secondary metric and the first threshold share a numerator but not always a
+denominator. With `N = S + B + U` for all, scorable, blocked and unscorable `NOT_REQUIRED`
+spans respectively, the binary rate is `T/N` and the threshold is `T/S`; reports include
+coverage `S/N` and explicit `B`/`U` counts. They coincide when `B + U = 0` (or trivially
+when `T = 0` and both denominators are non-zero), but are not unconditionally recoverable. A
 mean of `level_rank` may still be reported as a secondary descriptive statistic, but only with
 an explicit uniform-spacing caveat and never as the primary basis for a comparison. Its
 implementation in `experiments/aggregation.py` is deferred to the task that executes the next
@@ -273,10 +276,12 @@ M2 records process CPU time and peak Python-traced allocation across the documen
 No numeric utility-loss or overhead threshold was selected before M2.
 
 That pilot occurred, and its observations informed — without determining post hoc from desired
-treatment outcomes — the protocol T23 has now frozen: `docs/research/post-pilot-protocol-v1.md`
-(`protocol_id: post-pilot-v1`, `status: FROZEN`).
+treatment outcomes — the protocol candidate in PR #53:
+`docs/research/post-pilot-protocol-v1.md` (`protocol_id: post-pilot-v1`, `status: FROZEN`).
+While the PR is open, that front matter marks the candidate's immutable content; T23 is not yet
+the authoritative completed gate.
 
-T23 froze, before any confirmatory result inspection:
+The candidate freezes, before any confirmatory result inspection:
 
 - metric primary/secondary roles (protocol §4);
 - interpretation rules where a numeric threshold could not be justified from pilot-scale
@@ -286,7 +291,7 @@ T23 froze, before any confirmatory result inspection:
 - dataset/run classification rules, including the Contracts transition gate (protocol §1–§2);
 - statistical/descriptive analysis procedure (protocol §10).
 
-Later results must be interpreted under that protocol rather than re-optimizing the rules. A
+After approval and merge, later results must be interpreted under that protocol rather than re-optimizing the rules. A
 future methodological change creates `post-pilot-v2`; `post-pilot-v1` is never rewritten in
 place.
 
@@ -317,8 +322,9 @@ They must call/consume the same core contracts and cannot define policy logic, t
 
 Milestone 2 is complete. The next research phase is Milestone 3 / Issue #38.
 
-Methodological gate: **T23 / Issue #36 — frozen.** `docs/research/post-pilot-protocol-v1.md`
-is the authoritative protocol. Scientific order after T23 (protocol §14):
+Methodological gate: **T23 / Issue #36 — candidate frozen in PR #53; awaiting human review and
+merge.** `docs/research/post-pilot-protocol-v1.md` becomes authoritative after that gate
+completes. Scientific order after T23 (protocol §14):
 
 ```
 T23 → T12 → Contracts domain extensions → T24 → next B0–B4 batch
