@@ -26,7 +26,7 @@ import styles from "./LocaleSwitcher.module.css";
 
 export function LocaleSwitcher() {
   const { locale, setLocale, copy } = useLocale();
-  const next = locale === "pt-BR" ? "en-US" : "pt-BR";
+  const next = locale === "pt-BR" ? "en" : "pt-BR";
 
   return (
     <button type="button" onClick={() => setLocale(next)} className={styles.toggle}>

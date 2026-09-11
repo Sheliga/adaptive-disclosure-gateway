@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithLocale } from "@/i18n/renderWithLocale";
 import type { CategoryDisclosureSummary, PreviewResponse } from "@/lib/contracts";
 import { copy } from "@/lib/copy";
-import { enUS } from "@/lib/copy.en-US";
+import { en } from "@/lib/copy.en";
 
 import { ReviewScreen } from "./ReviewScreen";
 
@@ -286,7 +286,7 @@ describe("ReviewScreen -- categories are presented in human language", () => {
 });
 
 describe("ReviewScreen -- switches to English (T21 fourth slice)", () => {
-  it("renders English category labels and outcome/boundary copy when en-US is active", async () => {
+  it("renders English category labels and outcome/boundary copy when en is active", async () => {
     await renderWithLocale(
       <ReviewScreen
         preview={preview([
@@ -296,13 +296,13 @@ describe("ReviewScreen -- switches to English (T21 fourth slice)", () => {
         onConfirm={vi.fn()}
         onCancel={vi.fn()}
       />,
-      "en-US",
+      "en",
     );
 
-    expect(screen.getByRole("heading", { name: enUS.review.heading })).toBeInTheDocument();
-    expect(screen.getByText(enUS.categories.labels.employee_name)).toBeInTheDocument();
-    expect(screen.getByText(enUS.outcomes.protectedLocally.label)).toBeInTheDocument();
-    expect(screen.getByText(enUS.outcomes.removed.label)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: en.review.heading })).toBeInTheDocument();
+    expect(screen.getByText(en.categories.labels.employee_name)).toBeInTheDocument();
+    expect(screen.getByText(en.outcomes.protectedLocally.label)).toBeInTheDocument();
+    expect(screen.getByText(en.outcomes.removed.label)).toBeInTheDocument();
     expect(screen.queryByText(copy.review.heading)).not.toBeInTheDocument();
     // The technical identifier itself never translates.
     expect(screen.queryByText("employee_name")).not.toBeInTheDocument(); // still not shown as a label
@@ -312,10 +312,10 @@ describe("ReviewScreen -- switches to English (T21 fourth slice)", () => {
     const p = preview([category({})]);
     await renderWithLocale(
       <ReviewScreen preview={p} executeError={null} onConfirm={vi.fn()} onCancel={vi.fn()} />,
-      "en-US",
+      "en",
     );
 
-    await userEvent.click(screen.getByText(enUS.review.showPayloadToggle));
+    await userEvent.click(screen.getByText(en.review.showPayloadToggle));
 
     expect(await screen.findByText(p.external_payload)).toBeInTheDocument();
   });

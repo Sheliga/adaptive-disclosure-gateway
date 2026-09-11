@@ -2,11 +2,12 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { resetVolatileLocaleForTests } from "@/i18n/LocaleProvider";
 import { readStoredLocale } from "@/i18n/localeStorage";
 import { compareStrategies, executeDisclosure, getExamples, getHealth, previewDisclosure } from "@/lib/api";
 import type { CompareResponse, ExecuteResponse, HealthResponse, PreviewResponse } from "@/lib/contracts";
 import { copy } from "@/lib/copy";
-import { enUS } from "@/lib/copy.en-US";
+import { en } from "@/lib/copy.en";
 
 import { GuidedFlow } from "./GuidedFlow";
 
@@ -180,6 +181,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockMatchMedia();
   window.localStorage.clear();
+  resetVolatileLocaleForTests();
   document.documentElement.removeAttribute("data-theme");
   mockedGetHealth.mockResolvedValue({ ok: true, data: healthResponse() });
   mockedGetExamples.mockResolvedValue({
@@ -542,7 +544,7 @@ describe("GuidedFlow -- locale switcher (T21 fourth slice)", () => {
     render(<GuidedFlow />);
     await switchToEnglish();
 
-    expect(screen.getByRole("heading", { name: enUS.howItWorks.title })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: en.howItWorks.title })).toBeInTheDocument();
     expect(localeSwitcherButton().textContent).toMatch(/english/i);
     expect(screen.queryByText(copy.howItWorks.title)).not.toBeInTheDocument();
   });
@@ -560,7 +562,7 @@ describe("GuidedFlow -- locale switcher (T21 fourth slice)", () => {
     render(<GuidedFlow />);
     await switchToEnglish();
 
-    expect(readStoredLocale()).toBe("en-US");
+    expect(readStoredLocale()).toBe("en");
   });
 
   it("a remount restores the stored locale", async () => {
@@ -570,7 +572,7 @@ describe("GuidedFlow -- locale switcher (T21 fourth slice)", () => {
 
     render(<GuidedFlow />);
     await waitFor(() =>
-      expect(screen.getByRole("heading", { name: enUS.howItWorks.title })).toBeInTheDocument(),
+      expect(screen.getByRole("heading", { name: en.howItWorks.title })).toBeInTheDocument(),
     );
   });
 
@@ -609,10 +611,10 @@ describe("GuidedFlow -- switching locale never re-fetches preview/execute/compar
     await switchToEnglish();
 
     expect(mockedCompareStrategies).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("heading", { name: enUS.comparison.heading })).toBeInTheDocument();
-    expect(screen.getByText(enUS.treatments.b0.name)).toBeInTheDocument();
-    expect(screen.getByText(enUS.treatments.b4.name)).toBeInTheDocument();
-    expect(screen.getByText(enUS.comparison.unsafeControlHeading)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: en.comparison.heading })).toBeInTheDocument();
+    expect(screen.getByText(en.treatments.b0.name)).toBeInTheDocument();
+    expect(screen.getByText(en.treatments.b4.name)).toBeInTheDocument();
+    expect(screen.getByText(en.comparison.unsafeControlHeading)).toBeInTheDocument();
   });
 
   it("does not re-call anything when switching locale on the technical details screen, and keeps the same ExecuteResponse", async () => {
@@ -628,7 +630,7 @@ describe("GuidedFlow -- switching locale never re-fetches preview/execute/compar
     const e = executeResponse();
     expect(screen.getByText(e.strategy)).toBeInTheDocument();
     expect(screen.getByText(e.treatment)).toBeInTheDocument();
-    expect(screen.getByText(enUS.technicalDetails.executionHeading)).toBeInTheDocument();
+    expect(screen.getByText(en.technicalDetails.executionHeading)).toBeInTheDocument();
   });
 });
 
@@ -637,17 +639,17 @@ describe("GuidedFlow -- error messages switch with the locale", () => {
     mockedPreviewDisclosure.mockResolvedValue({
       ok: false,
       status: 500,
-      error: { message: enUS.errors.generic, kind: null, fields: null },
+      error: { message: en.errors.generic, kind: null, fields: null },
     });
 
     render(<GuidedFlow />);
     await switchToEnglish();
-    await userEvent.click(screen.getByRole("button", { name: enUS.howItWorks.ctaPrimary }));
-    const select = await screen.findByLabelText(enUS.newTest.exampleFieldLabel);
+    await userEvent.click(screen.getByRole("button", { name: en.howItWorks.ctaPrimary }));
+    const select = await screen.findByLabelText(en.newTest.exampleFieldLabel);
     await userEvent.selectOptions(select, "ex-1");
-    await userEvent.click(screen.getByRole("button", { name: enUS.newTest.continueToReview }));
+    await userEvent.click(screen.getByRole("button", { name: en.newTest.continueToReview }));
 
-    await screen.findByText(enUS.errors.generic);
+    await screen.findByText(en.errors.generic);
     expect(screen.queryByText(copy.errors.generic)).not.toBeInTheDocument();
   });
 });

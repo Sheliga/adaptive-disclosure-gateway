@@ -2,12 +2,13 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { LocaleProvider } from "@/i18n/LocaleProvider";
+import { LocaleProvider, resetVolatileLocaleForTests } from "@/i18n/LocaleProvider";
 
 import { LocaleSwitcher } from "./LocaleSwitcher";
 
 beforeEach(() => {
   window.localStorage.clear();
+  resetVolatileLocaleForTests();
 });
 
 function renderSwitcher() {

@@ -14,7 +14,7 @@
  * `DEFAULT_LOCALE` -- never to a browser/OS language guess.
  */
 
-export const SUPPORTED_LOCALES = ["pt-BR", "en-US"] as const;
+export const SUPPORTED_LOCALES = ["pt-BR", "en"] as const;
 
 export type Locale = (typeof SUPPORTED_LOCALES)[number];
 
@@ -30,7 +30,7 @@ export const DEFAULT_LOCALE: Locale = "pt-BR";
  */
 export const LOCALE_LABELS: Record<Locale, string> = {
   "pt-BR": "Português",
-  "en-US": "English",
+  en: "English",
 };
 
 /**

@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithLocale } from "@/i18n/renderWithLocale";
 import type { CompareResponse, StrategyComparisonEntry } from "@/lib/contracts";
 import { copy } from "@/lib/copy";
-import { enUS } from "@/lib/copy.en-US";
+import { en } from "@/lib/copy.en";
 
 import { ComparisonScreen } from "./ComparisonScreen";
 
@@ -260,29 +260,29 @@ describe("ComparisonScreen -- navigation back to Result", () => {
 });
 
 describe("ComparisonScreen -- switches to English (T21 fourth slice)", () => {
-  it("renders English headings, the simulation notice, and treatment names when en-US is active", async () => {
+  it("renders English headings, the simulation notice, and treatment names when en is active", async () => {
     await renderWithLocale(
       <ComparisonScreen comparison={comparison(fiveCanonicalEntries())} onBack={vi.fn()} />,
-      "en-US",
+      "en",
     );
 
-    expect(screen.getByRole("heading", { name: enUS.comparison.heading })).toBeInTheDocument();
-    expect(screen.getByText(enUS.comparison.simulationNotice)).toBeInTheDocument();
-    expect(screen.getByText(enUS.treatments.b0.name)).toBeInTheDocument();
-    expect(screen.getByText(enUS.treatments.b4.name)).toBeInTheDocument();
-    expect(screen.getByText(enUS.comparison.unsafeControlHeading)).toBeInTheDocument();
-    expect(screen.getByText(enUS.comparison.recommendedBadge)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: en.comparison.heading })).toBeInTheDocument();
+    expect(screen.getByText(en.comparison.simulationNotice)).toBeInTheDocument();
+    expect(screen.getByText(en.treatments.b0.name)).toBeInTheDocument();
+    expect(screen.getByText(en.treatments.b4.name)).toBeInTheDocument();
+    expect(screen.getByText(en.comparison.unsafeControlHeading)).toBeInTheDocument();
+    expect(screen.getByText(en.comparison.recommendedBadge)).toBeInTheDocument();
     expect(screen.queryByText(copy.comparison.heading)).not.toBeInTheDocument();
   });
 
   it("keeps the b0-b4 strategy codes byte-identical -- only shown inside the technical-details toggle", async () => {
     await renderWithLocale(
       <ComparisonScreen comparison={comparison([entry({ strategy: "b1", treatment: "b1" })])} onBack={vi.fn()} />,
-      "en-US",
+      "en",
     );
 
     expect(screen.queryByText("b1")).not.toBeInTheDocument();
-    const toggles = screen.getAllByText(enUS.comparison.technicalDetailsToggle);
+    const toggles = screen.getAllByText(en.comparison.technicalDetailsToggle);
     await userEvent.click(toggles[0]);
     expect(screen.getAllByText("b1").length).toBeGreaterThan(0);
   });

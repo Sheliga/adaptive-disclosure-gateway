@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithLocale } from "@/i18n/renderWithLocale";
 import type { ExecuteResponse } from "@/lib/contracts";
 import { copy } from "@/lib/copy";
-import { enUS } from "@/lib/copy.en-US";
+import { en } from "@/lib/copy.en";
 
 import { TechnicalDetailsScreen } from "./TechnicalDetailsScreen";
 
@@ -306,26 +306,26 @@ describe("TechnicalDetailsScreen -- adversarial: fields outside the allowlist ne
 
 describe("TechnicalDetailsScreen -- switches to English (T21 fourth slice)", () => {
   it("renders English section headings/explanations while keeping strategy/treatment codes identical", async () => {
-    await renderWithLocale(<TechnicalDetailsScreen execute={execute()} onBack={vi.fn()} />, "en-US");
+    await renderWithLocale(<TechnicalDetailsScreen execute={execute()} onBack={vi.fn()} />, "en");
 
     // Technical identifiers stay byte-identical regardless of locale.
     expect(screen.getByText("recommended")).toBeInTheDocument();
     expect(screen.getByText("b4")).toBeInTheDocument();
 
-    expect(screen.getByText(enUS.technicalDetails.executionHeading)).toBeInTheDocument();
-    expect(screen.getByText(enUS.technicalDetails.strategyVsTreatmentExplanation)).toBeInTheDocument();
-    expect(screen.getByText(enUS.technicalDetails.governanceHeading)).toBeInTheDocument();
-    expect(screen.getByText(enUS.technicalDetails.timingExplanation)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: enUS.technicalDetails.backToResult })).toBeInTheDocument();
+    expect(screen.getByText(en.technicalDetails.executionHeading)).toBeInTheDocument();
+    expect(screen.getByText(en.technicalDetails.strategyVsTreatmentExplanation)).toBeInTheDocument();
+    expect(screen.getByText(en.technicalDetails.governanceHeading)).toBeInTheDocument();
+    expect(screen.getByText(en.technicalDetails.timingExplanation)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: en.technicalDetails.backToResult })).toBeInTheDocument();
     expect(screen.queryByText(copy.technicalDetails.executionHeading)).not.toBeInTheDocument();
   });
 
   it("keeps hashes behind the English toggle text, revealed only on click", async () => {
-    await renderWithLocale(<TechnicalDetailsScreen execute={execute()} onBack={vi.fn()} />, "en-US");
+    await renderWithLocale(<TechnicalDetailsScreen execute={execute()} onBack={vi.fn()} />, "en");
 
     expect(screen.queryByText("RESPONSE_HASH_ABC")).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByText(enUS.technicalDetails.providerHashToggle));
+    await userEvent.click(screen.getByText(en.technicalDetails.providerHashToggle));
 
     expect(screen.getByText("RESPONSE_HASH_ABC")).toBeInTheDocument();
   });

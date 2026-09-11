@@ -9,17 +9,24 @@
  * at `DEFAULT_LOCALE` and only an effect applies a stored value). This is
  * more honest than passing a locale as a prop: it exercises the exact
  * storage-read code path each screen relies on, not a shortcut around it.
+ *
+ * Also resets `LocaleProvider`'s in-memory session locale first: that state
+ * is module-level, not React state, so it would otherwise survive across
+ * every `it()` in a test file that calls this helper more than once,
+ * making a later call see an earlier call's locale instead of the one it
+ * asked for.
  */
 
 import { render, waitFor, type RenderResult } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { expect } from "vitest";
 
-import { LocaleProvider } from "./LocaleProvider";
+import { LocaleProvider, resetVolatileLocaleForTests } from "./LocaleProvider";
 import type { Locale } from "./locales";
 import { LOCALE_STORAGE_KEY } from "./localeStorage";
 
 export async function renderWithLocale(ui: ReactElement, locale: Locale): Promise<RenderResult> {
+  resetVolatileLocaleForTests();
   window.localStorage.setItem(LOCALE_STORAGE_KEY, locale);
   const result = render(<LocaleProvider>{ui}</LocaleProvider>);
   // Any string that only exists in one locale's copy table would do here;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { copy, ptBR, resolveCopy, type AppCopy } from "./copy";
-import { enUS } from "./copy.en-US";
+import { en } from "./copy.en";
 
 /**
  * Regression pin for a real defect (PR #50, correction 1): the
@@ -45,8 +45,8 @@ describe("copy.technicalDetails.strategyVsTreatmentExplanation", () => {
  * translation -- so these assert the same TRUE/FALSE claims the pt-BR pins
  * assert, using English-shaped patterns, never the pt-BR sentence itself.
  */
-describe("copy.en-US.technicalDetails.strategyVsTreatmentExplanation", () => {
-  const explanation = enUS.technicalDetails.strategyVsTreatmentExplanation;
+describe("copy.en.technicalDetails.strategyVsTreatmentExplanation", () => {
+  const explanation = en.technicalDetails.strategyVsTreatmentExplanation;
 
   it("never claims the policy dynamically chooses/decides/selects the strategy", () => {
     expect(explanation).not.toMatch(/polic(y|ies)\s+.*(choose|decide|select)/i);
@@ -114,7 +114,7 @@ const FORBIDDEN_B0_EVALUATIVE_LANGUAGE = [/\bbad\b/i, /\bwrong\b/i, /\binsecure 
 
 describe.each([
   ["pt-BR", ptBR],
-  ["en-US", enUS],
+  ["en", en],
 ] as const)("copy.%s -- never renders B0 as bad/wrong/insecure/worst or B4 as best/winner", (_locale, table) => {
   const strings = flattenStrings(table);
   const treatmentStrings = flattenStrings((table as { treatments?: unknown }).treatments ?? {});
@@ -167,15 +167,15 @@ function collectKeyPaths(value: unknown, prefix = "", out: string[] = []): strin
   return out;
 }
 
-describe("copy.ts -- pt-BR and en-US implement the same translatable structure", () => {
+describe("copy.ts -- pt-BR and en implement the same translatable structure", () => {
   it("both locales expose exactly the same set of key paths", () => {
     const ptPaths = collectKeyPaths(ptBR).sort();
-    const enPaths = collectKeyPaths(enUS).sort();
+    const enPaths = collectKeyPaths(en).sort();
     expect(enPaths).toEqual(ptPaths);
   });
 
   it("a locale missing a key actually fails this test (proves the test can fail)", () => {
-    const mutated: Record<string, unknown> = JSON.parse(JSON.stringify(enUS));
+    const mutated: Record<string, unknown> = JSON.parse(JSON.stringify(en));
     delete mutated.buttons;
     const ptPaths = collectKeyPaths(ptBR).sort();
     const mutatedPaths = collectKeyPaths(mutated).sort();
@@ -188,8 +188,8 @@ describe("resolveCopy", () => {
     expect(resolveCopy("pt-BR")).toBe(ptBR);
   });
 
-  it("resolves en-US to the English table", () => {
-    expect(resolveCopy("en-US")).toBe(enUS);
+  it("resolves en to the English table", () => {
+    expect(resolveCopy("en")).toBe(en);
   });
 
   it("the default export -- copy -- is the pt-BR table", () => {
@@ -202,8 +202,8 @@ describe("resolveCopy", () => {
  * strategy/treatment framing above -- CLAUDE.md calls it out by name as the
  * scientific claim most likely to drift in English.
  */
-describe("copy.en-US.technicalDetails.timingExplanation", () => {
-  const explanation = enUS.technicalDetails.timingExplanation;
+describe("copy.en.technicalDetails.timingExplanation", () => {
+  const explanation = en.technicalDetails.timingExplanation;
 
   it("states this is an operational measure, not the scientific latency metric", () => {
     expect(explanation).toMatch(/operational/i);
@@ -217,5 +217,5 @@ describe("copy.en-US.technicalDetails.timingExplanation", () => {
  * import does; there is nothing to assert about it at runtime beyond "this
  * file compiled".
  */
-const _typeParityCheck: AppCopy[] = [ptBR, enUS];
+const _typeParityCheck: AppCopy[] = [ptBR, en];
 void _typeParityCheck;

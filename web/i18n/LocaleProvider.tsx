@@ -43,6 +43,43 @@
  * events only fire in OTHER tabs/windows, never the tab that made the
  * write, so this in-module pub/sub is what makes the CURRENT tab's click
  * update its own `useSyncExternalStore` snapshot.
+ *
+ * --- Session state vs. persistence (blocker fix, T21 fourth slice) ---
+ *
+ * `storeLocale` is best-effort: `localStorage.setItem` can throw (privacy
+ * mode, an embed, a browser storage policy). Before this fix, `getSnapshot`
+ * had NO other source of truth than storage -- `readStoredLocale() ??
+ * DEFAULT_LOCALE` -- so a throwing write left `setLocale` having written
+ * nothing, `notify()` firing, and every consumer re-reading the SAME old
+ * value from storage. The click did not crash, but it also did not do
+ * anything: the language silently failed to change for the rest of the
+ * session.
+ *
+ * `volatileLocale` is the fix: an in-memory session value that is the
+ * PRIMARY source for `getSnapshot`, with storage only a secondary source
+ * consulted when nothing has been explicitly chosen this session yet.
+ * `setLocale` sets it unconditionally, before attempting to persist --
+ * so a persistence failure can never prevent the current session from
+ * changing language, which is the actual product requirement (persistence
+ * is a nice-to-have across visits, not a precondition for the UI to work
+ * within one). `volatileLocale` starts `null`, so the very first client
+ * snapshot -- the one hydration compares against -- is unaffected; it is
+ * consulted only after at least one `setLocale` call in this session.
+ *
+ * Judgment call: a `storage` event from another tab changes what
+ * `readStoredLocale()` returns, but `volatileLocale` set by an explicit
+ * choice IN THIS tab still wins over it, because `getSnapshot` checks
+ * `volatileLocale` first. This is a deliberate, simple choice over
+ * reconciling cross-tab state in this slice: this tab's own explicit
+ * choice stays authoritative for this tab's session, and a fresh tab (no
+ * `volatileLocale` of its own yet) still picks up the other tab's write
+ * through storage, same as before this fix.
+ *
+ * `resetVolatileLocaleForTests` exists ONLY for test isolation: this is
+ * module-level (not React) state, so it survives across `it()` blocks
+ * within the same test file/module instance -- a test that switches to
+ * English would otherwise leak that choice into the next test that expects
+ * to start at the default. Production code never calls it.
  */
 
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
@@ -55,6 +92,14 @@ import { DEFAULT_LOCALE, type Locale } from "./locales";
 import { readStoredLocale, storeLocale } from "./localeStorage";
 
 const listeners = new Set<() => void>();
+
+/**
+ * This session's explicit locale choice, independent of whether it could be
+ * persisted. `null` means "nothing chosen yet this session" -- fall through
+ * to storage, then to the default. See the module docstring's "Session
+ * state vs. persistence" section for why this exists.
+ */
+let volatileLocale: Locale | null = null;
 
 function notify(): void {
   for (const listener of listeners) {
@@ -72,7 +117,16 @@ function subscribe(onStoreChange: () => void): () => void {
 }
 
 function getSnapshot(): Locale {
-  return readStoredLocale() ?? DEFAULT_LOCALE;
+  return volatileLocale ?? readStoredLocale() ?? DEFAULT_LOCALE;
+}
+
+/**
+ * Test-only escape hatch: clears the in-memory session locale so the next
+ * test in the same file does not inherit a previous test's switch. Never
+ * called from production code -- see the module docstring.
+ */
+export function resetVolatileLocaleForTests(): void {
+  volatileLocale = null;
 }
 
 /**
@@ -100,6 +154,11 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
   }, [locale]);
 
   const setLocale = useCallback((next: Locale) => {
+    // Session state first: this is what makes the switch work even when
+    // `storeLocale` below fails (see module docstring). `storeLocale` is
+    // still attempted for cross-visit persistence, but its outcome no
+    // longer gates whether THIS session's locale actually changes.
+    volatileLocale = next;
     storeLocale(next);
     notify();
   }, []);

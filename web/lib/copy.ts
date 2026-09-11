@@ -19,11 +19,11 @@
  *    recursively replaces every literal string (and the contents of every
  *    array) with `string`, while preserving the exact key structure, so
  *    `AppCopy` enforces "same shape" without demanding "same words".
- * 2. `./copy.en-US.ts` defines `export const enUS: AppCopy = { ... }` in its
+ * 2. `./copy.en.ts` defines `export const en: AppCopy = { ... }` in its
  *    own module -- TypeScript's structural typing against `AppCopy` means a
  *    missing key, an extra key, or a wrong-shaped nested value is a compile
  *    error in that file, not a silent runtime gap.
- * 3. `resolveCopy(locale)` below picks between `ptBR` and `enUS`; the
+ * 3. `resolveCopy(locale)` below picks between `ptBR` and `en`; the
  *    persisted user preference that calls it lives in `web/i18n/`
  *    (`LocaleProvider`/`useLocale`), never read directly by a component.
  *
@@ -36,7 +36,7 @@
 
 import type { Locale } from "@/i18n/locales";
 
-import { enUS } from "./copy.en-US";
+import { en } from "./copy.en";
 
 const ptBR = {
   howItWorks: {
@@ -471,8 +471,8 @@ export type AppCopy = Widen<typeof ptBR>;
  */
 export function resolveCopy(locale: Locale): AppCopy {
   switch (locale) {
-    case "en-US":
-      return enUS;
+    case "en":
+      return en;
     case "pt-BR":
     default:
       return ptBR;

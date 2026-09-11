@@ -1,5 +1,5 @@
 /**
- * English (en-US) presentation copy -- the sibling locale to `./copy.ts`'s
+ * English (`en`) presentation copy -- the sibling locale to `./copy.ts`'s
  * `ptBR` (T21 / issue #29's fourth slice).
  *
  * This is a fresh, natural-English rendering of the same UI, not a
@@ -33,7 +33,7 @@
 
 import type { AppCopy } from "./copy";
 
-export const enUS: AppCopy = {
+export const en: AppCopy = {
   howItWorks: {
     title: "How it works",
     steps: [

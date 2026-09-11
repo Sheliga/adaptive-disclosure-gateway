@@ -6,7 +6,7 @@ import { renderWithLocale } from "@/i18n/renderWithLocale";
 import type { ExecuteResponse, HealthResponse } from "@/lib/contracts";
 import type { ProviderModeState } from "@/lib/providerMode";
 import { copy } from "@/lib/copy";
-import { enUS } from "@/lib/copy.en-US";
+import { en } from "@/lib/copy.en";
 
 import { ResultScreen } from "./ResultScreen";
 
@@ -357,7 +357,7 @@ describe("ResultScreen -- Ver detalhes técnicos entry point", () => {
 });
 
 describe("ResultScreen -- switches to English (T21 fourth slice)", () => {
-  it("renders English headings, path labels, category labels, and buttons when en-US is active", async () => {
+  it("renders English headings, path labels, category labels, and buttons when en is active", async () => {
     const executeWithCategory = execute({
       summary: {
         status: "allowed",
@@ -384,20 +384,20 @@ describe("ResultScreen -- switches to English (T21 fourth slice)", () => {
         execute={executeWithCategory}
         health={healthState(true)}
         onRestart={vi.fn()}
-        compareError={{ message: enUS.errors.generic, kind: null, fields: null }}
+        compareError={{ message: en.errors.generic, kind: null, fields: null }}
         onCompareStrategies={vi.fn()}
         onViewTechnicalDetails={vi.fn()}
       />,
-      "en-US",
+      "en",
     );
 
-    expect(screen.getByRole("heading", { name: enUS.result.heading })).toBeInTheDocument();
-    expect(screen.getByText(enUS.result.pathProvider)).toBeInTheDocument();
-    expect(screen.getByText(enUS.provider.deterministicDemoLabel)).toBeInTheDocument();
-    expect(screen.getByText(enUS.categories.labels.employee_name, { exact: false })).toBeInTheDocument();
-    expect(screen.getByText(enUS.errors.generic)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: enUS.buttons.compareStrategies })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: enUS.buttons.viewTechnicalDetails })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: en.result.heading })).toBeInTheDocument();
+    expect(screen.getByText(en.result.pathProvider)).toBeInTheDocument();
+    expect(screen.getByText(en.provider.deterministicDemoLabel)).toBeInTheDocument();
+    expect(screen.getByText(en.categories.labels.employee_name, { exact: false })).toBeInTheDocument();
+    expect(screen.getByText(en.errors.generic)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: en.buttons.compareStrategies })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: en.buttons.viewTechnicalDetails })).toBeInTheDocument();
     expect(screen.queryByText(copy.result.heading)).not.toBeInTheDocument();
   });
 });

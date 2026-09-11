@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { renderWithLocale } from "@/i18n/renderWithLocale";
 import { copy } from "@/lib/copy";
-import { enUS } from "@/lib/copy.en-US";
+import { en } from "@/lib/copy.en";
 
 import { WelcomeScreen } from "./WelcomeScreen";
 
@@ -39,12 +39,12 @@ describe("WelcomeScreen", () => {
 });
 
 describe("WelcomeScreen -- switches to English (T21 fourth slice)", () => {
-  it("renders the English heading, steps and CTA when en-US is the active locale", async () => {
-    await renderWithLocale(<WelcomeScreen onStart={vi.fn()} />, "en-US");
+  it("renders the English heading, steps and CTA when en is the active locale", async () => {
+    await renderWithLocale(<WelcomeScreen onStart={vi.fn()} />, "en");
 
-    expect(screen.getByRole("heading", { level: 1, name: enUS.howItWorks.title })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: enUS.howItWorks.ctaPrimary })).toBeInTheDocument();
-    for (const step of enUS.howItWorks.steps) {
+    expect(screen.getByRole("heading", { level: 1, name: en.howItWorks.title })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: en.howItWorks.ctaPrimary })).toBeInTheDocument();
+    for (const step of en.howItWorks.steps) {
       expect(screen.getByText(step.description)).toBeInTheDocument();
     }
     expect(screen.queryByText(copy.howItWorks.title)).not.toBeInTheDocument();

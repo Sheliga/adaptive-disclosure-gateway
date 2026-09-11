@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithLocale } from "@/i18n/renderWithLocale";
 import type { ExampleSummary } from "@/lib/contracts";
 import { copy } from "@/lib/copy";
-import { enUS } from "@/lib/copy.en-US";
+import { en } from "@/lib/copy.en";
 import { flowReducer, initialComposeState, type ComposeState, type FlowEvent } from "@/lib/flow";
 
 import { ComposeScreen } from "./ComposeScreen";
@@ -164,14 +164,14 @@ describe("ComposeScreen -- submit", () => {
 });
 
 describe("ComposeScreen -- switches to English (T21 fourth slice)", () => {
-  it("renders English entry-mode/field labels when en-US is the active locale", async () => {
-    await renderWithLocale(<Harness />, "en-US");
+  it("renders English entry-mode/field labels when en is the active locale", async () => {
+    await renderWithLocale(<Harness />, "en");
 
-    expect(screen.getByRole("heading", { name: enUS.newTest.heading })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: enUS.entryModes.useExample })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: enUS.entryModes.uploadFile })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: enUS.entryModes.pasteText })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: enUS.newTest.continueToReview })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: en.newTest.heading })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: en.entryModes.useExample })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: en.entryModes.uploadFile })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: en.entryModes.pasteText })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: en.newTest.continueToReview })).toBeInTheDocument();
     expect(screen.queryByText(copy.newTest.heading)).not.toBeInTheDocument();
   });
 });
