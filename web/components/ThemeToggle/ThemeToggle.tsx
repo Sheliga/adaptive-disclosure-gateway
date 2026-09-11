@@ -20,7 +20,7 @@
 
 import { useState } from "react";
 
-import { copy } from "@/lib/copy";
+import { useCopy } from "@/i18n/useLocale";
 import { resolveTheme, setThemePreference, type ThemePreference } from "@/lib/theme";
 
 import styles from "./ThemeToggle.module.css";
@@ -30,6 +30,7 @@ function initialTheme(): ThemePreference {
 }
 
 export function ThemeToggle() {
+  const copy = useCopy();
   const [theme, setTheme] = useState<ThemePreference>(initialTheme);
 
   function handleClick() {

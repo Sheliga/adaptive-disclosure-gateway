@@ -1,10 +1,16 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { renderWithLocale } from "@/i18n/renderWithLocale";
 import { copy } from "@/lib/copy";
+import { en } from "@/lib/copy.en";
 
 import { WelcomeScreen } from "./WelcomeScreen";
+
+beforeEach(() => {
+  window.localStorage.clear();
+});
 
 describe("WelcomeScreen", () => {
   it("renders the heading and CTA from copy.ts, not hardcoded text", () => {
@@ -29,5 +35,18 @@ describe("WelcomeScreen", () => {
     await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
 
     expect(onStart).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("WelcomeScreen -- switches to English (T21 fourth slice)", () => {
+  it("renders the English heading, steps and CTA when en is the active locale", async () => {
+    await renderWithLocale(<WelcomeScreen onStart={vi.fn()} />, "en");
+
+    expect(screen.getByRole("heading", { level: 1, name: en.howItWorks.title })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: en.howItWorks.ctaPrimary })).toBeInTheDocument();
+    for (const step of en.howItWorks.steps) {
+      expect(screen.getByText(step.description)).toBeInTheDocument();
+    }
+    expect(screen.queryByText(copy.howItWorks.title)).not.toBeInTheDocument();
   });
 });

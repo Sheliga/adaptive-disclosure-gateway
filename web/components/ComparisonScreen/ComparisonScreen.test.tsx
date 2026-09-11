@@ -1,11 +1,17 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { renderWithLocale } from "@/i18n/renderWithLocale";
 import type { CompareResponse, StrategyComparisonEntry } from "@/lib/contracts";
 import { copy } from "@/lib/copy";
+import { en } from "@/lib/copy.en";
 
 import { ComparisonScreen } from "./ComparisonScreen";
+
+beforeEach(() => {
+  window.localStorage.clear();
+});
 
 function entry(overrides: Partial<StrategyComparisonEntry> = {}): StrategyComparisonEntry {
   return {
@@ -250,5 +256,34 @@ describe("ComparisonScreen -- navigation back to Result", () => {
     await userEvent.click(screen.getByRole("button", { name: copy.comparison.backToResult }));
 
     expect(onBack).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("ComparisonScreen -- switches to English (T21 fourth slice)", () => {
+  it("renders English headings, the simulation notice, and treatment names when en is active", async () => {
+    await renderWithLocale(
+      <ComparisonScreen comparison={comparison(fiveCanonicalEntries())} onBack={vi.fn()} />,
+      "en",
+    );
+
+    expect(screen.getByRole("heading", { name: en.comparison.heading })).toBeInTheDocument();
+    expect(screen.getByText(en.comparison.simulationNotice)).toBeInTheDocument();
+    expect(screen.getByText(en.treatments.b0.name)).toBeInTheDocument();
+    expect(screen.getByText(en.treatments.b4.name)).toBeInTheDocument();
+    expect(screen.getByText(en.comparison.unsafeControlHeading)).toBeInTheDocument();
+    expect(screen.getByText(en.comparison.recommendedBadge)).toBeInTheDocument();
+    expect(screen.queryByText(copy.comparison.heading)).not.toBeInTheDocument();
+  });
+
+  it("keeps the b0-b4 strategy codes byte-identical -- only shown inside the technical-details toggle", async () => {
+    await renderWithLocale(
+      <ComparisonScreen comparison={comparison([entry({ strategy: "b1", treatment: "b1" })])} onBack={vi.fn()} />,
+      "en",
+    );
+
+    expect(screen.queryByText("b1")).not.toBeInTheDocument();
+    const toggles = screen.getAllByText(en.comparison.technicalDetailsToggle);
+    await userEvent.click(toggles[0]);
+    expect(screen.getAllByText("b1").length).toBeGreaterThan(0);
   });
 });

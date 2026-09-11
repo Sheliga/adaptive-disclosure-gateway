@@ -1,11 +1,17 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { renderWithLocale } from "@/i18n/renderWithLocale";
 import type { ExecuteResponse } from "@/lib/contracts";
 import { copy } from "@/lib/copy";
+import { en } from "@/lib/copy.en";
 
 import { TechnicalDetailsScreen } from "./TechnicalDetailsScreen";
+
+beforeEach(() => {
+  window.localStorage.clear();
+});
 
 function execute(overrides: Partial<ExecuteResponse> = {}): ExecuteResponse {
   return {
@@ -295,5 +301,32 @@ describe("TechnicalDetailsScreen -- adversarial: fields outside the allowlist ne
     );
 
     expect(screen.queryByText(/PROVIDER_SECRET_MARKER/)).not.toBeInTheDocument();
+  });
+});
+
+describe("TechnicalDetailsScreen -- switches to English (T21 fourth slice)", () => {
+  it("renders English section headings/explanations while keeping strategy/treatment codes identical", async () => {
+    await renderWithLocale(<TechnicalDetailsScreen execute={execute()} onBack={vi.fn()} />, "en");
+
+    // Technical identifiers stay byte-identical regardless of locale.
+    expect(screen.getByText("recommended")).toBeInTheDocument();
+    expect(screen.getByText("b4")).toBeInTheDocument();
+
+    expect(screen.getByText(en.technicalDetails.executionHeading)).toBeInTheDocument();
+    expect(screen.getByText(en.technicalDetails.strategyVsTreatmentExplanation)).toBeInTheDocument();
+    expect(screen.getByText(en.technicalDetails.governanceHeading)).toBeInTheDocument();
+    expect(screen.getByText(en.technicalDetails.timingExplanation)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: en.technicalDetails.backToResult })).toBeInTheDocument();
+    expect(screen.queryByText(copy.technicalDetails.executionHeading)).not.toBeInTheDocument();
+  });
+
+  it("keeps hashes behind the English toggle text, revealed only on click", async () => {
+    await renderWithLocale(<TechnicalDetailsScreen execute={execute()} onBack={vi.fn()} />, "en");
+
+    expect(screen.queryByText("RESPONSE_HASH_ABC")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByText(en.technicalDetails.providerHashToggle));
+
+    expect(screen.getByText("RESPONSE_HASH_ABC")).toBeInTheDocument();
   });
 });

@@ -19,10 +19,10 @@
  * conflating them made a failed check silently erase the indication.
  */
 
+import { useCopy } from "@/i18n/useLocale";
 import { describeCategory } from "@/lib/categoryLabels";
 import type { DisplayError } from "@/lib/api";
 import type { ExecuteResponse } from "@/lib/contracts";
-import { copy } from "@/lib/copy";
 import { describeCategoryOutcome } from "@/lib/outcomes";
 import { describeProviderMode, type ProviderModeState } from "@/lib/providerMode";
 
@@ -56,9 +56,10 @@ export function ResultScreen({
   onCompareStrategies,
   onViewTechnicalDetails,
 }: ResultScreenProps) {
+  const copy = useCopy();
   const isBlocked = execute.summary.status === "blocked";
   const providerFailed = execute.provider.failed;
-  const providerModeNotice = describeProviderMode(health);
+  const providerModeNotice = describeProviderMode(health, copy);
 
   return (
     <section aria-labelledby="result-heading" className={styles.section}>
@@ -111,11 +112,11 @@ export function ResultScreen({
         ) : (
           <ul className={styles.protectionsList}>
             {execute.summary.categories.map((category) => {
-              const descriptor = describeCategoryOutcome(category);
+              const descriptor = describeCategoryOutcome(category, copy);
               // Same presentation mapping the review step used, so the two
               // screens never name the same category two different ways.
               // The raw identifier stays the React key, never the label.
-              const categoryDescriptor = describeCategory(category.category);
+              const categoryDescriptor = describeCategory(category.category, copy);
               return (
                 <li key={category.category}>
                   {categoryDescriptor.label}: {descriptor.label}

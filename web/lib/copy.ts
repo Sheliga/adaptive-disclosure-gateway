@@ -1,9 +1,7 @@
 /**
- * Centralized user-facing copy. pt-BR is the only locale in this slice
- * (`docs/advisor-demo.md`: "Português (Brasil) is the default locale"), but
- * every string a component renders must come from here -- never inlined in
- * a component -- so this is the ONE module that changes when copy changes,
- * and the ONE module a future locale needs to duplicate.
+ * Centralized user-facing copy. This module is the ONE place presentation
+ * prose lives -- every string a component renders must come from here (or
+ * its sibling locale module), never inlined in a component.
  *
  * Scientific/internal identifiers (`b0`-`b4`, `removed`, `pseudonymized`,
  * example/category codes, contract versions, ...) are DELIBERATELY absent
@@ -11,27 +9,34 @@
  * data, never translated. This module only ever holds presentation prose
  * *about* those identifiers, never the identifiers themselves.
  *
- * --- How a second locale would be added (deliberately not built yet) ---
+ * --- How the second locale was added (T21 fourth slice / #29) ---
  *
- * 1. Define `export type AppCopy = typeof ptBR;` (structural, so it is
- *    derived from the one locale that exists today rather than maintained
- *    by hand).
- * 2. Write a sibling object, e.g. `const enUS: AppCopy = { ... }`, in its
- *    own module -- TypeScript's structural typing against `AppCopy` means
- *    a missing or extra key is a compile error in that new file, not a
- *    silent runtime gap.
- * 3. Add a tiny resolver (`resolveCopy(locale: "pt-BR" | "en-US"): AppCopy`)
- *    that picks between them, and a persisted user preference that calls
- *    it (`docs/advisor-demo.md`: "English is available through an explicit
- *    language control. User preference should persist.").
+ * 1. `AppCopy` is derived structurally from `ptBR` via `Widen<typeof ptBR>`
+ *    (below) rather than `typeof ptBR` directly. Plain `typeof ptBR` would
+ *    produce LITERAL string types (`title: "Como funciona"`), because the
+ *    object below ends in `as const` -- so a second locale would be forced
+ *    to contain the identical Portuguese strings to type-check. `Widen`
+ *    recursively replaces every literal string (and the contents of every
+ *    array) with `string`, while preserving the exact key structure, so
+ *    `AppCopy` enforces "same shape" without demanding "same words".
+ * 2. `./copy.en.ts` defines `export const en: AppCopy = { ... }` in its
+ *    own module -- TypeScript's structural typing against `AppCopy` means a
+ *    missing key, an extra key, or a wrong-shaped nested value is a compile
+ *    error in that file, not a silent runtime gap.
+ * 3. `resolveCopy(locale)` below picks between `ptBR` and `en`; the
+ *    persisted user preference that calls it lives in `web/i18n/`
+ *    (`LocaleProvider`/`useLocale`), never read directly by a component.
  *
- * This is deliberately not built now because there is only one locale to
- * resolve between -- a resolver with a single branch is speculative
- * machinery with no second caller yet (YAGNI), and every current call site
- * can import the flat `copy` object directly. Adding the resolver becomes a
- * pure addition (a new file + a few lines wiring it in), never a refactor
- * of this module's shape, which is the property that matters.
+ * `copy` (the flat, non-resolved export) is kept as the pt-BR table --
+ * `resolveCopy(DEFAULT_LOCALE)` -- for callers that have no locale context
+ * of their own (a handful of pure `lib/*.ts` helpers take an explicit
+ * `AppCopy` parameter defaulting to this), and so this module's existing
+ * behavior does not change unless a caller opts into locale switching.
  */
+
+import type { Locale } from "@/i18n/locales";
+
+import { en } from "./copy.en";
 
 const ptBR = {
   howItWorks: {
@@ -422,9 +427,57 @@ const ptBR = {
     system: "Automático (sistema)",
     toggleLabel: "Tema",
   },
+
+  /**
+   * The switcher's own label (T21 fourth slice). The language NAMES
+   * themselves ("Português", "English") live in `i18n/locales.ts`'s
+   * `LOCALE_LABELS`, not here -- see that module for why.
+   */
+  language: {
+    toggleLabel: "Idioma",
+  },
 } as const;
 
-export type AppCopy = typeof ptBR;
+export { ptBR };
 
-/** The active locale's copy. pt-BR is the only locale wired up today. */
+/**
+ * Recursively widens a `const`-inferred literal type into the shape a
+ * sibling locale can actually implement: every string literal (e.g.
+ * `"Como funciona"`) becomes `string`, every (readonly) array becomes a
+ * `readonly Widen<element>[]` (so a locale is free to have a different
+ * number of, say, `howItWorks.steps`), and every other value keeps its own
+ * type as-is (this table has no non-string primitives, but the type stays
+ * correct if one is ever added). Object keys are never touched, which is
+ * the whole point: a missing key, an extra key, or a value of the wrong
+ * shape in a locale module is a compile error against `AppCopy`, while the
+ * literal Portuguese words are not part of the contract.
+ */
+type Widen<T> = T extends string
+  ? string
+  : T extends readonly (infer U)[]
+    ? readonly Widen<U>[]
+    : T extends object
+      ? { [K in keyof T]: Widen<T[K]> }
+      : T;
+
+export type AppCopy = Widen<typeof ptBR>;
+
+/**
+ * Picks the copy table for a given locale. `Locale` (from `web/i18n/locales`)
+ * is a closed union, so this switch is exhaustive at compile time -- there
+ * is no "unknown locale" branch to fall through here; an unparseable stored
+ * value is rejected earlier, by `isSupportedLocale`, before it ever reaches
+ * a `Locale`-typed value.
+ */
+export function resolveCopy(locale: Locale): AppCopy {
+  switch (locale) {
+    case "en":
+      return en;
+    case "pt-BR":
+    default:
+      return ptBR;
+  }
+}
+
+/** The active locale's copy for callers with no locale context of their own. pt-BR is the product default. */
 export const copy: AppCopy = ptBR;

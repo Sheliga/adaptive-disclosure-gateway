@@ -46,9 +46,9 @@
 
 import { useRef, useState, type ChangeEvent, type DragEvent, type FormEvent } from "react";
 
+import { useCopy } from "@/i18n/useLocale";
 import type { DisplayError } from "@/lib/api";
 import type { ExampleSummary } from "@/lib/contracts";
-import { copy } from "@/lib/copy";
 import { describeExample } from "@/lib/exampleLabels";
 import {
   isComposeReady,
@@ -90,6 +90,7 @@ export function ComposeScreen({
   dispatch,
   onSubmit,
 }: ComposeScreenProps) {
+  const copy = useCopy();
   const [isReadingFile, setIsReadingFile] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const selectedExample = examples?.find(
@@ -217,7 +218,7 @@ export function ComposeScreen({
               </option>
               {examples.map((example) => (
                 <option key={example.example_id} value={example.example_id}>
-                  {describeExample(example, examples).label}
+                  {describeExample(example, examples, copy).label}
                 </option>
               ))}
             </select>
@@ -231,7 +232,7 @@ export function ComposeScreen({
           {selectedExample !== undefined && (
             <p className={styles.hint}>
               {copy.newTest.exampleTechnicalIdLabel}{" "}
-              <code>{describeExample(selectedExample, examples ?? []).technicalId}</code>
+              <code>{describeExample(selectedExample, examples ?? [], copy).technicalId}</code>
             </p>
           )}
         </div>

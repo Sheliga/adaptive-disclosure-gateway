@@ -12,11 +12,12 @@
  * slice.
  */
 
-import { copy } from "@/lib/copy";
+import { useCopy } from "@/i18n/useLocale";
 
 import styles from "./WelcomeScreen.module.css";
 
 export function WelcomeScreen({ onStart }: { onStart: () => void }) {
+  const copy = useCopy();
   return (
     <section aria-labelledby="welcome-heading" className={styles.section}>
       <h1 id="welcome-heading" className={styles.heading}>

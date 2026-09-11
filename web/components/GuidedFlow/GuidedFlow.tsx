@@ -21,6 +21,17 @@
  * collapsing both into `null` is what previously made an unreachable
  * `/health` silently erase the FakeProvider indication instead of
  * reporting that it could not be verified. See `lib/providerMode.ts`.
+ *
+ * Wrapped in `LocaleProvider` (T21 fourth slice / #29) here rather than in
+ * `app/layout.tsx`: `app/page.tsx`'s own docstring already calls this
+ * component "the whole app for this slice", and `ThemeToggle`/
+ * `LocaleSwitcher` both live in its header, so the locale/theme shell
+ * concerns stay together. Every screen below reads the resolved copy table
+ * via `useCopy()` (or, for the two-argument `lib/*.ts` helpers, receives it
+ * explicitly) -- never a static `import { copy } from "@/lib/copy"` -- so a
+ * locale switch anywhere under this provider re-renders with the new
+ * language without a reload and without re-fetching `/preview`, `/execute`
+ * or `/compare`.
  */
 
 import { useEffect, useReducer, useState } from "react";
@@ -34,12 +45,14 @@ import {
   type DisplayError,
 } from "@/lib/api";
 import type { ExampleSummary } from "@/lib/contracts";
-import { copy } from "@/lib/copy";
 import { buildRequestBody, flowReducer, initialFlowState, type ComposeState } from "@/lib/flow";
 import type { ProviderModeState } from "@/lib/providerMode";
+import { LocaleProvider } from "@/i18n/LocaleProvider";
+import { useCopy } from "@/i18n/useLocale";
 
 import { ComparisonScreen } from "../ComparisonScreen/ComparisonScreen";
 import { ComposeScreen } from "../ComposeScreen/ComposeScreen";
+import { LocaleSwitcher } from "../LocaleSwitcher/LocaleSwitcher";
 import { ProcessingStatus } from "../ProcessingStatus/ProcessingStatus";
 import { ResultScreen } from "../ResultScreen/ResultScreen";
 import { ReviewScreen } from "../ReviewScreen/ReviewScreen";
@@ -49,6 +62,15 @@ import { WelcomeScreen } from "../WelcomeScreen/WelcomeScreen";
 import styles from "./GuidedFlow.module.css";
 
 export function GuidedFlow() {
+  return (
+    <LocaleProvider>
+      <GuidedFlowShell />
+    </LocaleProvider>
+  );
+}
+
+function GuidedFlowShell() {
+  const copy = useCopy();
   const [state, dispatch] = useReducer(flowReducer, initialFlowState);
   const [examples, setExamples] = useState<ExampleSummary[] | null>(null);
   const [examplesError, setExamplesError] = useState<DisplayError | null>(null);
@@ -93,7 +115,11 @@ export function GuidedFlow() {
   async function handleSubmitCompose(compose: ComposeState) {
     dispatch({ type: "SUBMIT_COMPOSE" });
     const body = buildRequestBody(compose);
-    const result = await previewDisclosure(body);
+    // `copy` is the CURRENT locale's table, read from this render's closure
+    // -- never a dependency of an effect, so switching locale never
+    // retriggers this call; it only changes what a FUTURE click submits
+    // errors in, exactly like the request body already behaves.
+    const result = await previewDisclosure(body, copy);
     if (result.ok) {
       dispatch({ type: "PREVIEW_SUCCEEDED", preview: result.data });
     } else {
@@ -104,7 +130,7 @@ export function GuidedFlow() {
   async function handleConfirmReview(compose: ComposeState) {
     dispatch({ type: "CONFIRM_REVIEW" });
     const body = buildRequestBody(compose);
-    const result = await executeDisclosure(body);
+    const result = await executeDisclosure(body, copy);
     if (result.ok) {
       dispatch({ type: "EXECUTE_SUCCEEDED", execute: result.data });
     } else {
@@ -122,7 +148,7 @@ export function GuidedFlow() {
   async function handleRequestComparison(compose: ComposeState) {
     dispatch({ type: "REQUEST_COMPARISON" });
     const body = buildRequestBody(compose);
-    const result = await compareStrategies(body);
+    const result = await compareStrategies(body, copy);
     if (result.ok) {
       dispatch({ type: "COMPARE_SUCCEEDED", comparison: result.data });
     } else {
@@ -133,6 +159,7 @@ export function GuidedFlow() {
   return (
     <div className={styles.app}>
       <header className={styles.header}>
+        <LocaleSwitcher />
         <ThemeToggle />
       </header>
       <main className={styles.main}>

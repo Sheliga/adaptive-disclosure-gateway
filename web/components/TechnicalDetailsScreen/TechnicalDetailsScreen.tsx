@@ -37,8 +37,9 @@
 
 import { Fragment, useState } from "react";
 
+import { useCopy } from "@/i18n/useLocale";
 import type { ExecuteResponse, ProviderStage, ReconstructionStage } from "@/lib/contracts";
-import { copy } from "@/lib/copy";
+import type { AppCopy } from "@/lib/copy";
 
 import styles from "./TechnicalDetailsScreen.module.css";
 
@@ -47,14 +48,14 @@ export interface TechnicalDetailsScreenProps {
   onBack: () => void;
 }
 
-function formatBoolean(value: boolean | null): string {
+function formatBoolean(value: boolean | null, copy: AppCopy): string {
   if (value === null) {
     return copy.technicalDetails.notInformed;
   }
   return value ? copy.technicalDetails.yes : copy.technicalDetails.no;
 }
 
-function formatNullableString(value: string | null): string {
+function formatNullableString(value: string | null, copy: AppCopy): string {
   return value ?? copy.technicalDetails.notInformed;
 }
 
@@ -64,7 +65,7 @@ function formatNullableString(value: string | null): string {
  * at 200 characters. This is a controlled key/value row, never a dump of
  * the whole response.
  */
-function formatDecodingValue(value: unknown): string {
+function formatDecodingValue(value: unknown, copy: AppCopy): string {
   if (value === null || value === undefined) {
     return copy.technicalDetails.notInformed;
   }
@@ -80,6 +81,7 @@ function formatDecodingValue(value: unknown): string {
 }
 
 export function TechnicalDetailsScreen({ execute, onBack }: TechnicalDetailsScreenProps) {
+  const copy = useCopy();
   return (
     <section aria-labelledby="technical-details-heading" className={styles.section}>
       <h1 id="technical-details-heading" className={styles.heading}>
@@ -113,15 +115,15 @@ export function TechnicalDetailsScreen({ execute, onBack }: TechnicalDetailsScre
           <dt>{copy.technicalDetails.providerClassLabel}</dt>
           <dd>{execute.governance.provider_class}</dd>
           <dt>{copy.technicalDetails.requesterRoleLabel}</dt>
-          <dd>{formatNullableString(execute.governance.requester_role)}</dd>
+          <dd>{formatNullableString(execute.governance.requester_role, copy)}</dd>
           <dt>{copy.technicalDetails.requestedPseudonymScopeLabel}</dt>
           <dd>{execute.governance.requested_pseudonym_scope}</dd>
         </dl>
       </div>
 
-      <ProviderSection provider={execute.provider} />
+      <ProviderSection provider={execute.provider} copy={copy} />
 
-      <ReconstructionSection reconstruction={execute.reconstruction} />
+      <ReconstructionSection reconstruction={execute.reconstruction} copy={copy} />
 
       <div>
         <h2 className={styles.sectionHeading}>{copy.technicalDetails.timingHeading}</h2>
@@ -141,7 +143,7 @@ export function TechnicalDetailsScreen({ execute, onBack }: TechnicalDetailsScre
   );
 }
 
-function ProviderSection({ provider }: { provider: ProviderStage }) {
+function ProviderSection({ provider, copy }: { provider: ProviderStage; copy: AppCopy }) {
   const [hashOpen, setHashOpen] = useState(false);
 
   if (!provider.called) {
@@ -162,7 +164,7 @@ function ProviderSection({ provider }: { provider: ProviderStage }) {
           <p>{copy.technicalDetails.providerFailedExplanation}</p>
           <dl className={styles.rows}>
             <dt>{copy.technicalDetails.providerFailureKindLabel}</dt>
-            <dd>{formatNullableString(provider.failure_kind)}</dd>
+            <dd>{formatNullableString(provider.failure_kind, copy)}</dd>
           </dl>
         </div>
       </div>
@@ -176,13 +178,13 @@ function ProviderSection({ provider }: { provider: ProviderStage }) {
       <h2 className={styles.sectionHeading}>{copy.technicalDetails.providerHeading}</h2>
       <dl className={styles.rows}>
         <dt>{copy.technicalDetails.providerCalledLabel}</dt>
-        <dd>{formatBoolean(provider.called)}</dd>
+        <dd>{formatBoolean(provider.called, copy)}</dd>
         <dt>{copy.technicalDetails.providerClassLabel}</dt>
-        <dd>{formatNullableString(provider.provider_class)}</dd>
+        <dd>{formatNullableString(provider.provider_class, copy)}</dd>
         <dt>{copy.technicalDetails.providerModelIdLabel}</dt>
-        <dd>{formatNullableString(provider.model_id)}</dd>
+        <dd>{formatNullableString(provider.model_id, copy)}</dd>
         <dt>{copy.technicalDetails.providerModelSnapshotLabel}</dt>
-        <dd>{formatNullableString(provider.model_snapshot)}</dd>
+        <dd>{formatNullableString(provider.model_snapshot, copy)}</dd>
         <dt>{copy.technicalDetails.providerTransmittedBytesLabel}</dt>
         <dd>{provider.transmitted_bytes ?? copy.technicalDetails.notInformed}</dd>
       </dl>
@@ -198,7 +200,7 @@ function ProviderSection({ provider }: { provider: ProviderStage }) {
                 <dt>
                   <code>{key}</code>
                 </dt>
-                <dd>{formatDecodingValue(value)}</dd>
+                <dd>{formatDecodingValue(value, copy)}</dd>
               </Fragment>
             ))}
           </dl>
@@ -214,7 +216,7 @@ function ProviderSection({ provider }: { provider: ProviderStage }) {
         {hashOpen && (
           <p>
             {copy.technicalDetails.providerResponseHashLabel}:{" "}
-            <code>{formatNullableString(provider.response_hash)}</code>
+            <code>{formatNullableString(provider.response_hash, copy)}</code>
           </p>
         )}
       </details>
@@ -222,7 +224,13 @@ function ProviderSection({ provider }: { provider: ProviderStage }) {
   );
 }
 
-function ReconstructionSection({ reconstruction }: { reconstruction: ReconstructionStage }) {
+function ReconstructionSection({
+  reconstruction,
+  copy,
+}: {
+  reconstruction: ReconstructionStage;
+  copy: AppCopy;
+}) {
   const [hashOpen, setHashOpen] = useState(false);
 
   return (
@@ -231,9 +239,9 @@ function ReconstructionSection({ reconstruction }: { reconstruction: Reconstruct
       <p className={styles.explanation}>{copy.technicalDetails.reconstructionExplanation}</p>
       <dl className={styles.rows}>
         <dt>{copy.technicalDetails.reconstructionAttemptedLabel}</dt>
-        <dd>{formatBoolean(reconstruction.attempted)}</dd>
+        <dd>{formatBoolean(reconstruction.attempted, copy)}</dd>
         <dt>{copy.technicalDetails.reconstructionChangedLabel}</dt>
-        <dd>{formatBoolean(reconstruction.changed_from_provider_response)}</dd>
+        <dd>{formatBoolean(reconstruction.changed_from_provider_response, copy)}</dd>
       </dl>
       {reconstruction.attempted && (
         <details
@@ -245,7 +253,7 @@ function ReconstructionSection({ reconstruction }: { reconstruction: Reconstruct
           {hashOpen && (
             <p>
               {copy.technicalDetails.reconstructionHashLabel}:{" "}
-              <code>{formatNullableString(reconstruction.reconstructed_hash)}</code>
+              <code>{formatNullableString(reconstruction.reconstructed_hash, copy)}</code>
             </p>
           )}
         </details>
