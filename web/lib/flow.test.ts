@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { DisplayError } from "./api";
-import type { ExecuteResponse, PreviewResponse } from "./contracts";
+import type { CompareResponse, ExecuteResponse, PreviewResponse } from "./contracts";
 import {
   buildRequestBody,
   flowReducer,
@@ -26,7 +26,7 @@ function preview(overrides: Partial<PreviewResponse> = {}): PreviewResponse {
     },
     external_payload: "hello",
     payload_byte_count: 5,
-    treatment: "policy_governed",
+    treatment: "b4",
     strategy: "recommended",
     governance: {
       domain: "demo",
@@ -34,7 +34,7 @@ function preview(overrides: Partial<PreviewResponse> = {}): PreviewResponse {
       policy_version: "v1",
       provider_class: "FakeProvider",
       requester_role: null,
-      requested_pseudonym_scope: "none",
+      requested_pseudonym_scope: "session",
     },
     provider_mode: { provider_class: "FakeProvider" },
     ...overrides,
@@ -44,7 +44,7 @@ function preview(overrides: Partial<PreviewResponse> = {}): PreviewResponse {
 function execute(overrides: Partial<ExecuteResponse> = {}): ExecuteResponse {
   return {
     contract_version: "t20-application-api-v1",
-    status: "completed",
+    status: "allowed",
     summary: {
       status: "allowed",
       categories: [],
@@ -68,7 +68,7 @@ function execute(overrides: Partial<ExecuteResponse> = {}): ExecuteResponse {
       reconstructed_hash: "def",
       changed_from_provider_response: false,
     },
-    treatment: "policy_governed",
+    treatment: "b4",
     strategy: "recommended",
     governance: {
       domain: "demo",
@@ -76,7 +76,7 @@ function execute(overrides: Partial<ExecuteResponse> = {}): ExecuteResponse {
       policy_version: "v1",
       provider_class: "FakeProvider",
       requester_role: null,
-      requested_pseudonym_scope: "none",
+      requested_pseudonym_scope: "session",
     },
     total_ms: 42,
     ...overrides,
@@ -207,7 +207,13 @@ describe("flowReducer -- executing screen", () => {
   it("EXECUTE_SUCCEEDED moves to result carrying the execute payload", () => {
     const e = execute();
     const next = flowReducer(state, { type: "EXECUTE_SUCCEEDED", execute: e });
-    expect(next).toEqual({ screen: "result", compose: initialComposeState, preview: p, execute: e });
+    expect(next).toEqual({
+      screen: "result",
+      compose: initialComposeState,
+      preview: p,
+      execute: e,
+      compareError: null,
+    });
   });
 
   it("EXECUTE_FAILED returns to review (not compose, not a crash) with the error attached", () => {
@@ -221,12 +227,222 @@ describe("flowReducer -- executing screen", () => {
   });
 });
 
+function compare(overrides: Partial<CompareResponse> = {}): CompareResponse {
+  return {
+    contract_version: "t20-application-api-v1",
+    entries: [
+      {
+        strategy: "b0",
+        treatment: "b0",
+        recommended: false,
+        unsafe_control_baseline: true,
+        summary: { status: "allowed", categories: [], detected_span_count: 0, detected_categories: [] },
+        external_payload: "conteudo original",
+        payload_byte_count: 18,
+      },
+      {
+        strategy: "b1",
+        treatment: "b1",
+        recommended: false,
+        unsafe_control_baseline: false,
+        summary: { status: "allowed", categories: [], detected_span_count: 0, detected_categories: [] },
+        external_payload: "conteudo b1",
+        payload_byte_count: 19,
+      },
+      {
+        strategy: "b2",
+        treatment: "b2",
+        recommended: false,
+        unsafe_control_baseline: false,
+        summary: { status: "allowed", categories: [], detected_span_count: 0, detected_categories: [] },
+        external_payload: "conteudo b2",
+        payload_byte_count: 19,
+      },
+      {
+        strategy: "b3",
+        treatment: "b3",
+        recommended: false,
+        unsafe_control_baseline: false,
+        summary: { status: "allowed", categories: [], detected_span_count: 0, detected_categories: [] },
+        external_payload: "conteudo b3",
+        payload_byte_count: 19,
+      },
+      {
+        strategy: "b4",
+        treatment: "b4",
+        recommended: true,
+        unsafe_control_baseline: false,
+        summary: { status: "allowed", categories: [], detected_span_count: 0, detected_categories: [] },
+        external_payload: "conteudo transformado",
+        payload_byte_count: 21,
+      },
+    ],
+    governance: {
+      domain: "demo",
+      purpose: "demo",
+      policy_version: "v1",
+      provider_class: "FakeProvider",
+      requester_role: null,
+      requested_pseudonym_scope: "session",
+    },
+    provider_mode: { provider_class: "FakeProvider" },
+    ...overrides,
+  };
+}
+
 describe("flowReducer -- result screen", () => {
   const p = preview();
   const e = execute();
-  const state: FlowState = { screen: "result", compose: initialComposeState, preview: p, execute: e };
+  const state: FlowState = {
+    screen: "result",
+    compose: initialComposeState,
+    preview: p,
+    execute: e,
+    compareError: null,
+  };
 
   it("RESTART returns to a fresh compose screen", () => {
+    const next = flowReducer(state, { type: "RESTART" });
+    expect(next).toEqual({ screen: "compose", compose: initialComposeState, submitError: null });
+  });
+
+  it("REQUEST_COMPARISON moves to the comparing screen, carrying preview/execute forward", () => {
+    const next = flowReducer(state, { type: "REQUEST_COMPARISON" });
+    expect(next).toEqual({ screen: "comparing", compose: initialComposeState, preview: p, execute: e });
+  });
+
+  it("does not call/represent a comparison on any other event here", () => {
+    expect(flowReducer(state, { type: "CONFIRM_REVIEW" })).toBe(state);
+  });
+
+  it("OPEN_TECHNICAL_DETAILS moves to the technicalDetails screen, carrying preview/execute/compareError forward -- no request involved", () => {
+    const next = flowReducer(state, { type: "OPEN_TECHNICAL_DETAILS" });
+    expect(next).toEqual({
+      screen: "technicalDetails",
+      compose: initialComposeState,
+      preview: p,
+      execute: e,
+      compareError: null,
+    });
+  });
+
+  it("OPEN_TECHNICAL_DETAILS preserves a prior compareError instead of silently clearing it", () => {
+    const withError: FlowState = { ...state, compareError: genericError };
+    const next = flowReducer(withError, { type: "OPEN_TECHNICAL_DETAILS" });
+    expect(next).toEqual({
+      screen: "technicalDetails",
+      compose: initialComposeState,
+      preview: p,
+      execute: e,
+      compareError: genericError,
+    });
+  });
+});
+
+describe("flowReducer -- technicalDetails screen (Ver detalhes técnicos)", () => {
+  const p = preview();
+  const e = execute();
+  const state: FlowState = {
+    screen: "technicalDetails",
+    compose: initialComposeState,
+    preview: p,
+    execute: e,
+    compareError: null,
+  };
+
+  it("RETURN_TO_RESULT goes back to result, preserving the original execute/preview and compareError untouched", () => {
+    const next = flowReducer(state, { type: "RETURN_TO_RESULT" });
+    expect(next).toEqual({
+      screen: "result",
+      compose: initialComposeState,
+      preview: p,
+      execute: e,
+      compareError: null,
+    });
+  });
+
+  it("RETURN_TO_RESULT restores a prior compareError rather than clearing it -- this screen never touches comparison state", () => {
+    const withError: FlowState = { ...state, compareError: genericError };
+    const next = flowReducer(withError, { type: "RETURN_TO_RESULT" });
+    expect(next).toEqual({
+      screen: "result",
+      compose: initialComposeState,
+      preview: p,
+      execute: e,
+      compareError: genericError,
+    });
+  });
+
+  it("RESTART still returns to a fresh compose screen from the technicalDetails screen", () => {
+    const next = flowReducer(state, { type: "RESTART" });
+    expect(next).toEqual({ screen: "compose", compose: initialComposeState, submitError: null });
+  });
+
+  it("does not re-invoke preview/execute/compare from here -- those events are no-ops", () => {
+    expect(flowReducer(state, { type: "CONFIRM_REVIEW" })).toBe(state);
+    expect(flowReducer(state, { type: "EXECUTE_SUCCEEDED", execute: e })).toBe(state);
+    expect(flowReducer(state, { type: "REQUEST_COMPARISON" })).toBe(state);
+  });
+});
+
+describe("flowReducer -- comparing screen (the loading state for a comparison request)", () => {
+  const p = preview();
+  const e = execute();
+  const state: FlowState = { screen: "comparing", compose: initialComposeState, preview: p, execute: e };
+
+  it("COMPARE_SUCCEEDED moves to the comparison screen carrying the comparison payload", () => {
+    const c = compare();
+    const next = flowReducer(state, { type: "COMPARE_SUCCEEDED", comparison: c });
+    expect(next).toEqual({
+      screen: "comparison",
+      compose: initialComposeState,
+      preview: p,
+      execute: e,
+      comparison: c,
+    });
+  });
+
+  it("COMPARE_FAILED returns to result (not a crash, not compose) carrying the error", () => {
+    const next = flowReducer(state, { type: "COMPARE_FAILED", error: genericError });
+    expect(next).toEqual({
+      screen: "result",
+      compose: initialComposeState,
+      preview: p,
+      execute: e,
+      compareError: genericError,
+    });
+  });
+
+  it("execute is not re-invoked from here -- CONFIRM_REVIEW/EXECUTE_* are no-ops", () => {
+    expect(flowReducer(state, { type: "CONFIRM_REVIEW" })).toBe(state);
+    expect(flowReducer(state, { type: "EXECUTE_SUCCEEDED", execute: e })).toBe(state);
+  });
+});
+
+describe("flowReducer -- comparison screen", () => {
+  const p = preview();
+  const e = execute();
+  const c = compare();
+  const state: FlowState = {
+    screen: "comparison",
+    compose: initialComposeState,
+    preview: p,
+    execute: e,
+    comparison: c,
+  };
+
+  it("RETURN_TO_RESULT goes back to result, preserving the original execute/preview and clearing any prior compare error", () => {
+    const next = flowReducer(state, { type: "RETURN_TO_RESULT" });
+    expect(next).toEqual({
+      screen: "result",
+      compose: initialComposeState,
+      preview: p,
+      execute: e,
+      compareError: null,
+    });
+  });
+
+  it("RESTART still returns to a fresh compose screen from the comparison screen", () => {
     const next = flowReducer(state, { type: "RESTART" });
     expect(next).toEqual({ screen: "compose", compose: initialComposeState, submitError: null });
   });

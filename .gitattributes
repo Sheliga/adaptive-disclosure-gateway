@@ -1,0 +1,5 @@
+## Git hooks are POSIX shell scripts run through Git Bash's /bin/sh even on
+## Windows. core.autocrlf=true (common on Windows clones of this repo) would
+## otherwise check them out with CRLF line endings, which breaks the shebang
+## and shell parsing. Force LF regardless of the clone's autocrlf setting.
+.githooks/* text eol=lf

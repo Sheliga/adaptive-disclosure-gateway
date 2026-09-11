@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { executeDisclosure, getExamples, getHealth, previewDisclosure } from "./api";
+import { compareStrategies, executeDisclosure, getExamples, getHealth, previewDisclosure } from "./api";
 import { CONTRACT_VERSION } from "./contracts";
 import type {
   CategoryDisclosureSummary,
+  CompareResponse,
   ExamplesResponse,
   ExecuteResponse,
   HealthResponse,
@@ -121,6 +122,66 @@ function executeBody(): ExecuteResponse {
   };
 }
 
+function compareBody(): CompareResponse {
+  return {
+    contract_version: CONTRACT_VERSION,
+    entries: [
+      {
+        strategy: "b0",
+        treatment: "b0",
+        recommended: false,
+        unsafe_control_baseline: true,
+        summary: {
+          status: "allowed",
+          categories: [categoryBody({ outcome: "preserved", action: "preserve", crosses_trust_boundary: true })],
+          detected_span_count: 1,
+          detected_categories: ["employee_name"],
+        },
+        external_payload: "conteudo original sem protecao",
+        payload_byte_count: 30,
+      },
+      {
+        strategy: "b1",
+        treatment: "b1",
+        recommended: false,
+        unsafe_control_baseline: false,
+        summary: previewBody().summary,
+        external_payload: "conteudo b1",
+        payload_byte_count: 20,
+      },
+      {
+        strategy: "b2",
+        treatment: "b2",
+        recommended: false,
+        unsafe_control_baseline: false,
+        summary: previewBody().summary,
+        external_payload: "conteudo b2",
+        payload_byte_count: 20,
+      },
+      {
+        strategy: "b3",
+        treatment: "b3",
+        recommended: false,
+        unsafe_control_baseline: false,
+        summary: previewBody().summary,
+        external_payload: "conteudo b3",
+        payload_byte_count: 20,
+      },
+      {
+        strategy: "b4",
+        treatment: "b4",
+        recommended: true,
+        unsafe_control_baseline: false,
+        summary: previewBody().summary,
+        external_payload: "conteudo transformado",
+        payload_byte_count: 21,
+      },
+    ],
+    governance: previewBody().governance,
+    provider_mode: { provider_class: "FakeProvider" },
+  };
+}
+
 /**
  * A loose, deliberately-mutable view of a decoded body. Corrupting a
  * fixture goes through this rather than through the real contract type --
@@ -141,6 +202,10 @@ function nested(draft: Draft, key: string): Draft {
 
 function firstCategory(draft: Draft): Draft {
   return (nested(draft, "summary")["categories"] as Draft[])[0];
+}
+
+function firstEntry(draft: Draft): Draft {
+  return (draft["entries"] as Draft[])[0];
 }
 
 function stub200(body: unknown): void {
@@ -645,6 +710,250 @@ describe("200 response validation — nothing from the rejected body is echoed",
     if (!result.ok) {
       expect(JSON.stringify(result.error)).not.toContain("Maria Oliveira");
     }
+  });
+});
+
+describe("previewDisclosure / executeDisclosure / compareStrategies — request shape", () => {
+  it("posts to the compare proxy route", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await compareStrategies({ text: "hello", task: "summarize" });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/disclosure/compare");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({ text: "hello", task: "summarize" });
+  });
+});
+
+describe("200 response validation — compare fails closed on a broken contract", () => {
+  it("accepts a compare body that satisfies the whole contract", async () => {
+    const body = compareBody();
+    stub200(body);
+
+    const result = await compareStrategies({ text: "x" });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data).toEqual(body);
+    }
+  });
+
+  it("rejects a 200 whose entries is not an array", async () => {
+    const draft = draftOf(compareBody());
+    draft["entries"] = { b0: {} };
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a 200 whose entry is missing strategy", async () => {
+    const draft = draftOf(compareBody());
+    delete firstEntry(draft)["strategy"];
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a 200 whose entry is missing recommended", async () => {
+    const draft = draftOf(compareBody());
+    delete firstEntry(draft)["recommended"];
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a 200 whose entry is MISSING unsafe_control_baseline", async () => {
+    // Absent reads as `undefined` -> falsy -> the B0 warning would never
+    // render for an entry that omitted the flag.
+    const draft = draftOf(compareBody());
+    delete firstEntry(draft)["unsafe_control_baseline"];
+    stub200(draft);
+
+    const result = await compareStrategies({ text: "x" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toBe(copy.errors.generic);
+    }
+  });
+
+  it('rejects a 200 whose unsafe_control_baseline is the STRING "false"', async () => {
+    // The opposite direction, equally wrong: a truthy string would light up
+    // the B0 warning on an entry that is not the unsafe control.
+    const draft = draftOf(compareBody());
+    firstEntry(draft)["unsafe_control_baseline"] = "false";
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+  });
+
+  it('rejects a 200 whose unsafe_control_baseline is the STRING "true"', async () => {
+    const draft = draftOf(compareBody());
+    firstEntry(draft)["unsafe_control_baseline"] = "true";
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a 200 whose entry's crosses_trust_boundary is not a real boolean", async () => {
+    const draft = draftOf(compareBody());
+    (nested(firstEntry(draft), "summary")["categories"] as Draft[])[0]["crosses_trust_boundary"] = "true";
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a 200 whose entry's summary.status is unknown", async () => {
+    const draft = draftOf(compareBody());
+    nested(firstEntry(draft), "summary")["status"] = "maybe";
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a 200 whose entry's external_payload is not a string", async () => {
+    const draft = draftOf(compareBody());
+    firstEntry(draft)["external_payload"] = { redacted: true };
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a 200 whose entry's payload_byte_count is not a number", async () => {
+    const draft = draftOf(compareBody());
+    firstEntry(draft)["payload_byte_count"] = "30";
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a 200 whose governance block is missing", async () => {
+    const draft = draftOf(compareBody());
+    delete draft["governance"];
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a 200 carrying a contract_version this UI was not written against", async () => {
+    const draft = draftOf(compareBody());
+    draft["contract_version"] = "t99-some-future-contract";
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+  });
+
+  it("does not echo the rejected body's payload or field names in the error", async () => {
+    const draft = draftOf(compareBody());
+    delete firstEntry(draft)["unsafe_control_baseline"];
+    firstEntry(draft)["external_payload"] = "CPF 123.456.789-00 de Maria Oliveira";
+    stub200(draft);
+
+    const result = await compareStrategies({ text: "x" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toEqual({ message: copy.errors.generic, kind: null, fields: null });
+      const serialized = JSON.stringify(result.error);
+      expect(serialized).not.toContain("123.456.789-00");
+      expect(serialized).not.toContain("Maria Oliveira");
+      expect(serialized).not.toContain("unsafe_control_baseline");
+      expect(serialized).not.toContain("external_payload");
+    }
+  });
+});
+
+describe("200 response validation — compare requires exactly the canonical B0-B4 order", () => {
+  // These pin the T21/#49 hardening: a `CompareResponse` is accepted only
+  // when `entries` is exactly the five canonical strategies, in canonical
+  // order, each with the treatment code the real wire emits for it. Count,
+  // order, duplicates and unknown codes are all folded into the single
+  // position-against-`CANONICAL_COMPARISON_ORDER` check in
+  // `isCompareResponse` -- these tests exercise each failure mode that
+  // check is meant to catch.
+
+  it("accepts a body with exactly b0, b1, b2, b3, b4 in canonical order", async () => {
+    const body = compareBody();
+    stub200(body);
+
+    const result = await compareStrategies({ text: "x" });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.entries.map((e) => e.strategy)).toEqual(["b0", "b1", "b2", "b3", "b4"]);
+    }
+  });
+
+  it("rejects a body with only four entries", async () => {
+    const draft = draftOf(compareBody());
+    (draft["entries"] as unknown[]).pop();
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a body with six entries (an extra, valid-looking sixth entry appended)", async () => {
+    const draft = draftOf(compareBody());
+    const entries = draft["entries"] as Draft[];
+    entries.push(JSON.parse(JSON.stringify(entries[4])));
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a body with an empty entries array", async () => {
+    const draft = draftOf(compareBody());
+    draft["entries"] = [];
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a body whose entries are out of canonical order (b0, b2, b1, b3, b4)", async () => {
+    const draft = draftOf(compareBody());
+    const entries = draft["entries"] as Draft[];
+    [entries[1], entries[2]] = [entries[2], entries[1]];
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a body with a duplicated strategy (b0 repeated in place of b1)", async () => {
+    const draft = draftOf(compareBody());
+    const entries = draft["entries"] as Draft[];
+    entries[1] = JSON.parse(JSON.stringify(entries[0]));
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+  });
+
+  it.each(["b5", "recommended", "banana"])(
+    "rejects a body with an unknown strategy code %j at position 0",
+    async (badStrategy) => {
+      const draft = draftOf(compareBody());
+      firstEntry(draft)["strategy"] = badStrategy;
+      stub200(draft);
+
+      expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+    },
+  );
+
+  it("rejects a body with an unknown treatment code", async () => {
+    const draft = draftOf(compareBody());
+    firstEntry(draft)["treatment"] = "banana";
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a body whose treatment does not match its entry's strategy/position (b1 entry carrying b2's treatment)", async () => {
+    const draft = draftOf(compareBody());
+    (draft["entries"] as Draft[])[1]["treatment"] = "b2";
+    stub200(draft);
+
+    expect((await compareStrategies({ text: "x" })).ok).toBe(false);
   });
 });
 

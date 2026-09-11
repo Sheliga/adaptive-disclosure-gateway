@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-09-08 — post-Milestone 2 synchronization + advisor-demo planning.
+Last updated: 2026-09-10 — T21 fourth slice (pt-BR / English localization) in validation.
 
 This file tracks the current engineering/research state and execution order. Architectural decisions belong in ADRs; experimental definitions belong in `docs/experimental-design.md`; factual pilot results belong in `docs/milestone-2-pilot.md`; the parallel advisor-facing application plan belongs in `docs/advisor-demo.md`; historical PR/Issue descriptions remain in GitHub.
 
@@ -237,9 +237,56 @@ This slice adds no treatment, policy, corpus, oracle or metric semantics. B0–B
 
 ### T21 / Issue #29 — Next.js advisor-facing UI
 
-Status: **first vertical slice in review (PR open) / non-blocking for M3**.
+Status: **fourth vertical slice in validation (PR open) / non-blocking for M3**. T21 is NOT complete — see "Deliberately not in the fourth slice" below.
 
-The UI lets a reviewer select a prepared HR example or controlled text, see what crosses the trust boundary before anything is sent, and receive the locally reconstructed answer. It consumes T20's real HTTP API — there is no fixture phase.
+The UI lets a reviewer select a prepared HR example or controlled text, see what crosses the trust boundary before anything is sent, receive the locally reconstructed answer, see the same content compared across all five B0–B4 strategies as a preview-only teaching surface, inspect a safe technical/operational view of the SAME execution already shown on Resultado, and — as of the fourth slice — do all of that in either pt-BR or English. It consumes T20's real HTTP API — there is no fixture phase.
+
+#### Delivered in the fourth slice
+
+**pt-BR / English localization**, with the user's choice persisted in the browser. This is a presentation-only change: no Python, contract, B0–B4 treatment, policy, corpus, oracle, endpoint, provider, or execution-behavior code changed.
+
+- **Architecture** — `web/lib/copy.ts` keeps its pre-committed design (module docstring), adjusted for the one thing it hadn't anticipated: `ptBR` ends in `as const`, so `typeof ptBR` alone would produce LITERAL string types and force a second locale to contain the identical Portuguese words. `AppCopy` is instead `Widen<typeof ptBR>` — a recursive mapped type that turns every string literal into `string` and every array into a general `readonly Widen<element>[]`, while leaving object keys untouched. `web/lib/copy.en.ts` defines `export const en: AppCopy = {...}` in its own module; a missing key, an extra key, or a wrong-shaped nested value there is a **compile error**, not a runtime gap (verified by deliberately breaking the file during development: both a missing key and an extra key produced a `tsc` error naming the exact field). `web/lib/copy.ts`'s `resolveCopy(locale)` picks between the two tables.
+- **Locale module** (`web/i18n/`) — `locales.ts` (`Locale`, `SUPPORTED_LOCALES`, `DEFAULT_LOCALE`, `isSupportedLocale`, `LOCALE_LABELS`), `localeStorage.ts` (read/write, wrapped in try/catch, mirroring `lib/theme.ts`'s posture toward a throwing `localStorage`), `LocaleContext.tsx` + `LocaleProvider.tsx` (state) + `useLocale.ts` (`useLocale`/`useCopy`, the only way a component reads/changes locale or resolved copy — never `localStorage` directly, never a component-local copy of the state). The context's DEFAULT value (used by any component with no `<LocaleProvider>` ancestor) is a fully working pt-BR value, not `undefined` — every screen unit test written before this slice keeps passing unmodified.
+- **Storage key** — `adg-locale`, chosen for consistency with the existing sibling `adg-theme-preference` key (Paulo's suggested example, `adaptive-disclosure-gateway.locale`, was offered as an example rather than a requirement).
+- **Hydration mismatch** — handled with `useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)` rather than a mount-effect `setState` (an earlier draft used a `useEffect` that called `setState`, which is correct in outcome but tripped `eslint-plugin-react-hooks`'s `set-state-in-effect` rule; `useSyncExternalStore` is the React-native tool for "an external, client-only data source that can differ between server and client render" and needs no such effect). `getServerSnapshot` (`initialLocale()`) always returns `DEFAULT_LOCALE` and never touches storage — pinned directly in isolation, and further pinned by a real `renderToString` + `hydrateRoot` test that stores `en` beforehand, asserts the server markup is pt-BR, hydrates it, and asserts no `console.error` call matches `/hydrat/i`. `<html lang>` follows the same pattern as `lib/theme.ts`'s `data-theme`: the server always renders `lang="pt-BR"` (`app/layout.tsx`), and `LocaleProvider` updates `document.documentElement.lang` from a `useEffect` once the real locale is known client-side — never read from storage during the first render. Same-tab locale switches are propagated through a small in-module listener set (`storage` events fire only in OTHER tabs).
+- **Session locale vs. persistence** — `LocaleProvider.tsx` holds an in-memory `volatileLocale` (module state, `null` until the first `setLocale` call this session) that `getSnapshot` checks BEFORE storage: `volatileLocale ?? readStoredLocale() ?? DEFAULT_LOCALE`. `setLocale` sets it unconditionally and only then attempts `storeLocale` — so a `localStorage.setItem` failure (privacy mode, an embed, a storage policy) can no longer prevent the locale from changing for the rest of the session; it only means the choice does not survive a reload. A `storage` event from another tab still updates `readStoredLocale()`'s return value, but this tab's own explicit choice (if any) keeps winning, since `getSnapshot` checks `volatileLocale` first — a deliberate, simpler-than-cross-tab-sync choice for this slice. `resetVolatileLocaleForTests` (test-only) clears that module state between tests in the same file; `renderWithLocale` and the screens' own `beforeEach`s call it so a switch in one test cannot leak into the next.
+- **Locale switcher** (`web/components/LocaleSwitcher/`) — a single real `<button>` next to `ThemeToggle` in `GuidedFlow`'s header, keyboard-operable by construction, text-labeled ("Idioma: Português" / "Language: English" — language names are shown in themselves, never a flag/emoji), toggling between the two supported locales without a reload.
+- **Screens covered** — Boas-vindas/Novo teste/Revisão/Resultado/Comparação B0–B4/Detalhes técnicos, plus the shell (theme label, language label) and client-side error messages (`lib/api.ts`'s fallback/validation messages now take an `AppCopy` parameter, defaulting to pt-BR for backward compatibility; `GuidedFlow` passes the live `useCopy()` value at the moment of each user-triggered request).
+- **Scientific terminology preserved in English** — B0 stays baseline/reference-control language, never "bad"/"wrong"/"worst"; B4 stays "what it does" language, never "best"/"most secure"/"scientifically superior"; `strategyVsTreatmentExplanation` keeps stating that `recommended` is a request-time option that currently resolves STATICALLY to B4 (never "the policy decides"/"automatically"); `timingExplanation` keeps `total_ms` framed as operational-only, explicitly not the scientific latency metric used in the experiments. `web/lib/copy.test.ts` extends the existing pt-BR regression pins to equivalent English patterns and adds a structural scan (over every string leaf reachable from either locale table) rejecting "best strategy"/"winner"/"most secure"/"scientifically superior" and their pt-BR equivalents, plus a narrower B0-only scan for "bad"/"wrong"/"insecure strategy"/"worst".
+- **Technical identifiers unchanged** — `b0`–`b4`, `recommended`, `policy_version`, `provider_class`, contract values, category identifiers, treatment codes, ids, hashes and model ids/snapshots stay byte-identical in both locales; only their human presentation (labels/explanations) changes. Pinned per-screen (e.g. `TechnicalDetailsScreen`'s English test still asserts `"recommended"`/`"b4"` render verbatim).
+- **No-leak posture unchanged** — the locale context/provider carries presentation state only (`locale`, `setLocale`, `copy` — no response data); switching locale re-runs the existing adversarial marker tests (an `external_payload` marker planted on Revisão and on Detalhes técnicos) and confirms it still never reaches the DOM; switching locale is pinned to never re-call `/disclosure/preview`, `/disclosure/execute` or `/disclosure/compare`, and to leave the already-held `ExecuteResponse`/`CompareResponse` data unchanged.
+- **Key-parity** — enforced primarily by `AppCopy`'s structural type (a compile-time guarantee, verified by intentionally breaking `copy.en.ts` during development); a runtime backstop in `copy.test.ts` additionally walks both locale objects' key paths and asserts they match (with a companion test proving that check can itself fail from a real defect).
+
+#### Delivered in the third slice
+
+**Detalhes técnicos** (`Ver detalhes técnicos`), reached as a secondary action from Resultado, alongside `Comparar estratégias`. Pure client-side navigation over the `ExecuteResponse` Resultado already holds — `lib/flow.ts` gained a `technicalDetails` screen and an `OPEN_TECHNICAL_DETAILS` event; it reuses the existing `RETURN_TO_RESULT` event to go back rather than inventing a second one, and (unlike the comparison screen's return) threads `compareError` through unchanged, since opening/closing this screen never touches comparison state. No new request is made: opening or closing this screen never calls `/disclosure/preview`, `/disclosure/execute` or `/disclosure/compare`.
+
+`components/TechnicalDetailsScreen` takes ONLY `execute: ExecuteResponse` as its data prop (never `preview`) — a structural guard, not just a behavioral one, against `PreviewResponse.external_payload` ever reaching this screen. It renders five sections:
+
+- **Execução** — `strategy` (the requested interface/API choice: `"recommended"` OR an explicit `b0`–`b4` code, both legal on `DisclosureStrategy`) and `treatment` (the `b0`–`b4` code actually executed); `_STRATEGY_TO_TREATMENT` is a static mapping, not a decision procedure — every explicit strategy maps to the treatment it names, and only `recommended` currently resolves (a product/UX default, not a scientific claim that B4 dominates every comparison) to Policy-governed/B4. The screen states this distinction and draws no conclusion from either value;
+- **Governança** — only `SafeGovernanceView` fields; a null `requester_role` renders as "Não informado", never as an error;
+- **Provedor** — only the safe `ProviderStage` fields. `decoding_config` renders as bounded, non-recursive key/value rows (`formatDecodingValue`, capped at 200 chars), never a dump of the whole response. The not-called state shows only a notice; a failed call shows ONLY `failure_kind` (the safe exception-class-name category — see `audit.py`'s `ProviderStage` docstring) and nothing else provider-related;
+- **Reconstrução local** — `attempted`, `changed_from_provider_response`, with a brief explanation of what local reconstruction means; never shows pseudonym mappings or attempts to recover original values;
+- **Tempo operacional** — `total_ms`, with explicit pt-BR text stating this is an operational measure of the application run and NOT the scientific latency metric used in the experiments. No T10/`experiments/stage_timing.py` metric, percentile or benchmark is imported, recreated or computed; `total_ms` is never turned into a score.
+
+**Hash tension, flagged for Paulo rather than decided silently:** `response_hash`/`reconstructed_hash` are rendered as technical metadata, but only behind their own nested `<details>` disclosure, kept OUT of the React tree (not merely CSS-hidden) until explicitly opened — the same pattern `ComparisonScreen` uses for `external_payload`. This follows CLAUDE.md's no-leak invariant, which treats a public, reproducible digest of low-entropy content as guessable/dictionary-reversible (one of this project's three historical side-channel defects was exactly an unkeyed public SHA-256 in an audit record). Both hashes are actually HMAC-SHA256 digests keyed by a process-local, non-reproducible secret (`audit.py`'s `_content_hash`/`_DEFAULT_AUDIT_HASH_KEY`), not a plain digest — a materially different risk profile than that historical defect — but the PR leaves the keep/truncate/presence-indicator-only decision to Paulo rather than assuming the keying makes it moot.
+
+`external_payload` does not appear anywhere on this screen; neither do the original document, the task, provider raw response text, pseudonym mappings, or any lifecycle id (`requester_id`/`session_id`/`document_id`/`request_id` — excluded structurally, since `SafeGovernanceView`/`ExecuteResponse` never carry them).
+
+#### Delivered in the second slice
+
+**Comparação B0–B4** (`Comparar estratégias`), reached as a secondary action from Resultado, over `POST /disclosure/compare`:
+
+- teaches before showing codes: each strategy's headline is a plain-language treatment name (`copy.treatments`, derived from `docs/experimental-design.md`'s treatment definitions), with the raw `b0`–`b4` code and `treatment` identifier demoted to an expandable technical-details area;
+- states explicitly, in pt-BR, that the comparison is a disclosure simulation and that none of the five strategies sends the document to the provider during this step;
+- the B0 — Direct warning is derived from `unsafe_control_baseline` only, never from `strategy === "b0"` — pinned by a test with a non-b0 entry carrying the flag and a b0 entry without it;
+- `recommended` renders as "Estratégia recomendada para o fluxo demonstrativo" — product configuration, never a ranking, score or "best" claim; no benchmark table exists;
+- reuses `CategoryOutcomeRow`/`describeCategoryOutcome`/`describeCategory` unchanged for the per-strategy local-vs-sent split;
+- `external_payload` is kept out of the React tree per strategy until its own disclosure is explicitly opened, same pattern as Revisão's payload toggle; the B0 payload additionally states the unsafe-control context before revealing it;
+- entries render in exactly the order `POST /disclosure/compare` returns (`CANONICAL_COMPARISON_ORDER`), pinned against the Python source, never re-sorted client-side;
+- `lib/flow.ts` gained `comparing`/`comparison` screens and `REQUEST_COMPARISON`/`COMPARE_SUCCEEDED`/`COMPARE_FAILED`/`RETURN_TO_RESULT` events; returning to Resultado preserves the original `preview`/`execute` state without re-fetching.
+
+Runtime validation added in `lib/responseGuards.ts` (`isCompareResponse`): `contract_version`, the `entries` collection, and per entry `strategy`/`treatment`/`recommended`/`unsafe_control_baseline`/`summary`/`external_payload`/`payload_byte_count`, plus `governance`/`provider_mode`. `unsafe_control_baseline` is checked as a real boolean (`typeof === "boolean"`), matching the existing `crosses_trust_boundary`/`failed` posture — a string `"false"` or an absent field both fail closed.
 
 #### Delivered in the first slice
 
@@ -264,9 +311,21 @@ The primary path never requires knowing B0–B4: the UI simply omits `strategy`,
 
 `Comparar estratégias` (the B0–B4 screen over `POST /disclosure/compare`), `Ver detalhes técnicos`, the English locale, `Histórico`, `Experimentos` and the `Configurações` area.
 
+#### Deliberately not in the second slice
+
+`Ver detalhes técnicos` (the full technical-details screen — the comparison screen's own per-entry technical disclosure is a small expandable, not that screen), the English locale, `Histórico`, `Experimentos`, `Configurações`, a real provider, auth, rate limiting, and structured PDF/DOCX/XLSX upload.
+
+#### Deliberately not in the third slice
+
+The English locale, `Histórico`, `Experimentos`, `Configurações`, remaining navigation polish, T12 structured-document ingestion (PDF/DOCX/XLSX), T22 real provider, and T25 deploy.
+
+#### Deliberately not in the fourth slice
+
+`Histórico`, `Experimentos`, the full `Configurações` area, remaining navigation polish, locale-aware number/date/byte formatting (kept deliberately simple/out of scope for this slice), T12 structured-document ingestion (PDF/DOCX/XLSX), T22 real provider, and T25 deploy. **T21/Issue #29 stays open** pending these.
+
 #### Scientific state unchanged
 
-The UI adds no treatment, policy, corpus, oracle or metric semantics. It renders what the API returns and never decides what is safe.
+The UI adds no treatment, policy, corpus, oracle or metric semantics. It renders what the API returns and never decides what is safe. The comparison screen imports no scoring/oracle/metric module and computes no aggregate across strategies beyond what each strategy's own preview already reports. The technical-details screen computes no scientific metric either: `total_ms` is operational-only, never a substitute for T10's stage-aware latency metric. The fourth slice (localization) is presentation-only: no treatment, policy, corpus, oracle, endpoint, provider or execution-behavior code changed, and the frozen `b0`–`b4` codes/technical identifiers are never translated in either locale.
 
 ### T25 / Issue #42 — containerized demo/deploy infrastructure
 

@@ -2,9 +2,12 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { executeDisclosure, getExamples, getHealth, previewDisclosure } from "@/lib/api";
-import type { ExecuteResponse, HealthResponse, PreviewResponse } from "@/lib/contracts";
+import { resetVolatileLocaleForTests } from "@/i18n/LocaleProvider";
+import { readStoredLocale } from "@/i18n/localeStorage";
+import { compareStrategies, executeDisclosure, getExamples, getHealth, previewDisclosure } from "@/lib/api";
+import type { CompareResponse, ExecuteResponse, HealthResponse, PreviewResponse } from "@/lib/contracts";
 import { copy } from "@/lib/copy";
+import { en } from "@/lib/copy.en";
 
 import { GuidedFlow } from "./GuidedFlow";
 
@@ -13,12 +16,14 @@ vi.mock("@/lib/api", () => ({
   getExamples: vi.fn(),
   previewDisclosure: vi.fn(),
   executeDisclosure: vi.fn(),
+  compareStrategies: vi.fn(),
 }));
 
 const mockedGetHealth = vi.mocked(getHealth);
 const mockedGetExamples = vi.mocked(getExamples);
 const mockedPreviewDisclosure = vi.mocked(previewDisclosure);
 const mockedExecuteDisclosure = vi.mocked(executeDisclosure);
+const mockedCompareStrategies = vi.mocked(compareStrategies);
 
 function healthResponse(deterministicDemoMode = true): HealthResponse {
   return {
@@ -58,7 +63,7 @@ function previewResponse(): PreviewResponse {
     },
     external_payload: "conteudo transformado",
     payload_byte_count: 22,
-    treatment: "policy_governed",
+    treatment: "b4",
     strategy: "recommended",
     governance: {
       domain: "demo",
@@ -66,7 +71,7 @@ function previewResponse(): PreviewResponse {
       policy_version: "v1",
       provider_class: "FakeProvider",
       requester_role: null,
-      requested_pseudonym_scope: "none",
+      requested_pseudonym_scope: "session",
     },
     provider_mode: { provider_class: "FakeProvider" },
   };
@@ -75,7 +80,7 @@ function previewResponse(): PreviewResponse {
 function executeResponse(): ExecuteResponse {
   return {
     contract_version: "t20-application-api-v1",
-    status: "completed",
+    status: "allowed",
     summary: previewResponse().summary,
     final_answer: "Resposta final reconstruída localmente.",
     provider: {
@@ -90,7 +95,7 @@ function executeResponse(): ExecuteResponse {
       failure_kind: null,
     },
     reconstruction: { attempted: true, reconstructed_hash: "hash2", changed_from_provider_response: false },
-    treatment: "policy_governed",
+    treatment: "b4",
     strategy: "recommended",
     governance: {
       domain: "demo",
@@ -98,9 +103,64 @@ function executeResponse(): ExecuteResponse {
       policy_version: "v1",
       provider_class: "FakeProvider",
       requester_role: null,
-      requested_pseudonym_scope: "none",
+      requested_pseudonym_scope: "session",
     },
     total_ms: 100,
+  };
+}
+
+function compareResponse(): CompareResponse {
+  return {
+    contract_version: "t20-application-api-v1",
+    entries: [
+      {
+        strategy: "b0",
+        treatment: "b0",
+        recommended: false,
+        unsafe_control_baseline: true,
+        summary: previewResponse().summary,
+        external_payload: "conteudo original sem protecao",
+        payload_byte_count: 30,
+      },
+      {
+        strategy: "b1",
+        treatment: "b1",
+        recommended: false,
+        unsafe_control_baseline: false,
+        summary: previewResponse().summary,
+        external_payload: "conteudo b1",
+        payload_byte_count: 12,
+      },
+      {
+        strategy: "b2",
+        treatment: "b2",
+        recommended: false,
+        unsafe_control_baseline: false,
+        summary: previewResponse().summary,
+        external_payload: "conteudo b2",
+        payload_byte_count: 12,
+      },
+      {
+        strategy: "b3",
+        treatment: "b3",
+        recommended: false,
+        unsafe_control_baseline: false,
+        summary: previewResponse().summary,
+        external_payload: "conteudo b3",
+        payload_byte_count: 12,
+      },
+      {
+        strategy: "b4",
+        treatment: "b4",
+        recommended: true,
+        unsafe_control_baseline: false,
+        summary: previewResponse().summary,
+        external_payload: "conteudo transformado",
+        payload_byte_count: 22,
+      },
+    ],
+    governance: previewResponse().governance,
+    provider_mode: { provider_class: "FakeProvider" },
   };
 }
 
@@ -121,6 +181,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockMatchMedia();
   window.localStorage.clear();
+  resetVolatileLocaleForTests();
   document.documentElement.removeAttribute("data-theme");
   mockedGetHealth.mockResolvedValue({ ok: true, data: healthResponse() });
   mockedGetExamples.mockResolvedValue({
@@ -151,6 +212,28 @@ async function goToReview() {
   await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
 
   await screen.findByRole("heading", { name: copy.review.heading });
+}
+
+/** The one locale control in the header -- see `LocaleSwitcher.tsx`. */
+function localeSwitcherButton() {
+  return screen.getByRole("button", { name: /idioma|language/i });
+}
+
+async function switchToEnglish() {
+  const button = localeSwitcherButton();
+  if (button.textContent?.includes("English")) {
+    return;
+  }
+  await userEvent.click(button);
+}
+
+async function goToResult() {
+  mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+  mockedExecuteDisclosure.mockResolvedValue({ ok: true, data: executeResponse() });
+
+  await goToReview();
+  await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+  await screen.findByRole("heading", { name: copy.result.heading });
 }
 
 describe("GuidedFlow -- execute is never called before the user confirms on review", () => {
@@ -262,5 +345,341 @@ describe("GuidedFlow -- a failed /health still tells the user the mode is unknow
 
     await screen.findByRole("heading", { name: copy.result.heading });
     expect(await screen.findByText(copy.provider.modeUnverifiedLabel)).toBeInTheDocument();
+  });
+});
+
+describe("GuidedFlow -- Comparar estratégias (T21 second slice)", () => {
+  it("does not call compareStrategies until the user clicks Comparar estratégias", async () => {
+    await goToResult();
+
+    expect(mockedCompareStrategies).not.toHaveBeenCalled();
+  });
+
+  it("calls compareStrategies exactly once, with the same content/task/governance as the original test, only after the explicit click", async () => {
+    mockedCompareStrategies.mockResolvedValue({ ok: true, data: compareResponse() });
+    await goToResult();
+
+    await userEvent.click(screen.getByRole("button", { name: copy.buttons.compareStrategies }));
+
+    await waitFor(() => expect(mockedCompareStrategies).toHaveBeenCalledTimes(1));
+    // Same request body the preview/execute calls used for this run --
+    // built by the same `buildRequestBody(compose)`, never re-derived.
+    expect(mockedCompareStrategies.mock.calls[0][0]).toEqual(mockedPreviewDisclosure.mock.calls[0][0]);
+    expect(mockedCompareStrategies.mock.calls[0][0]).toEqual(mockedExecuteDisclosure.mock.calls[0][0]);
+  });
+
+  it("does not call executeDisclosure again when opening the comparison", async () => {
+    mockedCompareStrategies.mockResolvedValue({ ok: true, data: compareResponse() });
+    await goToResult();
+
+    await userEvent.click(screen.getByRole("button", { name: copy.buttons.compareStrategies }));
+    await screen.findByRole("heading", { name: copy.comparison.heading });
+
+    expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders exactly five strategies, in canonical order, once the comparison loads", async () => {
+    mockedCompareStrategies.mockResolvedValue({ ok: true, data: compareResponse() });
+    await goToResult();
+
+    await userEvent.click(screen.getByRole("button", { name: copy.buttons.compareStrategies }));
+    await screen.findByRole("heading", { name: copy.comparison.heading });
+
+    const order = ["b0", "b1", "b2", "b3", "b4"] as const;
+    const names = order.map((code) => copy.treatments[code].name);
+    const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent ?? "");
+    const positions = names.map((name) => headings.findIndex((h) => h.includes(name)));
+
+    expect(positions.every((p) => p >= 0)).toBe(true);
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
+  });
+
+  it("shows the explicit B0 warning once the comparison loads", async () => {
+    mockedCompareStrategies.mockResolvedValue({ ok: true, data: compareResponse() });
+    await goToResult();
+
+    await userEvent.click(screen.getByRole("button", { name: copy.buttons.compareStrategies }));
+
+    expect(await screen.findByText(copy.comparison.unsafeControlHeading)).toBeInTheDocument();
+  });
+
+  it("shows a safe generic error and returns to Result when the comparison request fails", async () => {
+    mockedCompareStrategies.mockResolvedValue({
+      ok: false,
+      status: 500,
+      error: { message: copy.errors.generic, kind: null, fields: null },
+    });
+    await goToResult();
+
+    await userEvent.click(screen.getByRole("button", { name: copy.buttons.compareStrategies }));
+
+    await screen.findByRole("heading", { name: copy.result.heading });
+    expect(screen.getByText(copy.errors.generic)).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: copy.comparison.heading })).not.toBeInTheDocument();
+  });
+
+  it("returning from the comparison preserves the original Result screen", async () => {
+    mockedCompareStrategies.mockResolvedValue({ ok: true, data: compareResponse() });
+    await goToResult();
+
+    const finalAnswer = executeResponse().final_answer as string;
+    expect(screen.getByText(finalAnswer)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: copy.buttons.compareStrategies }));
+    await screen.findByRole("heading", { name: copy.comparison.heading });
+
+    await userEvent.click(screen.getByRole("button", { name: copy.comparison.backToResult }));
+
+    await screen.findByRole("heading", { name: copy.result.heading });
+    expect(screen.getByText(finalAnswer)).toBeInTheDocument();
+    // The original result was not re-fetched to get back here.
+    expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a named loading state while the comparison is in flight, never a generic spinner", async () => {
+    let resolveCompare!: (value: Awaited<ReturnType<typeof compareStrategies>>) => void;
+    mockedCompareStrategies.mockReturnValue(
+      new Promise((resolve) => {
+        resolveCompare = resolve;
+      }),
+    );
+    await goToResult();
+
+    await userEvent.click(screen.getByRole("button", { name: copy.buttons.compareStrategies }));
+
+    expect(await screen.findByText(copy.processingStages.comparingStrategies)).toBeInTheDocument();
+
+    resolveCompare({ ok: true, data: compareResponse() });
+    await screen.findByRole("heading", { name: copy.comparison.heading });
+  });
+});
+
+describe("GuidedFlow -- Ver detalhes técnicos (T21 third slice)", () => {
+  it("shows the Ver detalhes técnicos action on Resultado", async () => {
+    await goToResult();
+
+    expect(screen.getByRole("button", { name: copy.buttons.viewTechnicalDetails })).toBeInTheDocument();
+  });
+
+  it("opens the technical details screen on click, without calling preview/execute/compare again", async () => {
+    await goToResult();
+
+    await userEvent.click(screen.getByRole("button", { name: copy.buttons.viewTechnicalDetails }));
+
+    await screen.findByRole("heading", { name: copy.sectionHeadings.technicalDetails });
+    expect(mockedPreviewDisclosure).toHaveBeenCalledTimes(1);
+    expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+    expect(mockedCompareStrategies).not.toHaveBeenCalled();
+  });
+
+  it("reuses the same ExecuteResponse already held by Resultado -- strategy and treatment render correctly", async () => {
+    await goToResult();
+
+    await userEvent.click(screen.getByRole("button", { name: copy.buttons.viewTechnicalDetails }));
+    await screen.findByRole("heading", { name: copy.sectionHeadings.technicalDetails });
+
+    const e = executeResponse();
+    expect(screen.getByText(e.strategy)).toBeInTheDocument();
+    expect(screen.getByText(e.treatment)).toBeInTheDocument();
+  });
+
+  it("returning restores the original Resultado without re-running preview, execute or compare", async () => {
+    await goToResult();
+
+    const finalAnswer = executeResponse().final_answer as string;
+    expect(screen.getByText(finalAnswer)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: copy.buttons.viewTechnicalDetails }));
+    await screen.findByRole("heading", { name: copy.sectionHeadings.technicalDetails });
+
+    await userEvent.click(screen.getByRole("button", { name: copy.technicalDetails.backToResult }));
+
+    await screen.findByRole("heading", { name: copy.result.heading });
+    expect(screen.getByText(finalAnswer)).toBeInTheDocument();
+    expect(mockedPreviewDisclosure).toHaveBeenCalledTimes(1);
+    expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+    expect(mockedCompareStrategies).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Adversarial leak test (CLAUDE.md's no-leak invariant): plants a marker
+   * in `PreviewResponse.external_payload` -- a field that IS on the same
+   * flow state the technical-details screen is wired from, but that screen
+   * must never read (its own explicit-reveal surface is Revisão/Comparação,
+   * not this screen). This is the realistic failure mode a careless
+   * implementation could hit: passing `preview` into `TechnicalDetailsScreen`
+   * or otherwise threading `external_payload` through.
+   */
+  it("never renders external_payload on the technical details screen", async () => {
+    const preview = previewResponse();
+    preview.external_payload = "SESSION_SECRET_MARKER";
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: preview });
+    mockedExecuteDisclosure.mockResolvedValue({ ok: true, data: executeResponse() });
+
+    await goToReview();
+    await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+    await screen.findByRole("heading", { name: copy.result.heading });
+
+    await userEvent.click(screen.getByRole("button", { name: copy.buttons.viewTechnicalDetails }));
+    await screen.findByRole("heading", { name: copy.sectionHeadings.technicalDetails });
+
+    expect(screen.queryByText(/SESSION_SECRET_MARKER/)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * T21 fourth slice / #29: pt-BR / English localization. The locale
+ * control lives in the header (`GuidedFlow`'s `styles.header`, next to
+ * `ThemeToggle`) and stays mounted across every screen, so these tests
+ * exercise it from wherever the flow currently is.
+ */
+describe("GuidedFlow -- locale switcher (T21 fourth slice)", () => {
+  it("first visit uses pt-BR and the switcher shows the current locale", () => {
+    render(<GuidedFlow />);
+    expect(screen.getByRole("heading", { name: copy.howItWorks.title })).toBeInTheDocument();
+    expect(localeSwitcherButton().textContent).toMatch(/português/i);
+  });
+
+  it("switching to English updates the UI without a reload", async () => {
+    render(<GuidedFlow />);
+    await switchToEnglish();
+
+    expect(screen.getByRole("heading", { name: en.howItWorks.title })).toBeInTheDocument();
+    expect(localeSwitcherButton().textContent).toMatch(/english/i);
+    expect(screen.queryByText(copy.howItWorks.title)).not.toBeInTheDocument();
+  });
+
+  it("switching back to Portuguese works", async () => {
+    render(<GuidedFlow />);
+    await switchToEnglish();
+    await userEvent.click(localeSwitcherButton());
+
+    expect(screen.getByRole("heading", { name: copy.howItWorks.title })).toBeInTheDocument();
+    expect(localeSwitcherButton().textContent).toMatch(/português/i);
+  });
+
+  it("persists the choice to localStorage", async () => {
+    render(<GuidedFlow />);
+    await switchToEnglish();
+
+    expect(readStoredLocale()).toBe("en");
+  });
+
+  it("a remount restores the stored locale", async () => {
+    const { unmount } = render(<GuidedFlow />);
+    await switchToEnglish();
+    unmount();
+
+    render(<GuidedFlow />);
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: en.howItWorks.title })).toBeInTheDocument(),
+    );
+  });
+
+  it("an invalid stored locale falls back to pt-BR", async () => {
+    window.localStorage.setItem("adg-locale", "klingon");
+    render(<GuidedFlow />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: copy.howItWorks.title })).toBeInTheDocument(),
+    );
+  });
+});
+
+describe("GuidedFlow -- switching locale never re-fetches preview/execute/compare (T21 fourth slice)", () => {
+  it("does not re-call previewDisclosure/executeDisclosure when switching locale on Resultado", async () => {
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+    mockedExecuteDisclosure.mockResolvedValue({ ok: true, data: executeResponse() });
+    await goToResult();
+
+    await switchToEnglish();
+
+    expect(mockedPreviewDisclosure).toHaveBeenCalledTimes(1);
+    expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+    expect(mockedCompareStrategies).not.toHaveBeenCalled();
+    // The result data itself is unchanged by the locale switch -- only its
+    // presentation is.
+    expect(screen.getByText(executeResponse().final_answer as string)).toBeInTheDocument();
+  });
+
+  it("does not re-call compareStrategies when switching locale on the comparison screen, and keeps the same entries", async () => {
+    mockedCompareStrategies.mockResolvedValue({ ok: true, data: compareResponse() });
+    await goToResult();
+    await userEvent.click(screen.getByRole("button", { name: copy.buttons.compareStrategies }));
+    await screen.findByRole("heading", { name: copy.comparison.heading });
+
+    await switchToEnglish();
+
+    expect(mockedCompareStrategies).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("heading", { name: en.comparison.heading })).toBeInTheDocument();
+    expect(screen.getByText(en.treatments.b0.name)).toBeInTheDocument();
+    expect(screen.getByText(en.treatments.b4.name)).toBeInTheDocument();
+    expect(screen.getByText(en.comparison.unsafeControlHeading)).toBeInTheDocument();
+  });
+
+  it("does not re-call anything when switching locale on the technical details screen, and keeps the same ExecuteResponse", async () => {
+    await goToResult();
+    await userEvent.click(screen.getByRole("button", { name: copy.buttons.viewTechnicalDetails }));
+    await screen.findByRole("heading", { name: copy.sectionHeadings.technicalDetails });
+
+    await switchToEnglish();
+
+    expect(mockedPreviewDisclosure).toHaveBeenCalledTimes(1);
+    expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+    expect(mockedCompareStrategies).not.toHaveBeenCalled();
+    const e = executeResponse();
+    expect(screen.getByText(e.strategy)).toBeInTheDocument();
+    expect(screen.getByText(e.treatment)).toBeInTheDocument();
+    expect(screen.getByText(en.technicalDetails.executionHeading)).toBeInTheDocument();
+  });
+});
+
+describe("GuidedFlow -- error messages switch with the locale", () => {
+  it("shows the English generic error message when a preview fails after switching to English", async () => {
+    mockedPreviewDisclosure.mockResolvedValue({
+      ok: false,
+      status: 500,
+      error: { message: en.errors.generic, kind: null, fields: null },
+    });
+
+    render(<GuidedFlow />);
+    await switchToEnglish();
+    await userEvent.click(screen.getByRole("button", { name: en.howItWorks.ctaPrimary }));
+    const select = await screen.findByLabelText(en.newTest.exampleFieldLabel);
+    await userEvent.selectOptions(select, "ex-1");
+    await userEvent.click(screen.getByRole("button", { name: en.newTest.continueToReview }));
+
+    await screen.findByText(en.errors.generic);
+    expect(screen.queryByText(copy.errors.generic)).not.toBeInTheDocument();
+  });
+});
+
+describe("GuidedFlow -- no sensitive information reaches the DOM because of the locale switch", () => {
+  it("switching locale on the review screen never renders external_payload before its own disclosure is opened", async () => {
+    const preview = previewResponse();
+    preview.external_payload = "LOCALE_SWITCH_MARKER";
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: preview });
+
+    await goToReview();
+    await switchToEnglish();
+
+    expect(screen.queryByText(/LOCALE_SWITCH_MARKER/)).not.toBeInTheDocument();
+  });
+
+  it("switching locale on the technical details screen still never renders external_payload", async () => {
+    const preview = previewResponse();
+    preview.external_payload = "SESSION_SECRET_MARKER";
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: preview });
+    mockedExecuteDisclosure.mockResolvedValue({ ok: true, data: executeResponse() });
+
+    await goToReview();
+    await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+    await screen.findByRole("heading", { name: copy.result.heading });
+    await userEvent.click(screen.getByRole("button", { name: copy.buttons.viewTechnicalDetails }));
+    await screen.findByRole("heading", { name: copy.sectionHeadings.technicalDetails });
+
+    await switchToEnglish();
+
+    expect(screen.queryByText(/SESSION_SECRET_MARKER/)).not.toBeInTheDocument();
   });
 });

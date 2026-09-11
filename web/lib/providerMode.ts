@@ -41,7 +41,8 @@
  */
 
 import type { HealthResponse } from "./contracts";
-import { copy } from "./copy";
+import type { AppCopy } from "./copy";
+import { copy as defaultCopy } from "./copy";
 
 export type ProviderModeState =
   | { status: "loading" }
@@ -59,16 +60,25 @@ export interface ProviderModeNotice {
   tone: "demo" | "unverified";
 }
 
-/** `null` means "there is nothing to say", never "there was nothing to ask". */
-export function describeProviderMode(state: ProviderModeState): ProviderModeNotice | null {
+/**
+ * `null` means "there is nothing to say", never "there was nothing to ask".
+ *
+ * `appCopy` defaults to the pt-BR table so existing callers/tests keep
+ * behaving unchanged; a component under `LocaleProvider` passes its
+ * resolved `useCopy()` value explicitly (T21 fourth slice / #29).
+ */
+export function describeProviderMode(
+  state: ProviderModeState,
+  appCopy: AppCopy = defaultCopy,
+): ProviderModeNotice | null {
   switch (state.status) {
     case "loading":
       return null;
     case "unavailable":
-      return { message: copy.provider.modeUnverifiedLabel, tone: "unverified" };
+      return { message: appCopy.provider.modeUnverifiedLabel, tone: "unverified" };
     case "ready":
       return state.health.provider.deterministic_demo_mode
-        ? { message: copy.provider.deterministicDemoLabel, tone: "demo" }
+        ? { message: appCopy.provider.deterministicDemoLabel, tone: "demo" }
         : null;
   }
 }

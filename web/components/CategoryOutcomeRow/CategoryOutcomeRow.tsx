@@ -19,9 +19,9 @@
  * from the other two.
  */
 
+import { useCopy } from "@/i18n/useLocale";
 import { describeCategory } from "@/lib/categoryLabels";
 import type { CategoryDisclosureSummary } from "@/lib/contracts";
-import { copy } from "@/lib/copy";
 import { describeCategoryOutcome, type DisclosureTone } from "@/lib/outcomes";
 
 import styles from "./CategoryOutcomeRow.module.css";
@@ -43,8 +43,9 @@ const TONE_CLASS: Record<DisclosureTone, string> = {
 };
 
 export function CategoryOutcomeRow({ category }: { category: CategoryDisclosureSummary }) {
-  const descriptor = describeCategoryOutcome(category);
-  const categoryDescriptor = describeCategory(category.category);
+  const copy = useCopy();
+  const descriptor = describeCategoryOutcome(category, copy);
+  const categoryDescriptor = describeCategory(category.category, copy);
   const glyphSymbol = GLYPH_SYMBOLS[descriptor.glyph] ?? "•";
 
   return (

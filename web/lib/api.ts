@@ -37,14 +37,17 @@
  */
 
 import type {
+  CompareResponse,
   DisclosureRequestBody,
   ExamplesResponse,
   ExecuteResponse,
   HealthResponse,
   PreviewResponse,
 } from "./contracts";
-import { copy } from "./copy";
+import type { AppCopy } from "./copy";
+import { copy as defaultCopy } from "./copy";
 import {
+  isCompareResponse,
   isExamplesResponse,
   isExecuteResponse,
   isHealthResponse,
@@ -102,21 +105,21 @@ function isValidationErrorResponseShape(
   );
 }
 
-function genericError(): DisplayError {
-  return { message: copy.errors.generic, kind: null, fields: null };
+function genericError(appCopy: AppCopy): DisplayError {
+  return { message: appCopy.errors.generic, kind: null, fields: null };
 }
 
-async function toDisplayError(response: Response): Promise<DisplayError> {
+async function toDisplayError(response: Response, appCopy: AppCopy): Promise<DisplayError> {
   let parsed: unknown;
   try {
     parsed = await response.json();
   } catch {
-    return genericError();
+    return genericError(appCopy);
   }
 
   if (response.status === 422 && isValidationErrorResponseShape(parsed)) {
     return {
-      message: copy.errors.validationFailed,
+      message: appCopy.errors.validationFailed,
       kind: null,
       fields: parsed.detail.map((item) => ({ loc: item.loc, type: item.type })),
     };
@@ -128,7 +131,7 @@ async function toDisplayError(response: Response): Promise<DisplayError> {
 
   // Parsed fine but matches neither contract this app trusts -- fail
   // closed rather than displaying an unrecognized shape's content.
-  return genericError();
+  return genericError(appCopy);
 }
 
 /**
@@ -136,28 +139,34 @@ async function toDisplayError(response: Response): Promise<DisplayError> {
  * point: there is no way to call this helper without deciding what the
  * response must look like, so a future endpoint cannot be added with its
  * body left unvalidated by omission.
+ *
+ * `appCopy` defaults to the pt-BR table so existing callers/tests keep
+ * behaving unchanged; `GuidedFlow` passes its resolved `useCopy()` value
+ * explicitly so a failure surfaces in the locale currently active, without
+ * this module ever reading locale/storage itself (T21 fourth slice / #29).
  */
 async function requestJson<T>(
   path: string,
   guard: ResponseGuard<T>,
   init?: RequestInit,
+  appCopy: AppCopy = defaultCopy,
 ): Promise<ApiResult<T>> {
   let response: Response;
   try {
     response = await fetch(path, init);
   } catch {
-    return { ok: false, status: 0, error: genericError() };
+    return { ok: false, status: 0, error: genericError(appCopy) };
   }
 
   if (!response.ok) {
-    return { ok: false, status: response.status, error: await toDisplayError(response) };
+    return { ok: false, status: response.status, error: await toDisplayError(response, appCopy) };
   }
 
   let parsed: unknown;
   try {
     parsed = await response.json();
   } catch {
-    return { ok: false, status: response.status, error: genericError() };
+    return { ok: false, status: response.status, error: genericError(appCopy) };
   }
 
   if (!guard(parsed)) {
@@ -166,32 +175,72 @@ async function requestJson<T>(
     // genuinely did succeed, and misreporting it would hide the fact that
     // the upstream is serving a body this app cannot read. The error itself
     // says nothing about `parsed`.
-    return { ok: false, status: response.status, error: genericError() };
+    return { ok: false, status: response.status, error: genericError(appCopy) };
   }
 
   return { ok: true, data: parsed };
 }
 
-export function getHealth(): Promise<ApiResult<HealthResponse>> {
-  return requestJson("/api/health", isHealthResponse);
+export function getHealth(appCopy: AppCopy = defaultCopy): Promise<ApiResult<HealthResponse>> {
+  return requestJson("/api/health", isHealthResponse, undefined, appCopy);
 }
 
-export function getExamples(): Promise<ApiResult<ExamplesResponse>> {
-  return requestJson("/api/examples", isExamplesResponse);
+export function getExamples(appCopy: AppCopy = defaultCopy): Promise<ApiResult<ExamplesResponse>> {
+  return requestJson("/api/examples", isExamplesResponse, undefined, appCopy);
 }
 
-export function previewDisclosure(body: DisclosureRequestBody): Promise<ApiResult<PreviewResponse>> {
-  return requestJson("/api/disclosure/preview", isPreviewResponse, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
+export function previewDisclosure(
+  body: DisclosureRequestBody,
+  appCopy: AppCopy = defaultCopy,
+): Promise<ApiResult<PreviewResponse>> {
+  return requestJson(
+    "/api/disclosure/preview",
+    isPreviewResponse,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    appCopy,
+  );
 }
 
-export function executeDisclosure(body: DisclosureRequestBody): Promise<ApiResult<ExecuteResponse>> {
-  return requestJson("/api/disclosure/execute", isExecuteResponse, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
+export function executeDisclosure(
+  body: DisclosureRequestBody,
+  appCopy: AppCopy = defaultCopy,
+): Promise<ApiResult<ExecuteResponse>> {
+  return requestJson(
+    "/api/disclosure/execute",
+    isExecuteResponse,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    appCopy,
+  );
+}
+
+/**
+ * Runs the same content through every B0-B4 strategy and returns all five
+ * previews side by side -- never a provider call, for any of them (see
+ * `application/contracts.py`'s `StrategyComparisonEntry` docstring). Takes
+ * the same `DisclosureRequestBody` as `previewDisclosure`/`executeDisclosure`
+ * -- the route ignores `body.strategy`, so callers reuse `buildRequestBody`
+ * unchanged rather than needing a second, comparison-specific body shape.
+ */
+export function compareStrategies(
+  body: DisclosureRequestBody,
+  appCopy: AppCopy = defaultCopy,
+): Promise<ApiResult<CompareResponse>> {
+  return requestJson(
+    "/api/disclosure/compare",
+    isCompareResponse,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    appCopy,
+  );
 }

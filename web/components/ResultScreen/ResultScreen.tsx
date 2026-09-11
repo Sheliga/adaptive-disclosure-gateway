@@ -19,9 +19,10 @@
  * conflating them made a failed check silently erase the indication.
  */
 
+import { useCopy } from "@/i18n/useLocale";
 import { describeCategory } from "@/lib/categoryLabels";
+import type { DisplayError } from "@/lib/api";
 import type { ExecuteResponse } from "@/lib/contracts";
-import { copy } from "@/lib/copy";
 import { describeCategoryOutcome } from "@/lib/outcomes";
 import { describeProviderMode, type ProviderModeState } from "@/lib/providerMode";
 
@@ -30,13 +31,35 @@ import styles from "./ResultScreen.module.css";
 export interface ResultScreenProps {
   execute: ExecuteResponse;
   health: ProviderModeState;
+  /** Set when the last "Comparar estratégias" request failed; safe/generic only. */
+  compareError: DisplayError | null;
   onRestart: () => void;
+  /**
+   * Always available -- comparison is offered regardless of whether this
+   * particular execution was blocked, failed, or succeeded (T21/#29: the
+   * screen exists to explain the mechanism, not just a successful run).
+   */
+  onCompareStrategies: () => void;
+  /**
+   * Opens "Ver detalhes técnicos" (T21/#29 third slice) -- always available,
+   * same posture as `onCompareStrategies`, since the technical view exists
+   * to explain what actually ran regardless of the outcome.
+   */
+  onViewTechnicalDetails: () => void;
 }
 
-export function ResultScreen({ execute, health, onRestart }: ResultScreenProps) {
+export function ResultScreen({
+  execute,
+  health,
+  compareError,
+  onRestart,
+  onCompareStrategies,
+  onViewTechnicalDetails,
+}: ResultScreenProps) {
+  const copy = useCopy();
   const isBlocked = execute.summary.status === "blocked";
   const providerFailed = execute.provider.failed;
-  const providerModeNotice = describeProviderMode(health);
+  const providerModeNotice = describeProviderMode(health, copy);
 
   return (
     <section aria-labelledby="result-heading" className={styles.section}>
@@ -89,11 +112,11 @@ export function ResultScreen({ execute, health, onRestart }: ResultScreenProps) 
         ) : (
           <ul className={styles.protectionsList}>
             {execute.summary.categories.map((category) => {
-              const descriptor = describeCategoryOutcome(category);
+              const descriptor = describeCategoryOutcome(category, copy);
               // Same presentation mapping the review step used, so the two
               // screens never name the same category two different ways.
               // The raw identifier stays the React key, never the label.
-              const categoryDescriptor = describeCategory(category.category);
+              const categoryDescriptor = describeCategory(category.category, copy);
               return (
                 <li key={category.category}>
                   {categoryDescriptor.label}: {descriptor.label}
@@ -104,9 +127,23 @@ export function ResultScreen({ execute, health, onRestart }: ResultScreenProps) 
         )}
       </div>
 
-      <button type="button" className={styles.restartButton} onClick={onRestart}>
-        {copy.result.restart}
-      </button>
+      {compareError && (
+        <p role="alert" className={styles.error}>
+          {compareError.message}
+        </p>
+      )}
+
+      <div className={styles.actions}>
+        <button type="button" className={styles.restartButton} onClick={onRestart}>
+          {copy.result.restart}
+        </button>
+        <button type="button" className={styles.compareButton} onClick={onCompareStrategies}>
+          {copy.buttons.compareStrategies}
+        </button>
+        <button type="button" className={styles.compareButton} onClick={onViewTechnicalDetails}>
+          {copy.buttons.viewTechnicalDetails}
+        </button>
+      </div>
     </section>
   );
 }
