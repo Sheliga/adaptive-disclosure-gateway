@@ -204,3 +204,25 @@ def test_binary_unnecessary_disclosure_still_treats_remove_as_not_transmitted():
     assert score.not_required_total == 1
     assert score.not_required_transmitted == 0
     assert score.rate == 0.0
+
+
+def test_binary_unnecessary_disclosure_keeps_blocked_span_in_denominator():
+    """A blocked NOT_REQUIRED span remains in the historical denominator.
+
+    This pins why the binary rate is not unconditionally identical to the
+    ordinal family's first threshold, whose population contains only spans
+    with a scorable exposure level.
+    """
+    oracle = _oracle_with_one_not_required_span([DisclosureAction.BLOCK_REQUEST])
+    result = DisclosureResult(
+        external_payload="",
+        decisions=[],
+        transformations=[],
+        status="blocked",
+    )
+
+    score = score_unnecessary_disclosure(oracle, result, Treatment.POLICY_GOVERNED)
+
+    assert score.not_required_total == 1
+    assert score.not_required_transmitted == 0
+    assert score.rate == 0.0
