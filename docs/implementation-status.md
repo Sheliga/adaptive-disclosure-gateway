@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-09-11 — T23 post-pilot protocol candidate corrected in PR #53 and awaiting human review/merge; T21 fourth slice (pt-BR / English localization) completed and integrated into `master` via PRs #51/#52 — T21/Issue #29 remains open for the remaining deliberately out-of-scope items.
+Last updated: 2026-09-11 — T23 post-pilot protocol merged into `develop` via PR #53; T12 / Issue #9 Docling ingestion is now in implementation for review; T21 fourth slice (pt-BR / English localization) completed and integrated into `master` via PRs #51/#52 — T21/Issue #29 remains open for the remaining deliberately out-of-scope items.
 
 This file tracks the current engineering/research state and execution order. Architectural decisions belong in ADRs; experimental definitions belong in `docs/experimental-design.md`; factual pilot results belong in `docs/milestone-2-pilot.md`; the frozen confirmatory-analysis protocol belongs in `docs/research/`; the parallel advisor-facing application plan belongs in `docs/advisor-demo.md`; historical PR/Issue descriptions remain in GitHub.
 
@@ -78,7 +78,7 @@ Do not describe M2 as proof that B4 outperforms other treatments.
 ## Post-pilot findings that now drive planning
 
 Three methodological findings were carried forward without retroactively changing M2, and are
-now addressed by the protocol candidate in PR #53, pending review/merge:
+now addressed by the protocol merged into `develop` via PR #53:
 
 1. **Binary unnecessary disclosure penalizes pseudonymization.** The binary rate counts `PSEUDONYMIZE` as transmitted, which can make B2 appear worse than B1 despite a lower representation exposure. **Candidate resolution:** preserve the binary rate unchanged as secondary and use an ordinal/cumulative primary family. With `N = S + B + U`, the binary rate is `T/N`, while the first threshold is `T/S`; reports include coverage `S/N` and explicit blocked/unscorable counts rather than claiming unconditional recoverability (protocol §4).
 2. **The main HR B3→B4 pairwise uses `hr-v1`.** Contextual governance effects from `purpose`, `requester_role`, `provider_class` and `policy_version` are identified in targeted `hr-v2/hr-v3` matrix comparisons rather than the main frozen-corpus pairwise run. **Resolved:** the five `hr-v2`/`hr-v3` matrix cells are frozen as the primary B3→B4 comparison; the `hr-v1` pairwise is frozen as secondary/historical (protocol §8).
@@ -104,10 +104,11 @@ utility/token/cost claims (protocol §9), not the Contracts corpus/oracle freeze
 
 #### T23 / Issue #36 — freeze post-pilot methodology
 
-Status: **candidate frozen in PR #53; awaiting human review and merge**.
+Status: **merged into `develop` via PR #53**.
 `docs/research/post-pilot-protocol-v1.md` (`protocol_id: post-pilot-v1`) retains
-`status: FROZEN` and its immutable candidate
-date, but is not yet the authoritative completed gate while the PR remains open.
+`status: FROZEN` and its immutable candidate date. It is the current post-pilot protocol
+baseline for the M3 path on `develop`; `master` remains behind until the final feature
+integration PR.
 
 Frozen before any confirmatory analysis:
 
@@ -155,7 +156,7 @@ ordinal claim or this primary metric.
 
 #### T22 / Issue #30 — real provider
 
-Status: **promoted after M2; may proceed in parallel with T23**.
+Status: **promoted after M2; may proceed in parallel with T12/Contracts/T24**.
 
 Implement at least one real provider behind the existing narrow `Provider` protocol. Required before authoritative claims about:
 
@@ -170,11 +171,14 @@ T22 is also consumed by the advisor-facing demo when available. FakeProvider rem
 
 #### T12 / Issue #9 — Docling ingestion
 
-Status: **gate released after M2; may proceed in parallel**.
+Status: **in implementation for PR review after PR #53 merged**.
 
 Docling is ingestion infrastructure only. Keep a normalized internal document representation independent from Docling APIs and keep parser behavior constant across B0–B4.
 
-Direct normalized text remains the canonical parser-independent control path.
+Direct normalized text remains the canonical parser-independent control path. The T12 slice
+extends the existing `NormalizedContent` ingestion boundary so direct text, UTF-8 text files
+and Docling-backed document files all reach the core as project-owned canonical text with
+parser/ingestion provenance.
 
 #### T24 / Issue #37 — Contracts v1 validation corpus
 
@@ -191,8 +195,8 @@ If Contracts requires new categories/policies/generalization strategies, those e
 
 M3 closes when:
 
-1. post-pilot metrics/thresholds/comparison/provider rules are frozen — **candidate in PR #53,
-   awaiting human review/merge**, `docs/research/post-pilot-protocol-v1.md`;
+1. post-pilot metrics/thresholds/comparison/provider rules are frozen on `develop` via PR #53,
+   `docs/research/post-pilot-protocol-v1.md`;
 2. a real provider is available behind the shared boundary;
 3. structured Contracts ingestion is available without becoming a treatment variable;
 4. Contracts v1 corpus/oracle is frozen with its run classification decided before result inspection;
