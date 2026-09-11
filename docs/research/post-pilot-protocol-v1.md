@@ -502,15 +502,22 @@ labeled separately rather than merging them into one claim.
 
 The 13-case `hr-v1` B3→B4 pairwise (`summary_b3_to_b4.json`,
 `aggregation.summarize_b3_to_b4`) is retained as **historical pilot evidence**, labeled
-secondary for governance claims specifically because `hr-v1` was measured
-(`docs/hr-policy-matrix.md`, "Inventory") to have only one policy dimension
-(`purpose`×`salary`) that actually varies the resolved action at all — `requester_role` and
-`provider_class` are "architecturally supported but experimentally inert for disclosure action
-under `hr-v1`". A same-context B3-vs-B4 comparison under `hr-v1` mostly reflects B4's *hard*
-policy actions overriding B3's task-aware choice for `employee_name`/`department`/`salary`
-(`docs/milestone-2-pilot.md`: "B4 is more exposing than B3 in 9/13 cases... In `hr-v1`,
-`employee_name` and `department` include hard policy actions that can override B3's task-aware
-minimization"), not an isolated single-dimension governance effect.
+secondary for governance claims specifically because of a fact scoped to `hr-v1`'s own,
+unextended policy document: under `hr-v1` *only*, `docs/hr-policy-matrix.md`'s "Inventory"
+measured that `purpose`×`salary` is the *only* dimension/category pair that varies the
+resolved disclosure action at all — under `hr-v1`, `requester_role` and `provider_class` are
+"architecturally supported but experimentally inert for disclosure action". This finding is
+**not** a general claim about `requester_role`/`provider_class` — it describes only what
+`hr-v1`'s specific rule set happens to encode, and it is exactly the gap `hr-v2`/`hr-v3` were
+designed to fill (§8.2 below), where those same two dimensions were deliberately given
+governance rules that *do* change the resolved action (`docs/hr-policy-matrix.md`'s
+`hr-v2` cell-by-cell table). A same-context B3-vs-B4 comparison under `hr-v1` mostly reflects
+B4's *hard* policy actions overriding B3's task-aware choice for
+`employee_name`/`department`/`salary` (`docs/milestone-2-pilot.md`: "B4 is more exposing than
+B3 in 9/13 cases... In `hr-v1`, `employee_name` and `department` include hard policy actions
+that can override B3's task-aware minimization"), not an isolated single-dimension governance
+effect — which is the separate reason `hr-v1`'s own pairwise is secondary/historical here,
+independent of and in addition to `hr-v1`'s narrower policy-dimension coverage.
 
 ### 8.2 Primary contextual governance comparison (`hr-v2`/`hr-v3`) — **primary**
 
