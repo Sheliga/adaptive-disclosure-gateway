@@ -22,7 +22,7 @@ Treat this sequence as canonical in all reasoning, comparisons and prose. Compar
 
 Concretely:
 
-- `Treatment` (`src/adaptive_disclosure_gateway/domain.py`) is the `StrEnum` whose members carry the semantic name (`DIRECT`, `STATIC_SANITIZATION`, `REVERSIBLE_PSEUDONYMIZATION`, `TASK_AWARE`, `POLICY_GOVERNED`) and whose values are the frozen codes (`"b0"`–`"b4"`).
+- `Treatment` (`src/adaptive_disclosure_gateway/domain.py`) is the `StrEnum` whose members carry the semantic name (`DIRECT`, `STATIC_SANITIZATION`, `REVERSIBLE_PSEUDONYMIZATION`, `TASK_AWARE`, `POLICY_GOVERNED`) and whose values are the frozen codes (`"b0"`–`"b4`).
 - Module and class names for each treatment are semantic, not coded: `transformations/static_sanitization.py` / `StaticSanitizer` is the pattern to follow for B2–B4 (for example `reversible_pseudonymization.py` / `ReversiblePseudonymizer`).
 - A treatment class exposes which treatment it implements through a `treatment` class attribute (for example `treatment = Treatment.STATIC_SANITIZATION`).
 - OpenTelemetry spans/attributes are namespaced by the semantic name (for example `static_sanitization.sanitize`, `static_sanitization.span_count`) plus a `treatment` attribute carrying the frozen code as data (for example `"b1"`).
@@ -114,14 +114,11 @@ Rules:
 
 This CI strategy exists to reduce repeated GitHub Actions consumption while preserving one full remote validation at the feature integration boundary.
 
-The `develop → master` integration PR is the single required CI boundary: an intermediate
-develop-targeted PR never requires an exact-SHA GitHub Actions run before merging, regardless of
-how the review discussion phrases the request -- the mandatory local gates in the TDD section are
-sufficient. A draft PR to `master` may optionally be opened purely to obtain an early CI signal on
-an exact candidate SHA before that SHA is merged into `develop`; it must be closed without merging
-once the signal is obtained. This is a diagnostic probe, never a merge path -- PR #54 (a draft
-`research/t23-freeze-protocol → master` PR, closed unmerged after providing an early CI read for
-T23) is the precedent.
+The `develop → master` integration PR is the single required GitHub Actions CI boundary.
+Repository Claude Code sessions create their implementation/review PRs against `develop`; they do
+not open temporary, diagnostic or feature PRs to `master`. Intermediate `develop`-targeted PRs
+are validated with the mandatory local gates in the TDD section. PR #54 remains a historical
+one-off CI probe and is not an operational precedent for future Claude Code sessions.
 
 ## Merge authorization
 
