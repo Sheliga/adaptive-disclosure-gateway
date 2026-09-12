@@ -84,6 +84,26 @@ noticing — exactly the silent substitution protocol §9.4 forbids. `ADG_PROVID
 autocorrected and never mapped to another provider on its own judgment; an unrecognized value
 is a configuration error, full stop.
 
+### What reads `ADG_PROVIDER`
+
+`application/settings.build_default_service` — the default service both `api/app.create_app()`
+and `cli.main()` build when no service is injected — constructs its provider through
+`providers.build_provider_from_env`, and derives the default `GovernanceContext.provider_class`
+from whatever that returns. So a deployment enables the real provider by setting
+`ADG_PROVIDER=anthropic` and nothing else; no custom service has to be injected, and there is
+no environment variable that can make the governance context disagree with the wired provider.
+
+That agreement is load-bearing rather than cosmetic: `invoke_provider` compares
+`context.provider_class` against the provider's own and refuses the call on a mismatch, and
+policy itself reads `provider_class` (see `docs/hr-policy-matrix.md`, where `employee_name` is
+treated more restrictively for `external_llm`). A context left at `fake` over a real adapter
+would block every request in the deployed demo; a context claiming `external_llm` over
+`FakeProvider` would apply the external rules to a call that never leaves the process.
+
+Selecting the real adapter builds no SDK client and reads no credential at construction time —
+the client is created lazily at the first call — so an API with `ADG_PROVIDER=anthropic` and no
+key still starts and still serves `/health`, and fails closed only when a call is attempted.
+
 ### Behaviour with no credential
 
 Fail-closed, never silent substitution. With `ADG_PROVIDER=anthropic` and no credential, the

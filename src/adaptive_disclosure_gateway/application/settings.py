@@ -35,7 +35,7 @@ from pathlib import Path
 from adaptive_disclosure_gateway.application.service import DisclosureApplicationService
 from adaptive_disclosure_gateway.domain import GovernanceContext
 from adaptive_disclosure_gateway.policies import PolicyRepository
-from adaptive_disclosure_gateway.providers import FakeProvider
+from adaptive_disclosure_gateway.providers import build_provider_from_env
 
 # src/adaptive_disclosure_gateway/application/settings.py -> repo root is 3
 # parents up.
@@ -59,20 +59,37 @@ def examples_directory() -> Path:
     return Path(value) if value else DEFAULT_EXAMPLES_DIR
 
 
-def default_governance_context() -> GovernanceContext:
+def default_governance_context(*, provider_class: str) -> GovernanceContext:
     """The demo's default ``GovernanceContext``, env-overridable field by
-    field. ``provider_class`` is fixed at ``"fake"`` here because it must
-    match the default demo provider (``FakeProvider``) ``build_default_service``
-    below constructs -- a deployment that wires in a real provider must
-    inject its own service (and its own matching ``GovernanceContext``) via
-    ``create_app(service=...)``/``cli.main(service=...)`` rather than
-    relying on this default at all.
+    field except for ``provider_class``.
+
+    ``provider_class`` is a required keyword argument with no default, and
+    is deliberately NOT read from the environment. It must equal the
+    declared class of the ``Provider`` the service is actually constructed
+    with: ``providers.invoke_provider`` compares the two and refuses the
+    call on a mismatch (``ProviderClassMismatchError``), and policy itself
+    reads ``provider_class`` -- ``docs/hr-policy-matrix.md`` treats
+    ``employee_name`` more restrictively for ``external_llm`` precisely
+    because that call crosses the organizational boundary.
+
+    It used to be hardcoded to ``"fake"``, which meant a deployment wiring
+    in the real T22 adapter had to inject an entire custom service to avoid
+    blocking every request. Deriving it from the constructed provider (see
+    ``build_default_service``) removes that step and makes the two halves
+    impossible to configure apart: there is no environment variable that can
+    make the context disagree with the provider.
+
+    The domain/purpose/policy defaults stay HR: the shipped
+    ``examples_directory`` is the HR pilot corpus, and the Contracts demo
+    path never relies on them -- an uploaded document selects its governance
+    explicitly through ``application/presets.py`` (see
+    ``DisclosureApplicationService.build_document_request``).
     """
     return GovernanceContext(
         domain=os.getenv("ADG_DEFAULT_DOMAIN", "hr"),
         purpose=os.getenv("ADG_DEFAULT_PURPOSE", "team_summary"),
         policy_version=os.getenv("ADG_DEFAULT_POLICY_VERSION", "hr-v1"),
-        provider_class="fake",
+        provider_class=provider_class,
         requester_role=os.getenv("ADG_DEFAULT_REQUESTER_ROLE", "hr_analyst"),
         session_id=os.getenv("ADG_DEFAULT_SESSION_ID", "demo-session"),
     )
@@ -81,13 +98,28 @@ def default_governance_context() -> GovernanceContext:
 def build_default_service() -> DisclosureApplicationService:
     """The default demo service every adapter builds when no service is
     injected: the real policy repository and HR pilot examples from this
-    checkout, a deterministic ``FakeProvider`` (issue #29 requires this be
-    clearly labeled -- see ``ServiceHealth.deterministic_demo_mode``), and a
-    documented default ``GovernanceContext``.
+    checkout, the provider ``ADG_PROVIDER`` selects, and a default
+    ``GovernanceContext`` whose ``provider_class`` is derived from that
+    provider.
+
+    The provider comes from ``providers.build_provider_from_env`` -- the one
+    place provider selection lives (T22 / issue #30). It returns a
+    deterministic ``FakeProvider`` unless ``ADG_PROVIDER`` explicitly names
+    the real adapter (issue #29 requires the fake mode be clearly labeled --
+    see ``ServiceHealth.deterministic_demo_mode``), and raises on an
+    unrecognized value rather than falling back to ``FakeProvider``. This
+    function adds no fallback of its own: a misconfigured deployment fails
+    to start instead of quietly serving synthetic answers.
+
+    Selecting the real adapter builds no SDK client and reads no credential
+    here -- ``AnthropicProvider`` constructs its client lazily at the first
+    call, so an API without a key configured still starts and still serves
+    ``/health``, and fails closed only when a call is actually attempted.
     """
+    provider = build_provider_from_env()
     return DisclosureApplicationService(
         policy_repository=PolicyRepository.from_directory(policy_directory()),
-        provider=FakeProvider(),
-        default_context=default_governance_context(),
+        provider=provider,
+        default_context=default_governance_context(provider_class=provider.provider_class),
         examples_directory=examples_directory(),
     )

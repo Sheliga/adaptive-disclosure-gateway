@@ -26,12 +26,15 @@ input its own way).
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from pydantic import BaseModel, ConfigDict
 
 from adaptive_disclosure_gateway.application.contracts import (
     DisclosureStrategy,
     GovernanceOverrides,
 )
+from adaptive_disclosure_gateway.application.presets import DocumentAnalysisPreset
 from adaptive_disclosure_gateway.application.wire import (
     CONTRACT_VERSION,
     CategoryDisclosureSummaryModel,
@@ -60,6 +63,8 @@ __all__ = [
     "CompareResponse",
     "DisclosureRequestBody",
     "DisclosureSummaryModel",
+    "DocumentTypeModel",
+    "DocumentTypesResponse",
     "ErrorResponse",
     "ExampleSummaryModel",
     "ExamplesResponse",
@@ -112,9 +117,11 @@ class DisclosureRequestBody(BaseModel):
     ``POST /disclosure/execute``.
 
     ``file_content`` is the file's text content, already decoded by the
-    caller (the guided UI reads the file client-side) -- NOT a multipart
-    upload. See ``api/app.py``'s module docstring for why multipart/binary
-    upload is deliberately out of scope for this slice.
+    caller -- NOT a multipart upload, and it cannot carry a PDF or DOCX. A
+    structured document goes to ``POST /documents/preview``/
+    ``POST /documents/execute`` instead, which take multipart form data and
+    select governance through a server-validated preset rather than through
+    ``governance`` below.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -126,6 +133,48 @@ class DisclosureRequestBody(BaseModel):
     task: str | None = None
     strategy: DisclosureStrategy | None = None
     governance: GovernanceOverridesBody | None = None
+
+
+# --- document-upload vocabulary ---------------------------------------------
+
+
+class DocumentTypeModel(BaseModel):
+    """One entry of ``GET /documents/types``: the caller-facing vocabulary a
+    UI needs to build an upload form, and deliberately nothing else.
+
+    Carries the document-type token and its allowlisted analysis modes.
+    It does NOT carry ``domain``, ``policy_version`` or ``requester_role``:
+    those are what the server resolves *from* this token, and shipping them
+    to the browser would invite a client to send them back as if they were
+    its own decision -- the exact coupling ``application/presets.py`` exists
+    to remove. Human-readable labels for these tokens belong in the UI's own
+    copy layer, not in this contract.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    document_type: str
+    analysis_modes: list[str]
+    default_analysis_mode: str
+
+    @classmethod
+    def from_domain(cls, preset: DocumentAnalysisPreset) -> DocumentTypeModel:
+        return cls(
+            document_type=preset.document_type,
+            analysis_modes=list(preset.analysis_modes),
+            default_analysis_mode=preset.default_analysis_mode,
+        )
+
+
+class DocumentTypesResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: str = CONTRACT_VERSION
+    document_types: list[DocumentTypeModel]
+
+    @classmethod
+    def from_domain(cls, presets: Sequence[DocumentAnalysisPreset]) -> DocumentTypesResponse:
+        return cls(document_types=[DocumentTypeModel.from_domain(p) for p in presets])
 
 
 # --- error bodies ----------------------------------------------------------------

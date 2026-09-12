@@ -414,7 +414,7 @@ browser -> Next.js -> HTTP API -> Python application/core -> B0–B4 -> provider
 
 ### T20 / Issue #28 — application boundary + CLI/HTTP/MCP
 
-Status: **first vertical slice in review (PR open) / non-blocking for M3**.
+Status: **T20 demo integration: in validation** (PR open against `develop`). The earlier vertical slices (application boundary, HTTP API, CLI, comparison surface) are merged; the demo-integration slice described under *Demo-integration slice* below is the one under review.
 
 For the advisor demo, HTTP API is the first required adapter. CLI and MCP should share the same application service but do not need to block the first hosted URL.
 
@@ -448,13 +448,32 @@ This is an **explanatory surface, not an evaluation surface**: it never touches 
 | CLI | delivered |
 | MCP | pending |
 
+#### Demo-integration slice — in validation
+
+The gate Issue #41 calls *Gate A*: connect capabilities that already existed into one contract-analysis flow.
+
+```text
+multipart HTTP upload -> T12 normalized ingestion -> NormalizedContent
+  -> Contracts governance preset (domain=contracts, policy_version=contracts-v1)
+  -> B4 — Policy-governed preview -> explicit confirmation -> configured provider
+  -> local reconstruction
+```
+
+- `POST /documents/preview` and `POST /documents/execute` — `multipart/form-data` routes taking `file`, `task`, `document_type`, optional `analysis_mode` and optional `strategy`. PDF/DOCX/TXT/MD (and XLSX, which rides the same T12 path) reach the ingestion boundary as bytes; the response schemas are the existing `PreviewResponse`/`ExecuteResponse`, unchanged. `GET /documents/types` exposes the caller-facing vocabulary so a UI never hardcodes it.
+- `application/presets.py` — the server-owned allowlist that turns `(document_type, analysis_mode)` into a `GovernanceOverrides`. `document_type` is required on every upload, so an uploaded contract can never fall through to the deployer's HR default; an unregistered document type or an unlisted analysis mode is refused. A preset never sets `provider_class` or any lifecycle identifier.
+- `DisclosureApplicationService.build_document_request` — the one entry point an upload adapter uses; it has no `governance` parameter, so an adapter cannot supply a domain/policy version/purpose of its own. The service also takes an injectable `document_parser`, keeping the T12 adapter replaceable and the test suite offline.
+- `api/limits.py` — a pure ASGI request-body ceiling (`ADG_MAX_UPLOAD_BYTES`, default 8 MiB) enforced before any route or body parser runs, on both the declared `Content-Length` and the streamed byte count. It is deliberately below `ingestion.MAX_INPUT_BYTES` (10 MiB) so the HTTP boundary is the binding one for an upload.
+- `application/settings.build_default_service` — now builds the provider through `providers.build_provider_from_env`, and derives the default `GovernanceContext.provider_class` from that provider. `ADG_PROVIDER=anthropic` therefore works in a deployment without hand-injecting a custom service, with `provider_class = external_llm`; `FakeProvider` stays the default and an unrecognized value fails closed.
+
+Uploads stay ephemeral: bytes are read into memory, handed to ingestion and never written to disk.
+
 #### Deliberately still out
 
-MCP adapter, multipart/binary upload, execute-based/utility-aware B0–B4 comparison, real-provider mode (T22 / Issue #30), authentication and rate limiting.
+MCP adapter, execute-based/utility-aware B0–B4 comparison, image/OCR ingestion, authentication and rate limiting, generic provider/model selection.
 
 #### Scientific state unchanged
 
-This slice adds no treatment, policy, corpus, oracle or metric semantics. B0–B4, the frozen HR corpus, `hr-v1`/`hr-v2`/`hr-v3`, the M2 artifacts and every experimental metric are untouched; the application layer never reaches the oracle, and the T10 scoring modules are not imported by it.
+This slice adds no treatment, policy, corpus, oracle or metric semantics. B0–B4, the frozen HR corpus, `hr-v1`/`hr-v2`/`hr-v3`, `contracts-v1`, the M2 artifacts and every experimental metric are untouched; the application layer never reaches the oracle, and the T10 scoring modules are not imported by it. The demo-integration slice added no policy rule, no detector rule and no corpus material — its Contracts fixtures are the existing synthetic development fixtures under `tests/`, and nothing under `corpus/` was read or modified.
 
 ### T21 / Issue #29 — Next.js advisor-facing UI
 

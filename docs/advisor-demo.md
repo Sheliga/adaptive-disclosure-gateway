@@ -166,10 +166,50 @@ Upload is central to the advisor demo, not a deferred convenience.
 
 ### Supported path
 
-- direct text remains supported;
+Implemented by T20's demo-integration slice:
+
+```text
+browser -> multipart/form-data POST /documents/preview
+        -> DisclosureApplicationService.build_document_request
+        -> T12 ingestion adapter -> NormalizedContent -> existing core
+```
+
+- direct text remains supported through `POST /disclosure/*`;
 - `.txt` / `.md` may be normalized without Docling through the same application boundary;
-- PDF/DOCX/XLSX/image-oriented content uses the normalized ingestion boundary from T12 / Issue #9 when available;
-- Next.js must not depend directly on Docling-specific output structures.
+- PDF/DOCX (and XLSX, which rides the same path) go through the normalized ingestion boundary from T12 / Issue #9; image/OCR is deliberately deferred while PDF/DOCX work;
+- Next.js must not depend directly on Docling-specific output structures — it never sees one: the API returns the same `PreviewResponse`/`ExecuteResponse` schemas the text routes return.
+
+### Upload contract
+
+`POST /documents/preview` and `POST /documents/execute` take `multipart/form-data`:
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `file` | yes | the document bytes; the filename extension is the authoritative format key |
+| `task` | yes | the reviewer's natural-language question |
+| `document_type` | yes | `contract` or `hr_record`, from `GET /documents/types` |
+| `analysis_mode` | no | one of the document type's allowlisted modes; defaults to the first |
+| `strategy` | no | defaults to `recommended` (B4 — Policy-governed) |
+
+`GET /documents/types` returns the vocabulary so the UI hardcodes none of it. It deliberately does **not** return the domain, policy version or requester role each type resolves to: those are the server's decision, and shipping them to the browser would invite a client to send them back as its own.
+
+There is no single route that uploads and answers in one call. Upload + preview is one request, the confirmed execute is another, and the reviewer's confirmation happens between them. The cost is that a confirmed run uploads the file twice; the alternative — retaining the uploaded document server-side between the two calls — is exactly what the no-persistence rule below forbids.
+
+### Contracts governance
+
+An uploaded contract is never analysed under the server's HR defaults. `document_type=contract` resolves server-side to `domain=contracts`, `policy_version=contracts-v1`, `requester_role=contract_analyst` and one of three allowlisted purposes:
+
+| `analysis_mode` | Effect under `contracts-v1` |
+| --- | --- |
+| `contract_summary` (default) | least disclosing: `contract_value` and `penalty_amount` keep the `(remove, generalize)` action space |
+| `financial_audit` | unlocks `preserve` on `contract_value` only |
+| `compliance_review` | unlocks `preserve` on `penalty_amount` only |
+
+The frontend cannot invent policy semantics: it sends two opaque tokens, and anything outside the allowlist is refused rather than defaulted.
+
+### Request size
+
+`ADG_MAX_UPLOAD_BYTES` (default 8 MiB) bounds every request body at the HTTP accepting boundary, before any route or body parser runs — on the declared `Content-Length` and on the streamed byte count, so a client omitting the header cannot stream an unbounded body. It sits below the ingestion boundary's own 10 MiB ceiling so an oversized upload is refused before any parsing work begins. The rejection is a fixed 413 that echoes no part of the content.
 
 ### Upload UX
 
@@ -203,6 +243,8 @@ The primary flow should not require a reviewer to select provider/model.
 - FakeProvider is clearly identified as deterministic/reproducible demonstration mode;
 - T22 real-provider mode is preferred before broadly sharing the demo URL;
 - provider credentials never reach the browser.
+
+The deployed service selects its provider from `ADG_PROVIDER` (see [`provider-configuration.md`](provider-configuration.md)). `ADG_PROVIDER=anthropic` yields `provider_class = external_llm` on both the provider and the default `GovernanceContext`, so no custom service has to be injected; `FakeProvider` remains the default and an unrecognized value fails to start rather than falling back.
 
 ## Final application direction
 

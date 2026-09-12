@@ -154,7 +154,12 @@ from adaptive_disclosure_gateway.application.examples import (
     list_examples,
     load_example,
 )
-from adaptive_disclosure_gateway.application.ingestion import normalize_text, normalize_text_file
+from adaptive_disclosure_gateway.application.ingestion import (
+    DocumentParser,
+    normalize_text,
+    normalize_text_file,
+)
+from adaptive_disclosure_gateway.application.presets import resolve_governance_preset
 from adaptive_disclosure_gateway.application.requests import (
     ContentSourceError,
     MissingTaskError,
@@ -248,6 +253,7 @@ class DisclosureApplicationService:
         detector: Detector | None = None,
         default_context: GovernanceContext,
         examples_directory: str | Path | None = None,
+        document_parser: DocumentParser | None = None,
     ) -> None:
         self._policy_repository = policy_repository
         self._provider = provider
@@ -258,6 +264,12 @@ class DisclosureApplicationService:
         self._detector = detector
         self._default_context = default_context
         self._examples_directory = examples_directory
+        # The T12 ingestion parser adapter, injectable so the boundary stays
+        # replaceable (issue #9) and so the offline test suite can exercise
+        # the whole upload path without Docling's cached model artifacts.
+        # ``None`` means "let ingestion load its default Docling adapter
+        # lazily, only if a document format actually needs it".
+        self._document_parser = document_parser
 
     def _build_treatment(self, request: DisclosureApplicationRequest):
         treatment_code = resolve_treatment(request.strategy)
@@ -511,7 +523,9 @@ class DisclosureApplicationService:
                 raise ContentSourceError(
                     "the file content source requires both filename and file_bytes"
                 )
-            content = normalize_text_file(filename, file_bytes)
+            content = normalize_text_file(
+                filename, file_bytes, document_parser=self._document_parser
+            )
             if task is None:
                 raise MissingTaskError("no task supplied for a file content source")
             return DisclosureApplicationRequest(
@@ -525,4 +539,48 @@ class DisclosureApplicationService:
         resolved_overrides = apply_example_governance_defaults(example, overrides)
         return DisclosureApplicationRequest(
             content=content, task=resolved_task, strategy=strategy, governance=resolved_overrides
+        )
+
+    def build_document_request(
+        self,
+        *,
+        filename: str,
+        file_bytes: bytes,
+        task: str,
+        document_type: str,
+        analysis_mode: str | None = None,
+        strategy: DisclosureStrategy = DisclosureStrategy.RECOMMENDED,
+    ) -> DisclosureApplicationRequest:
+        """Build a request for an uploaded structured document under an
+        explicit, server-validated governance preset (T20 / issue #28's
+        demo-integration slice; issue #41 gate A).
+
+        This is the only entry point an upload adapter uses. It differs from
+        ``build_application_request`` in exactly one way, and that difference
+        is the point: governance is not a set of caller-supplied strings, it
+        is resolved from ``(document_type, analysis_mode)`` by
+        ``application/presets.py``'s server-owned allowlist. There is no
+        ``governance`` parameter here on purpose -- an upload adapter must
+        not be able to pass a ``domain``/``policy_version``/``purpose`` of
+        its own choosing, and ``document_type`` is required, so an uploaded
+        contract can never fall through to the deployer's HR default
+        (issue #41's blocker 4).
+
+        Normalization is delegated unchanged to ``build_application_request``
+        -> ``ingestion.normalize_text_file`` -> the T12 parser adapter. No
+        parsing, format detection or document logic is duplicated here, and
+        the caller's declared media type is deliberately NOT accepted: the
+        filename extension is the single authoritative dispatch key at the
+        T12 boundary (``ingestion._extension``), and letting a client-declared
+        MIME type influence parser selection would hand the client a
+        dispatch decision. An extension the boundary does not support fails
+        closed there with ``IngestionError``.
+        """
+        overrides = resolve_governance_preset(document_type, analysis_mode=analysis_mode)
+        return self.build_application_request(
+            filename=filename,
+            file_bytes=file_bytes,
+            task=task,
+            strategy=strategy,
+            governance=overrides,
         )
