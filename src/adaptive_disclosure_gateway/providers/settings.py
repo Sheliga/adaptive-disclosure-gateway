@@ -116,7 +116,6 @@ class AnthropicProviderConfig:
     """
 
     model_id: str = DEFAULT_ANTHROPIC_MODEL_ID
-    provider_class: str = "external_llm"
     max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS
     effort: str = DEFAULT_EFFORT
     thinking_mode: str = DEFAULT_THINKING_MODE
@@ -217,7 +216,6 @@ def anthropic_config_from_env() -> AnthropicProviderConfig:
     """
     return AnthropicProviderConfig(
         model_id=os.getenv("ADG_ANTHROPIC_MODEL_ID") or DEFAULT_ANTHROPIC_MODEL_ID,
-        provider_class=os.getenv("ADG_PROVIDER_CLASS") or "external_llm",
         max_output_tokens=_int_env("ADG_ANTHROPIC_MAX_OUTPUT_TOKENS", DEFAULT_MAX_OUTPUT_TOKENS),
         effort=os.getenv("ADG_ANTHROPIC_EFFORT") or DEFAULT_EFFORT,
         thinking_mode=os.getenv("ADG_ANTHROPIC_THINKING") or DEFAULT_THINKING_MODE,

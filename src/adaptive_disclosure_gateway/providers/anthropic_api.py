@@ -209,13 +209,34 @@ def _failure_reason(exc: BaseException) -> tuple[str, bool]:
 class AnthropicProvider:
     """Anthropic Messages API implementation of ``providers.base.Provider``.
 
-    ``provider_class`` defaults to ``"external_llm"`` -- the class every
-    corpus case's ``GovernanceContext`` already declares, and the value
-    ``invoke_provider``'s pre-flight check compares against. It is a plain
-    instance attribute (matching ``FakeProvider``'s class attribute in role)
-    so a contextual-matrix run can construct an adapter declaring
-    ``internal_llm`` without subclassing.
+    ``provider_class`` is fixed to ``"external_llm"`` -- a class attribute,
+    not something derived from configuration or the environment. This
+    adapter calls Anthropic's real, official external endpoint; that is a
+    fact about what the adapter *is*, not a label a caller or a deployment
+    can pick. ``provider_class`` is not arbitrary metadata: it feeds policy
+    (see ``docs/hr-policy-matrix.md``, where ``employee_name`` is treated
+    more restrictively under an external provider precisely because the
+    data crosses the organizational boundary). A configurable
+    ``provider_class`` on this adapter previously let ``ADG_PROVIDER_CLASS``
+    make it declare ``internal_llm`` while still transmitting to Anthropic,
+    which would make policy apply the more permissive internal rule to a
+    call that was, in fact, external -- a trust-boundary bug fixed here by
+    removing the configurability outright rather than by validating it.
+
+    This is deliberately unlike ``FakeProvider``, whose ``provider_class`` is
+    genuinely swapped per case by ``experiments.execution.execute_case`` to
+    stand in for whichever provider class an experimental comparison is
+    studying (including the B4 contextual matrix's own
+    ``external_llm``/``internal_llm`` comparison, see
+    ``experiments/contextual_matrix.py``). ``FakeProvider`` is an
+    experimental stand-in with no real transport behind it, so representing
+    a class it does not actually call is harmless. ``AnthropicProvider`` is a
+    concrete external boundary -- exercising a real, genuine evaluation of
+    the ``internal_llm`` condition requires a provider that actually sits
+    inside the organizational boundary, not this adapter relabeled.
     """
+
+    provider_class = "external_llm"
 
     def __init__(
         self,
@@ -225,7 +246,6 @@ class AnthropicProvider:
     ) -> None:
         self._config = config if config is not None else AnthropicProviderConfig()
         self._client = client
-        self.provider_class = self._config.provider_class
 
     def __repr__(self) -> str:
         """Explicit, credential-free repr.

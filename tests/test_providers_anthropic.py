@@ -148,6 +148,43 @@ def test_anthropic_provider_satisfies_the_same_provider_protocol_as_fake_provide
     assert provider.provider_class == "external_llm"
 
 
+# --- Trust boundary: provider_class is fixed, never configurable (review, round 2) ---
+#
+# AnthropicProvider calls Anthropic's real, official external endpoint. Its
+# provider_class must represent that fact unconditionally: provider_class is
+# not arbitrary metadata, it feeds policy (docs/hr-policy-matrix.md treats
+# employee_name more restrictively for external_llm precisely because the
+# call crosses the organizational boundary). Letting this adapter declare
+# internal_llm while still transmitting to Anthropic would make policy apply
+# the more permissive rule to a call that is, in fact, external.
+
+
+def test_anthropic_provider_config_no_longer_accepts_a_provider_class_argument():
+    # The fix removes the field outright rather than merely ignoring it --
+    # a caller attempting to set it must get an immediate, loud TypeError,
+    # not a silently-dropped keyword.
+    with pytest.raises(TypeError):
+        AnthropicProviderConfig(provider_class="internal_llm")
+
+
+def test_adg_provider_class_env_var_no_longer_reclassifies_the_adapter(monkeypatch):
+    # Round-2 review blocker: ADG_PROVIDER_CLASS=internal_llm used to make
+    # the real Anthropic adapter declare internal_llm while still calling
+    # the genuine external Anthropic endpoint underneath -- a trust-boundary
+    # lie that would let an internal_llm GovernanceContext's more permissive
+    # policy govern a call that actually left the organization.
+    from adaptive_disclosure_gateway.providers.settings import anthropic_config_from_env
+
+    monkeypatch.setenv("ADG_PROVIDER_CLASS", "internal_llm")
+
+    config = anthropic_config_from_env()
+    provider = AnthropicProvider(config, client=_FakeClient(_text_response()))
+
+    assert not hasattr(config, "provider_class")
+    assert provider.provider_class == "external_llm"
+    assert provider.configuration_record()["provider_class"] == "external_llm"
+
+
 # --- Request mapping --------------------------------------------------------
 
 

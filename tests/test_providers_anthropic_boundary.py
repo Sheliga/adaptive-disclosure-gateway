@@ -95,7 +95,9 @@ def _adapter(client: _RecordingClient) -> AnthropicProvider:
     return AnthropicProvider(AnthropicProviderConfig(), client=client)
 
 
-def _request(text: str, task: str = "summarize the team record") -> DisclosureRequest:
+def _request(
+    text: str, task: str = "summarize the team record", *, provider_class: str = "external_llm"
+) -> DisclosureRequest:
     return DisclosureRequest(
         text=text,
         task=task,
@@ -103,7 +105,7 @@ def _request(text: str, task: str = "summarize the team record") -> DisclosureRe
             domain="hr",
             purpose="team_summary",
             policy_version="hr-v1",
-            provider_class="external_llm",
+            provider_class=provider_class,
         ),
     )
 
@@ -416,15 +418,18 @@ def test_execute_case_keeps_the_previous_default_deadline_for_the_fake_provider_
 
 
 def test_a_provider_class_mismatch_still_blocks_the_real_adapter_before_any_call():
+    # Review, round 2: AnthropicProvider can no longer be reconfigured to
+    # declare internal_llm (see test_providers_anthropic.py) -- it is
+    # invariably external_llm. So the mismatch this test now exercises is a
+    # context that declares internal_llm against the adapter's fixed
+    # external_llm: invoke_provider must refuse before generate() runs.
     client = _RecordingClient()
-    provider = AnthropicProvider(
-        AnthropicProviderConfig(provider_class="internal_llm"), client=client
+    provider = _adapter(client)
+
+    result = run_disclosure_case(
+        StaticSanitizer(), _request(SENSITIVE_TEXT, provider_class="internal_llm"), provider
     )
 
-    result = run_disclosure_case(StaticSanitizer(), _request(SENSITIVE_TEXT), provider)
-
-    # The request's context declares external_llm; the adapter declares
-    # internal_llm. invoke_provider must refuse before generate() runs.
     assert result.provider_response is None
     assert result.audit.provider.called is False
     assert client.messages.calls == []

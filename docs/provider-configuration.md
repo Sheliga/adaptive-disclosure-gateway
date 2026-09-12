@@ -15,10 +15,45 @@ detected span, no policy set, no vault, no `GovernanceContext`.
 | Provider | `provider_class` | Default? | Network | Credential | Use |
 | --- | --- | --- | --- | --- | --- |
 | `FakeProvider` (`providers/fake.py`) | `fake` (overridden per case by the runner) | **yes** | none | none | TDD, CI, offline development, deterministic regression, the pilot/development corpora |
-| `AnthropicProvider` (`providers/anthropic_api.py`) | `external_llm` (configurable) | no — opt-in | Anthropic Messages API | `ANTHROPIC_API_KEY` | authoritative runs needing real task output, real token usage and real provider behaviour |
+| `AnthropicProvider` (`providers/anthropic_api.py`) | `external_llm` (fixed, not configurable) | no — opt-in | Anthropic Messages API | `ANTHROPIC_API_KEY` | authoritative runs needing real task output, real token usage and real provider behaviour |
 
 `FakeProvider` remains the default everywhere. Selecting the real provider is always an
 explicit act; nothing in this repository escalates to it automatically.
+
+### `provider_class` is a fixed fact about `AnthropicProvider`, not configuration
+
+`AnthropicProvider.provider_class` is invariably `"external_llm"` — a plain class attribute,
+never derived from `AnthropicProviderConfig` or from the environment. `provider_class` is not
+arbitrary metadata: it feeds policy (see `docs/hr-policy-matrix.md`, where `employee_name` is
+treated more restrictively under an external provider precisely because the data crosses the
+organizational boundary). A prior revision let `AnthropicProviderConfig.provider_class` be set
+from `ADG_PROVIDER_CLASS`, so `ADG_PROVIDER_CLASS=internal_llm` made this adapter declare
+`internal_llm` while still calling the genuine external Anthropic endpoint — letting policy
+apply the more permissive internal rule to a call that was, in fact, external. That
+configurability has been removed outright: `AnthropicProviderConfig` no longer accepts a
+`provider_class` argument at all, and `ADG_PROVIDER_CLASS` is no longer read anywhere in this
+adapter's configuration path.
+
+`invoke_provider`'s pre-flight check (`provider.provider_class == request.context.provider_class`)
+still runs unchanged. With `AnthropicProvider` fixed at `external_llm`, a case whose
+`GovernanceContext.provider_class` is `internal_llm` fails that check with
+`ProviderClassMismatchError` *before* any call is made — the call is refused, not silently
+permitted or reclassified.
+
+This does not change what the B4 contextual matrix's `provider_class` dimension studies
+(`experiments/contextual_matrix.py`'s `provider_class_employee_name` comparison, over
+`GovernanceContext.provider_class`, which stays `internal_llm` vs `external_llm` as
+documented in `docs/hr-policy-matrix.md`): that dimension is a property of the *request*
+policy evaluates, not of which real provider answers it. `FakeProvider` keeps its existing
+experimental flexibility — the runner sets its `provider_class` attribute per case
+(`experiments/execution.py`) so it can stand in for whichever class a comparison is studying,
+including `internal_llm`. That flexibility is intentionally not extended to
+`AnthropicProvider`: `FakeProvider` is an experimental stand-in with no real transport behind
+it, so representing a class it does not call is harmless, whereas `AnthropicProvider` is a
+concrete external boundary and must never claim to be a boundary it is not. A genuine
+evaluation of the `internal_llm` condition against a *real* provider requires a provider that
+actually runs inside the organizational trust boundary — no such provider exists in this
+codebase yet, and this fix does not add one.
 
 ## Enabling the real provider
 
@@ -71,8 +106,11 @@ With the extra not installed, the same thing happens with a different message.
 | `ADG_ANTHROPIC_THINKING` | `adaptive` | `adaptive` or `disabled` |
 | `ADG_ANTHROPIC_TIMEOUT_SECONDS` | `60` | native transport timeout on the SDK client |
 | `ADG_ANTHROPIC_BASE_URL` | — | **forbidden** — setting this raises `ProviderConfigurationError` (see below) |
-| `ADG_PROVIDER_CLASS` | `external_llm` | the class the adapter declares to policy |
 | `ADG_ANTHROPIC_API_KEY_ENV_VAR` | `ANTHROPIC_API_KEY` | the *name* of the credential variable |
+
+`provider_class` is deliberately absent from this table: it is fixed to `external_llm` on
+`AnthropicProvider` and is not configuration — see "`provider_class` is a fixed fact about
+`AnthropicProvider`, not configuration" above.
 
 `thinking_mode=disabled` combined with effort `xhigh`/`max` is rejected by the API; the
 configuration object refuses that combination at construction rather than letting it become
