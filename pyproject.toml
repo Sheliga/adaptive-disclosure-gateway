@@ -27,6 +27,15 @@ api = [
   "fastapi>=0.115,<1",
   "uvicorn>=0.30,<1",
 ]
+# T22 / issue #30 -- the real provider adapter. Deliberately optional, like
+# `documents`: the deterministic FakeProvider stays the default everywhere,
+# so the baseline dev/test/CI environment never needs this installed, and
+# `tests/test_providers_anthropic.py` exercises every adapter path offline
+# without it. Bounded pin: `anthropic` 1.x is built on httpx2 and a 2.x
+# would be a transport/API break, not a drop-in upgrade.
+anthropic = [
+  "anthropic>=1,<2",
+]
 dev = [
   "fastapi>=0.115,<1",
   "httpx>=0.27,<1",

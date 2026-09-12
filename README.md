@@ -12,7 +12,7 @@ The Python implementation also serves as the **reference application core for an
 
 **Milestone 1 and Milestone 2 are complete on `master`.** The project is now in post-pilot methodology freeze and confirmatory-readiness.
 
-See [`docs/implementation-status.md`](docs/implementation-status.md) for the live execution plan, [`docs/experimental-design.md`](docs/experimental-design.md) for the B0–B4 comparison design, [`docs/milestone-2-pilot.md`](docs/milestone-2-pilot.md) for the factual first-pilot record and [`docs/advisor-demo.md`](docs/advisor-demo.md) for the parallel application/demo track.
+See [`docs/implementation-status.md`](docs/implementation-status.md) for the live execution plan, [`docs/experimental-design.md`](docs/experimental-design.md) for the B0–B4 comparison design, [`docs/milestone-2-pilot.md`](docs/milestone-2-pilot.md) for the factual first-pilot record and [`docs/advisor-demo.md`](docs/advisor-demo.md) for the parallel application/demo track. Provider selection, the opt-in real-provider adapter and what each provider records are documented in [`docs/provider-configuration.md`](docs/provider-configuration.md).
 
 ## Current implementation status
 

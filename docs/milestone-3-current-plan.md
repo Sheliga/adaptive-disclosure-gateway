@@ -24,7 +24,14 @@ Completed gates:
 
 Active gate:
 
-- T22 / Issue #30 — real provider adapter.
+- T22 / Issue #30 — real provider adapter — **implemented; in validation in an open PR to
+  `develop`**. Anthropic Messages API adapter behind the unchanged `Provider` boundary, opt-in
+  via `ADG_PROVIDER=anthropic`, `FakeProvider` still the default everywhere. See
+  [`docs/provider-configuration.md`](provider-configuration.md) and the T22 section of
+  [`docs/implementation-status.md`](implementation-status.md). Two findings for the freeze
+  step: sampling parameters no longer exist on current models, so bit-exact decoding
+  determinism is not configurable and is recorded as such; and no cost/pricing accounting is
+  provided, so a real batch reports token usage and *cost unavailable*.
 
 Methodological follow-up before a real held-out confirmatory Contracts round:
 
@@ -77,7 +84,7 @@ Planning windows only; methodological integrity takes precedence over dates.
 | T12 normalized ingestion | 11 Sep | ✅ complete |
 | Issue #56 Contracts domain extensions | 12 Sep | ✅ complete ahead of target |
 | T24 Contracts v1 + oracle | 12 Sep | ✅ complete ahead of original 17–21 Sep window |
-| T22 real provider | 12–24 Sep | **active; current implementation gate** |
+| T22 real provider | 12–24 Sep | implementation complete; **in validation** |
 | protocol/scorer follow-up for date-aware utility | 13–24 Sep | next methodological gate; may run parallel to T22 |
 | new confirmatory-eligible Contracts corpus freeze | 22–27 Sep | only after revised methodology is frozen |
 | integration + frozen provider/config + next B0–B4 readiness | 25–29 Sep | future |
