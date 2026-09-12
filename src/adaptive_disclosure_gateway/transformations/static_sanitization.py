@@ -30,6 +30,19 @@ ACTIONS: dict[str, DisclosureAction] = {
     "salary": DisclosureAction.GENERALIZE,
     "department": DisclosureAction.PRESERVE,
     "medical_data": DisclosureAction.BLOCK_REQUEST,
+    # --- Contracts domain (Issue #56). Same rule as everything above: fixed,
+    # task- and policy-independent. Party and representative identities can
+    # only be REMOVE-d here, because B1 has no vault to make them reversible
+    # -- that is precisely the B1->B2 delta the experiment isolates, and for
+    # Contracts it is unusually visible: removing both party names leaves the
+    # roles standing but makes the two parties indistinguishable from each
+    # other, so "who owes what to whom" is lost at B1 and recovered at B2.
+    "party_name": DisclosureAction.REMOVE,
+    "representative_name": DisclosureAction.REMOVE,
+    "bank_account": DisclosureAction.BLOCK_REQUEST,
+    "contract_value": DisclosureAction.GENERALIZE,
+    "penalty_amount": DisclosureAction.GENERALIZE,
+    "deadline": DisclosureAction.GENERALIZE,
 }
 
 

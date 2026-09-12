@@ -200,13 +200,34 @@ scoring needs. That scope was split out to Issue #56 (Contracts domain extension
 
 #### Issue #56 — Contracts domain extensions
 
-Status: **active**, the current gate between T12 and T24.
+Status: **in validation** — implemented and under review in a PR to `develop`.
 
 Freezes the minimum development-time Contracts domain support needed before the T24 corpus is
-inspected at treatment-result level: party/role, obligation, deadline, penalty and amount
-categories/policies/generalization strategies, and any minimal reusable extensions they require.
-`NormalizedContent.text` remains canonical and parser behavior remains constant across B0–B4;
-Issue #56 does not create or freeze the Contracts v1 corpus itself — that remains T24.
+inspected at treatment-result level. `NormalizedContent.text` remains canonical and parser
+behavior remains constant across B0–B4; Issue #56 does not create or freeze the Contracts v1
+corpus itself — that remains T24.
+
+**Freeze artifact:** [`docs/contracts-policy-matrix.md`](contracts-policy-matrix.md), alongside
+`configs/policies/contracts-v1.yaml`. This follows the project's existing freeze pattern (a
+policy `version:` string plus a prose matrix), the same one `docs/hr-policy-matrix.md` uses for
+the HR pilot. It is authoritative for the frozen Contracts category set, detector behaviour,
+policy actions, B3 action spaces, generalization strategies, relation semantics and the known
+limitations T24 must build its corpus around.
+
+Frozen category set (eight, of which `cnpj` and `cpf` were reused unchanged): `party_name`,
+`representative_name`, `cnpj`, `cpf`, `bank_account`, `contract_value`, `penalty_amount`,
+`deadline`. `obligation` and `confidential_clause` were deliberately dropped rather than
+implemented — see the matrix for why. Obligation *assignment* is preserved structurally by the
+detector's role-in-label / identity-in-value split plus the vault's per-value pseudonym
+stability; no relation model was added.
+
+Also fixed here: every policy model now rejects unknown keys, so an unimplemented governance
+knob can no longer be silently dropped from a policy YAML (it fails the document closed
+instead).
+
+**Known non-semantic T24 change:** `corpus/models.py` still hardcodes an HR-only category
+`Literal`, so a Contracts corpus cannot yet be expressed. That is corpus schema work owned by
+T24 / Issue #37, not treatment semantics, and is deliberately not implemented by Issue #56.
 
 #### T24 / Issue #37 — Contracts v1 validation corpus
 
@@ -480,6 +501,8 @@ This ordering is internal to the demo track and does not reorder the scientific 
 - Experimental design: `docs/experimental-design.md`
 - M2 pilot record: `docs/milestone-2-pilot.md`
 - Advisor demo plan: `docs/advisor-demo.md`
+- Contracts domain freeze: `docs/contracts-policy-matrix.md`
+- HR policy matrix: `docs/hr-policy-matrix.md`
 - ADR 0001: `docs/adr/0001-milestone-1-architecture.md`
 - M2 tracker: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/32
 - T23 methodology freeze: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/36

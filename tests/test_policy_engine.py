@@ -115,3 +115,87 @@ def test_reconstruction_is_blocked_on_domain_mismatch():
     )
 
     assert resolved is False
+
+
+# --- Unknown policy keys must fail closed, never be silently dropped -------
+#
+# Issue #56 found `configs/policies/contracts-v1.yaml` shipping a top-level
+# `semantic_constraints:` block (`preserve_party_roles`,
+# `preserve_obligation_assignment`) that `PolicyDocument` never declared.
+# Pydantic's default `extra` behaviour dropped it silently, so the YAML read
+# as if two governance guarantees were enforced while nothing in the engine
+# had ever heard of them. That is the fail-OPEN direction: a governance knob
+# that looks enforced and is ignored is strictly worse than one that is
+# absent, because a reviewer reading the config concludes the wrong thing.
+#
+# The fix is structural rather than a one-off YAML cleanup: the model
+# rejects unknown keys, so `from_directory` records a load error, and every
+# request under that version resolves to BLOCK_REQUEST (the loader treats an
+# unloadable document as a missing policy). Fail-closed, and impossible to
+# reintroduce by adding another undeclared key later.
+
+
+def _write_policy(tmp_path: Path, body: str) -> PolicyRepository:
+    (tmp_path / "probe-v1.yaml").write_text(body, encoding="utf-8")
+    return PolicyRepository.from_directory(tmp_path)
+
+
+def test_unknown_top_level_policy_key_fails_to_load_instead_of_being_silently_dropped(tmp_path):
+    repository = _write_policy(
+        tmp_path,
+        "version: probe-v1\n"
+        "domain: probe\n"
+        "rules:\n"
+        "  some_category:\n"
+        "    default: preserve\n"
+        "semantic_constraints:\n"
+        "  preserve_party_roles: true\n",
+    )
+
+    assert "probe-v1.yaml" in repository.load_errors
+
+    decision = repository.decide(
+        _context(domain="probe", policy_version="probe-v1"), "some_category"
+    )
+    assert decision.action is DisclosureAction.BLOCK_REQUEST
+
+
+def test_unknown_rule_level_policy_key_fails_to_load(tmp_path):
+    repository = _write_policy(
+        tmp_path,
+        "version: probe-v1\n"
+        "domain: probe\n"
+        "rules:\n"
+        "  some_category:\n"
+        "    default: preserve\n"
+        "    allowed_action: [preserve]\n",
+    )
+
+    assert "probe-v1.yaml" in repository.load_errors
+
+
+def test_unknown_override_and_scope_keys_fail_to_load(tmp_path):
+    repository = _write_policy(
+        tmp_path,
+        "version: probe-v1\n"
+        "domain: probe\n"
+        "pseudonym_scope:\n"
+        "  default: session\n"
+        "  role_maximum:\n"
+        "    probe_viewer: request\n"
+        "rules:\n"
+        "  some_category:\n"
+        "    default: preserve\n",
+    )
+
+    assert "probe-v1.yaml" in repository.load_errors
+
+
+def test_every_shipped_policy_document_still_loads_under_the_stricter_model():
+    # The other half of the invariant above: forbidding unknown keys turns a
+    # typo in any shipped YAML into "policy missing" for every request under
+    # that version. That is the right posture, but it must be visible here
+    # rather than discovered as an unexplained BLOCK_REQUEST at runtime.
+    repository = PolicyRepository.from_directory(POLICY_DIR)
+
+    assert repository.load_errors == {}
