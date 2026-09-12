@@ -1,0 +1,119 @@
+{
+  "b3_to_b4": {
+    "cases": [
+      {
+        "case_id": "contracts_deadline_tracking_001",
+        "exposure_direction": "b4_more",
+        "hard_block_by_b4_not_b3": false,
+        "impossible_under_policy": false,
+        "policy_restricted": false,
+        "same_action_profile": false,
+        "utility_direction": "same"
+      },
+      {
+        "case_id": "contracts_deadline_tracking_002",
+        "exposure_direction": "b4_more",
+        "hard_block_by_b4_not_b3": false,
+        "impossible_under_policy": false,
+        "policy_restricted": false,
+        "same_action_profile": false,
+        "utility_direction": "same"
+      },
+      {
+        "case_id": "contracts_obligation_relation_001",
+        "exposure_direction": "b4_more",
+        "hard_block_by_b4_not_b3": false,
+        "impossible_under_policy": false,
+        "policy_restricted": false,
+        "same_action_profile": false,
+        "utility_direction": "same"
+      },
+      {
+        "case_id": "contracts_obligation_relation_002",
+        "exposure_direction": "b4_more",
+        "hard_block_by_b4_not_b3": false,
+        "impossible_under_policy": false,
+        "policy_restricted": false,
+        "same_action_profile": false,
+        "utility_direction": "same"
+      },
+      {
+        "case_id": "contracts_payment_block_001",
+        "exposure_direction": "incomparable",
+        "hard_block_by_b4_not_b3": false,
+        "impossible_under_policy": false,
+        "policy_restricted": false,
+        "same_action_profile": true,
+        "utility_direction": "incomparable"
+      },
+      {
+        "case_id": "contracts_payment_block_002",
+        "exposure_direction": "incomparable",
+        "hard_block_by_b4_not_b3": false,
+        "impossible_under_policy": false,
+        "policy_restricted": false,
+        "same_action_profile": true,
+        "utility_direction": "incomparable"
+      },
+      {
+        "case_id": "contracts_penalty_review_001",
+        "exposure_direction": "b4_more",
+        "hard_block_by_b4_not_b3": false,
+        "impossible_under_policy": false,
+        "policy_restricted": false,
+        "same_action_profile": false,
+        "utility_direction": "same"
+      },
+      {
+        "case_id": "contracts_penalty_review_002",
+        "exposure_direction": "b4_more",
+        "hard_block_by_b4_not_b3": false,
+        "impossible_under_policy": false,
+        "policy_restricted": false,
+        "same_action_profile": false,
+        "utility_direction": "same"
+      },
+      {
+        "case_id": "contracts_summary_001",
+        "exposure_direction": "b4_more",
+        "hard_block_by_b4_not_b3": false,
+        "impossible_under_policy": false,
+        "policy_restricted": false,
+        "same_action_profile": false,
+        "utility_direction": "same"
+      },
+      {
+        "case_id": "contracts_summary_002",
+        "exposure_direction": "b4_more",
+        "hard_block_by_b4_not_b3": false,
+        "impossible_under_policy": false,
+        "policy_restricted": false,
+        "same_action_profile": false,
+        "utility_direction": "same"
+      },
+      {
+        "case_id": "contracts_value_audit_001",
+        "exposure_direction": "b4_more",
+        "hard_block_by_b4_not_b3": false,
+        "impossible_under_policy": false,
+        "policy_restricted": false,
+        "same_action_profile": false,
+        "utility_direction": "same"
+      },
+      {
+        "case_id": "contracts_value_audit_002",
+        "exposure_direction": "b4_more",
+        "hard_block_by_b4_not_b3": false,
+        "impossible_under_policy": true,
+        "policy_restricted": true,
+        "same_action_profile": false,
+        "utility_direction": "same"
+      }
+    ],
+    "hard_block_count": 0,
+    "impossible_under_policy_count": 1,
+    "policy_restricted_count": 1,
+    "same_action_profile_count": 2
+  },
+  "experiment_run_id": "954ffae9f6e143d6af45e4842f6daef9"
+}

@@ -1,0 +1,83 @@
+input:
+  sample_id: contracts_penalty_review_001
+  task_family: penalty_compliance_review
+  text: |
+    CONTRACT
+    Contracting party: Barlavento Agroindustrial SA
+    CNPJ: 77.888.999/0001-00
+    Contracted party: Nortada Engenharia Ltda
+    Contract value: R$ 3100000.00
+    Penalty: R$ 12500.00
+    Deadline: 2026-05-29
+    Maximum penalty permitted by the compliance standard: R$ 12500.00
+  task: >-
+    For a compliance review, confirm whether the exact penalty amount in
+    this agreement is within the maximum penalty permitted by the
+    compliance standard. The contract value, the parties and the delivery
+    deadline are not required.
+  domain: contracts
+  purpose: compliance_review
+  requester_role: compliance_officer
+  policy_version: contracts-v1
+
+oracle:
+  sample_id: contracts_penalty_review_001
+  # The discrimination `contract_value` and `penalty_amount` exist as two
+  # separate categories to make possible: this task needs the penalty regime
+  # exactly, and `contracts-v1` lets `compliance_review` preserve it --
+  # while the contract value stays governed by its own rule and is not
+  # unlocked by the same purpose. With one merged monetary category the
+  # penalty could not be served without also disclosing what the contract is
+  # worth.
+  expected_spans:
+    - category: party_name
+      value: 'Barlavento Agroindustrial SA'
+      start: 28
+      end: 56
+      task_necessity: not_required
+      expected_actions: [remove, pseudonymize]
+    - category: cnpj
+      value: '77.888.999/0001-00'
+      start: 63
+      end: 81
+      task_necessity: not_required
+      expected_actions: [remove]
+    - category: party_name
+      value: 'Nortada Engenharia Ltda'
+      start: 100
+      end: 123
+      task_necessity: not_required
+      expected_actions: [remove, pseudonymize]
+    - category: contract_value
+      value: 'R$ 3100000.00'
+      start: 140
+      end: 153
+      task_necessity: not_required
+      expected_actions: [remove, generalize]
+    # With band_width=5000, R$ 12500.00 bins to R$ 10000-15000, a band that
+    # CONTAINS the R$ 12500.00 permitted maximum, so a generalized value
+    # cannot decide whether the penalty is within it. PRESERVE is the only
+    # action that carries the answer, and `compliance_review` is exactly the
+    # purpose `contracts-v1` authorizes it under.
+    - category: penalty_amount
+      value: 'R$ 12500.00'
+      start: 163
+      end: 174
+      task_necessity: required
+      expected_actions: [preserve]
+    - category: deadline
+      value: '2026-05-29'
+      start: 185
+      end: 195
+      task_necessity: not_required
+      expected_actions: [remove, generalize]
+  expected_block_request: false
+  expected_answer: >-
+    The response states that the penalty amount (R$ 12500.00) is exactly
+    at, and therefore within, the maximum penalty permitted by the
+    compliance standard (R$ 12500.00), and does not disclose the contract
+    value.
+  answer_depends_on_categories: [penalty_amount]
+  reconstruction:
+    - category: party_name
+      expected_reconstructable: true

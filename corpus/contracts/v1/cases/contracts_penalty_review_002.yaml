@@ -1,0 +1,78 @@
+input:
+  sample_id: contracts_penalty_review_002
+  task_family: penalty_compliance_review
+  text: |
+    CONTRACT
+    Contracting party: Solano Distribuicao Ltda
+    CNPJ: 88.999.111/0001-22
+    Contracted party: Ribalta Servicos Graficos SA
+    Contract value: R$ 760000.00
+    Penalty: R$ 34000.00
+    Deadline: 2026-08-14
+    Penalty escalation trigger for this contract class: R$ 20000.00
+  task: >-
+    Report whether the penalty amount in this agreement is above the
+    penalty escalation trigger stated for its contract class. The contract
+    value is not needed and neither company may be identified.
+  domain: contracts
+  purpose: contract_summary
+  requester_role: contract_manager
+  policy_version: contracts-v1
+
+oracle:
+  sample_id: contracts_penalty_review_002
+  # The same question as contracts_penalty_review_001 under a purpose that
+  # does not authorize PRESERVE -- and, unlike contracts_value_audit_002,
+  # one where B3 and B4 are expected to agree, because the task states no
+  # exactness cue. A case set in which policy always restricts something
+  # would not show that governance is selective.
+  expected_spans:
+    - category: party_name
+      value: 'Solano Distribuicao Ltda'
+      start: 28
+      end: 52
+      task_necessity: not_required
+      expected_actions: [remove, pseudonymize]
+    - category: cnpj
+      value: '88.999.111/0001-22'
+      start: 59
+      end: 77
+      task_necessity: not_required
+      expected_actions: [remove]
+    - category: party_name
+      value: 'Ribalta Servicos Graficos SA'
+      start: 96
+      end: 124
+      task_necessity: not_required
+      expected_actions: [remove, pseudonymize]
+    - category: contract_value
+      value: 'R$ 760000.00'
+      start: 141
+      end: 153
+      task_necessity: not_required
+      expected_actions: [remove, generalize]
+    # R$ 34000.00 bins to R$ 30000-35000, entirely above the R$ 20000.00
+    # escalation trigger, so the band decides the question and the exact
+    # figure is not needed.
+    - category: penalty_amount
+      value: 'R$ 34000.00'
+      start: 163
+      end: 174
+      task_necessity: required
+      expected_actions: [generalize]
+    - category: deadline
+      value: '2026-08-14'
+      start: 185
+      end: 195
+      task_necessity: not_required
+      expected_actions: [remove, generalize]
+  expected_block_request: false
+  expected_answer: >-
+    The response states that the penalty amount (R$ 34000.00) is above the
+    penalty escalation trigger stated for this contract class (R$
+    20000.00), without disclosing the contract value or naming either
+    company.
+  answer_depends_on_categories: [penalty_amount]
+  reconstruction:
+    - category: party_name
+      expected_reconstructable: true

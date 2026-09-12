@@ -14,8 +14,9 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from adaptive_disclosure_gateway.corpus.models import (
+    CorpusCategory,
     ExpectedSpan,
-    HrCategory,
+    ObligationRelation,
     ReconstructionExpectation,
 )
 from adaptive_disclosure_gateway.domain import DisclosureAction
@@ -52,7 +53,14 @@ class CaseOracle(BaseModel):
     expected_block_request: bool
     expected_answer: str | None = None
     reconstruction: list[ReconstructionExpectation] = Field(default_factory=list)
-    answer_depends_on_categories: list[HrCategory] | None = None
+    answer_depends_on_categories: list[CorpusCategory] | None = None
+    # T24 / issue #37: the relation half of the oracle -- "who owes what to
+    # whom", in role terms only (see ObligationRelation's own docstring).
+    # Defaults to empty, so every frozen corpus/hr/v1 case file stays valid
+    # byte-for-byte without stating it. Must be empty for a blocked case: a
+    # blocked request discloses nothing at all, so no relation could have
+    # survived or been lost through a payload that was never produced.
+    obligation_relations: list[ObligationRelation] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _check_block_consistency(self) -> CaseOracle:
@@ -75,6 +83,13 @@ class CaseOracle(BaseModel):
                     "oracle.expected_block_request is true -- a blocked "
                     "request never produces an answer for anything to "
                     "depend on"
+                )
+            if self.obligation_relations:
+                raise ValueError(
+                    "oracle.obligation_relations must be empty when "
+                    "oracle.expected_block_request is true -- a blocked "
+                    "request produces no payload for a relation to survive "
+                    "in or be lost from"
                 )
             if not any(
                 DisclosureAction.BLOCK_REQUEST in span.expected_actions

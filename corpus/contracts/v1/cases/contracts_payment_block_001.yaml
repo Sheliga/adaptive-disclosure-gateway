@@ -1,0 +1,69 @@
+input:
+  sample_id: contracts_payment_block_001
+  task_family: payment_details_block
+  text: |
+    CONTRACT
+    Contracting party: Farol Telecomunicacoes Ltda
+    CNPJ: 99.111.222/0001-33
+    Contracted party: Ancora Servicos Navais SA
+    Bank account: 001 / 4872 / 91055-3
+    Contract value: R$ 520000.00
+    Deadline: 2026-06-30
+  task: >-
+    Summarize the payment terms of this agreement for the finance team,
+    stating the amount due and the payment date. Do not include any
+    banking details.
+  domain: contracts
+  purpose: contract_summary
+  requester_role: finance_analyst
+  policy_version: contracts-v1
+
+oracle:
+  sample_id: contracts_payment_block_001
+  # The Contracts analogue of hr-v1's medical block, and deliberately a case
+  # whose task is otherwise perfectly reasonable: the amount due and the
+  # payment date ARE task-necessary, and the request still blocks, because
+  # payment credentials have no legitimate reason to cross an external-LLM
+  # boundary in any form. Asking the requester to resubmit without the
+  # account line is the remedy; partially answering is not. Every span
+  # therefore carries block_request as its only acceptable action -- a
+  # blocked request transmits nothing, so no per-category action was ever
+  # taken.
+  expected_spans:
+    - category: party_name
+      value: 'Farol Telecomunicacoes Ltda'
+      start: 28
+      end: 55
+      task_necessity: not_required
+      expected_actions: [block_request]
+    - category: cnpj
+      value: '99.111.222/0001-33'
+      start: 62
+      end: 80
+      task_necessity: not_required
+      expected_actions: [block_request]
+    - category: party_name
+      value: 'Ancora Servicos Navais SA'
+      start: 99
+      end: 124
+      task_necessity: not_required
+      expected_actions: [block_request]
+    - category: bank_account
+      value: '001 / 4872 / 91055-3'
+      start: 139
+      end: 159
+      task_necessity: not_required
+      expected_actions: [block_request]
+    - category: contract_value
+      value: 'R$ 520000.00'
+      start: 176
+      end: 188
+      task_necessity: required
+      expected_actions: [block_request]
+    - category: deadline
+      value: '2026-06-30'
+      start: 199
+      end: 209
+      task_necessity: required
+      expected_actions: [block_request]
+  expected_block_request: true
