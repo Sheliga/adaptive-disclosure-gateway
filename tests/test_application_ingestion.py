@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from adaptive_disclosure_gateway.application.ingestion import (
+    DoclingDocumentParser,
     DocumentParser,
     IngestionError,
     NormalizedBlock,
@@ -299,6 +300,116 @@ def test_normalize_text_file_rejects_parser_output_above_normalized_character_li
     assert "5 characters" in message
     assert "abcdef" not in message
     assert parser.calls == [("uploaded.pdf", b"%PDF")]
+
+
+# --- PR #55 review: limits must be enforced before the expensive work they
+# bound, not just before the result reaches the caller. -----------------------
+
+
+def test_normalize_text_rejects_oversized_input_before_strip_or_encode(monkeypatch):
+    """The character ceiling must be checked before ``strip()``/``encode()``
+    run on direct text, so an arbitrarily large input is rejected via a
+    cheap ``len()`` check rather than being fully scanned and copied first.
+    """
+    monkeypatch.setattr(
+        "adaptive_disclosure_gateway.application.ingestion.MAX_NORMALIZED_CHARACTERS", 10
+    )
+
+    class ExplodingStr(str):
+        def strip(self, *args, **kwargs):
+            raise AssertionError("strip() must not run before the character ceiling check")
+
+        def encode(self, *args, **kwargs):
+            raise AssertionError("encode() must not run before the character ceiling check")
+
+    oversized = ExplodingStr("x" * 11)
+
+    with pytest.raises(IngestionError) as excinfo:
+        normalize_text(oversized)
+
+    message = str(excinfo.value)
+    assert "11 characters" in message
+    assert "10 characters" in message
+    assert "x" * 11 not in message
+
+
+def _fake_docling_parser(markdown: str) -> DoclingDocumentParser:
+    """Build a ``DoclingDocumentParser`` without importing/installing docling,
+    by bypassing ``__init__`` and injecting fakes for the two collaborators
+    ``parse()`` touches.
+    """
+
+    class FakeDocument:
+        def export_to_markdown(self) -> str:
+            return markdown
+
+    class FakeConversionResult:
+        document = FakeDocument()
+
+    class FakeConverter:
+        def convert(self, stream, *, raises_on_error: bool) -> FakeConversionResult:
+            return FakeConversionResult()
+
+    parser = object.__new__(DoclingDocumentParser)
+    parser._document_stream_type = lambda *, name, stream: (name, stream)
+    parser._converter = FakeConverter()
+    return parser
+
+
+def test_docling_parser_skips_block_derivation_for_oversized_export(monkeypatch):
+    monkeypatch.setattr(
+        "adaptive_disclosure_gateway.application.ingestion.MAX_NORMALIZED_CHARACTERS", 5
+    )
+
+    def exploding_blocks_from_markdown(text):
+        raise AssertionError("_blocks_from_markdown must not run for oversized exports")
+
+    monkeypatch.setattr(
+        "adaptive_disclosure_gateway.application.ingestion._blocks_from_markdown",
+        exploding_blocks_from_markdown,
+    )
+    oversized_markdown = "# Heading\nmore than five characters of exported text\n"
+    parser = _fake_docling_parser(oversized_markdown)
+
+    result = parser.parse(safe_name="uploaded.pdf", data=b"%PDF")
+
+    assert result.blocks == ()
+    assert result.text == oversized_markdown
+
+
+def test_normalize_text_file_rejects_oversized_docling_export_without_deriving_blocks(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "adaptive_disclosure_gateway.application.ingestion.MAX_NORMALIZED_CHARACTERS", 5
+    )
+
+    def exploding_blocks_from_markdown(text):
+        raise AssertionError("_blocks_from_markdown must not run for oversized exports")
+
+    monkeypatch.setattr(
+        "adaptive_disclosure_gateway.application.ingestion._blocks_from_markdown",
+        exploding_blocks_from_markdown,
+    )
+    oversized_markdown = "# Heading\nmore than five characters of exported text\n"
+    parser = _fake_docling_parser(oversized_markdown)
+
+    with pytest.raises(IngestionError) as excinfo:
+        normalize_text_file("contract.pdf", b"%PDF", document_parser=parser)
+
+    assert "characters" in str(excinfo.value)
+
+
+def test_docling_parser_derives_blocks_for_normal_sized_export():
+    markdown = "# Services\n\n| Party | Role |\n| --- | --- |\n| ACME | vendor |\n"
+    parser = _fake_docling_parser(markdown)
+
+    result = parser.parse(safe_name="uploaded.pdf", data=b"%PDF")
+
+    assert result.text == markdown
+    assert result.blocks != ()
+    assert any(block.kind == "heading" for block in result.blocks)
+    assert any(block.kind == "table" for block in result.blocks)
 
 
 # --- No-leak invariant: an undecodable file must never let the raw bytes,

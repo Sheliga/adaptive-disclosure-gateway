@@ -175,6 +175,17 @@ class DoclingDocumentParser:
         stream = self._document_stream_type(name=safe_name, stream=BytesIO(data))
         result = self._converter.convert(stream, raises_on_error=True)
         text = result.document.export_to_markdown()
+        if _exceeds_normalized_character_limit(len(text)):
+            # Text already destined for the boundary's categorized
+            # character-limit rejection (`_normalize_document_file`) is
+            # returned as-is without deriving structural blocks from it --
+            # otherwise an oversized export would be duplicated/walked by
+            # `_blocks_from_markdown` before the ceiling ever rejects it
+            # (PR #55 review). Raising here instead would defeat
+            # `_normalize_document_file`'s exception sanitization, which
+            # deliberately collapses every parser-originated exception into
+            # a generic "could not be parsed" message.
+            return ParsedDocument(text=text, blocks=())
         return ParsedDocument(text=text, blocks=_blocks_from_markdown(text))
 
 
@@ -296,8 +307,15 @@ def _enforce_input_byte_limit(*, source_kind: str, byte_count: int) -> None:
         )
 
 
+def _exceeds_normalized_character_limit(character_count: int) -> bool:
+    # Reads the module-level constant at call time (rather than capturing it
+    # as a default argument) so tests that monkeypatch
+    # MAX_NORMALIZED_CHARACTERS keep working.
+    return character_count > MAX_NORMALIZED_CHARACTERS
+
+
 def _enforce_normalized_character_limit(*, source_kind: str, character_count: int) -> None:
-    if character_count > MAX_NORMALIZED_CHARACTERS:
+    if _exceeds_normalized_character_limit(character_count):
         raise IngestionError(
             f"{source_kind} normalized text is {character_count} characters; "
             f"limit is {MAX_NORMALIZED_CHARACTERS} characters"
@@ -309,12 +327,20 @@ def normalize_text(text: str) -> NormalizedContent:
     input with ``IngestionError`` -- there is nothing for the pipeline to
     run detection over otherwise.
     """
+    # The character ceiling is checked first, against `len(text)` alone, so
+    # an oversized input is rejected with no scan and no copy: `strip()` and
+    # `encode()` below only ever run on text already known to be within
+    # bounds (PR #55 review: limits must be enforced before the expensive
+    # work they are meant to bound).
+    _enforce_normalized_character_limit(source_kind="direct text", character_count=len(text))
+
     if not text.strip():
         raise IngestionError("direct text input is empty or whitespace-only")
 
+    # The byte limit stays a real UTF-8 byte count (not len(text)) because
+    # that is the contractual/scientific definition of the input size limit.
     encoded = text.encode("utf-8")
     _enforce_input_byte_limit(source_kind="direct text", byte_count=len(encoded))
-    _enforce_normalized_character_limit(source_kind="direct text", character_count=len(text))
     return NormalizedContent(
         text=text,
         source_kind="direct_text",
