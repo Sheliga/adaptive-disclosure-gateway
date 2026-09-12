@@ -3,10 +3,12 @@
 issue #28, slice 1).
 
 ``DisclosureApplicationService`` calls the real core -- ``pipeline.decide_disclosure``
-for ``preview``, ``pipeline.run_disclosure_case`` for ``execute`` -- and
-never reimplements detection, treatment decisions, policy resolution, task
-analysis, pseudonymization, generalization, reconstruction or the
-fail-closed task check.
+for ``preview``, ``pipeline.run_disclosure_case`` for ``execute``, and
+``pipeline.decide_disclosure`` + ``pipeline.execute_disclosure_decision`` for
+the confirmed document flow -- and never reimplements detection, treatment
+decisions, policy resolution, task analysis, pseudonymization,
+generalization, reconstruction, provider invocation, audit construction or
+the fail-closed task check.
 
 Design decision -- where ``build_treatment`` lives: this service needs to
 construct a treatment object from a resolved ``Treatment``, exactly like
@@ -53,6 +55,17 @@ decision phase therefore runs exactly once per ``execute()`` call, pinned by
 ``tests/test_application_service.py::test_execute_runs_the_decision_phase_exactly_once``.
 ``preview`` calls ``decide_disclosure`` directly for the same reason in
 reverse: it must run that phase and nothing after it.
+
+``execute_document`` states the same property in its strongest form, because
+the structured-document surface's whole guarantee depends on it: it computes
+the decision **exactly once**, verifies the preview confirmation against that
+exact decision, and hands that same ``DisclosureDecision`` to
+``pipeline.execute_disclosure_decision``. The payload the token authenticates
+and the payload the provider receives are therefore one object rather than
+two objects expected to agree -- an expectation that would have rested on
+``Detector``/``TaskAnalyzer``, both replaceable injections, happening to be
+deterministic. See that method's own docstring and
+``tests/test_application_document_presets.py``'s stateful-component tests.
 
 ``build_application_request``/``describe_health``/``list_strategies`` (T20 /
 issue #28, slice 2): three small additions for the forthcoming HTTP adapter
@@ -183,8 +196,10 @@ from adaptive_disclosure_gateway.domain import DisclosureRequest, GovernanceCont
 from adaptive_disclosure_gateway.observability import elapsed_ms_since, get_tracer
 from adaptive_disclosure_gateway.pipeline import (
     DisclosureDecision,
+    ExecutionResult,
     UnsafeControlTreatment,
     decide_disclosure,
+    execute_disclosure_decision,
     run_disclosure_case,
 )
 from adaptive_disclosure_gateway.policies import PolicyRepository
@@ -328,7 +343,9 @@ class DisclosureApplicationService:
             disclosure_request, context = self._build_disclosure_request(request)
 
             decision = decide_disclosure(treatment, disclosure_request, detector=self._detector)
-            summary = build_disclosure_summary(decision)
+            preview = self._preview_of(
+                request, treatment_code=treatment_code, context=context, decision=decision
+            )
 
             # Metadata only -- status, treatment code, counts, category
             # names (safe, non-sensitive -- already used the same way by
@@ -336,18 +353,38 @@ class DisclosureApplicationService:
             span.set_attribute("application.status", decision.result.status)
             span.set_attribute("application.treatment", treatment_code.value)
             span.set_attribute("application.detected_span_count", len(decision.spans))
-            span.set_attribute("application.detected_categories", list(summary.detected_categories))
+            span.set_attribute(
+                "application.detected_categories", list(preview.summary.detected_categories)
+            )
             span.set_attribute("application.duration_ms", elapsed_ms_since(started))
 
-            return DisclosurePreview(
-                summary=summary,
-                external_payload=decision.result.external_payload,
-                payload_byte_count=len(decision.result.external_payload.encode("utf-8")),
-                treatment=treatment_code,
-                strategy=request.strategy,
-                governance=safe_governance_view(context),
-                provider_mode=ProviderMode(provider_class=self._provider.provider_class),
-            )
+            return preview
+
+    def _preview_of(
+        self,
+        request: DisclosureApplicationRequest,
+        *,
+        treatment_code: Treatment,
+        context: GovernanceContext,
+        decision: DisclosureDecision,
+    ) -> DisclosurePreview:
+        """The "review before sending" view of one ``DisclosureDecision``.
+
+        Pure projection of a decision that was already made -- it runs no
+        part of the decision phase itself. That is what lets
+        ``execute_document`` build the state a confirmation authenticates
+        from the very decision it is about to execute, instead of computing
+        a second one (see that method's docstring).
+        """
+        return DisclosurePreview(
+            summary=build_disclosure_summary(decision),
+            external_payload=decision.result.external_payload,
+            payload_byte_count=len(decision.result.external_payload.encode("utf-8")),
+            treatment=treatment_code,
+            strategy=request.strategy,
+            governance=safe_governance_view(context),
+            provider_mode=ProviderMode(provider_class=self._provider.provider_class),
+        )
 
     def execute(self, request: DisclosureApplicationRequest) -> DisclosureExecution:
         """Run the request all the way through the real, unchanged
@@ -383,50 +420,75 @@ class DisclosureApplicationService:
             execution_result = run_disclosure_case(
                 treatment, disclosure_request, self._provider, detector=self._detector
             )
-            # The decision this very execution made -- never a second,
-            # standalone decide_disclosure call. See the module docstring.
-            decision = DisclosureDecision(
-                spans=execution_result.spans, result=execution_result.disclosure_result
+            return self._execution_of(
+                request,
+                treatment_code=treatment_code,
+                context=context,
+                execution_result=execution_result,
+                span=span,
+                started=started,
             )
-            summary = build_disclosure_summary(decision)
 
-            provider_response = execution_result.provider_response
-            final_answer: str | None = None
-            if provider_response is not None:
-                final_answer = (
-                    execution_result.reconstructed_text
-                    if execution_result.reconstructed_text is not None
-                    else provider_response.text
-                )
+    def _execution_of(
+        self,
+        request: DisclosureApplicationRequest,
+        *,
+        treatment_code: Treatment,
+        context: GovernanceContext,
+        execution_result: ExecutionResult,
+        span,
+        started: float,
+    ) -> DisclosureExecution:
+        """The client-facing view of one ``pipeline.ExecutionResult``, plus
+        the ``application.execute`` span's metadata.
 
-            total_ms = elapsed_ms_since(started)
+        Every field is read off the ``ExecutionResult`` of the run that
+        actually contacted the provider -- summary, final answer, provider
+        record and reconstruction record all describe that one run, never a
+        parallel recomputation merely expected to have agreed with it. Both
+        execute paths (``execute`` and ``execute_document``) share this, so
+        there is one definition of what a ``DisclosureExecution`` reports.
+        """
+        # The decision the execution stage was handed -- never a second,
+        # standalone decide_disclosure call. See the module docstring.
+        decision = DisclosureDecision(
+            spans=execution_result.spans, result=execution_result.disclosure_result
+        )
+        summary = build_disclosure_summary(decision)
 
-            span.set_attribute("application.status", execution_result.disclosure_result.status)
-            span.set_attribute("application.treatment", treatment_code.value)
-            span.set_attribute("application.detected_span_count", len(decision.spans))
-            span.set_attribute("application.detected_categories", list(summary.detected_categories))
-            span.set_attribute(
-                "application.provider_called", execution_result.audit.provider.called
+        provider_response = execution_result.provider_response
+        final_answer: str | None = None
+        if provider_response is not None:
+            final_answer = (
+                execution_result.reconstructed_text
+                if execution_result.reconstructed_text is not None
+                else provider_response.text
             )
-            span.set_attribute(
-                "application.provider_failed", execution_result.audit.provider.failed
-            )
-            span.set_attribute(
-                "application.reconstruction_attempted",
-                execution_result.audit.reconstruction.attempted,
-            )
-            span.set_attribute("application.duration_ms", total_ms)
 
-            return DisclosureExecution(
-                summary=summary,
-                final_answer=final_answer,
-                provider=execution_result.audit.provider,
-                reconstruction=execution_result.audit.reconstruction,
-                treatment=treatment_code,
-                strategy=request.strategy,
-                governance=safe_governance_view(context),
-                total_ms=total_ms,
-            )
+        total_ms = elapsed_ms_since(started)
+
+        span.set_attribute("application.status", execution_result.disclosure_result.status)
+        span.set_attribute("application.treatment", treatment_code.value)
+        span.set_attribute("application.detected_span_count", len(decision.spans))
+        span.set_attribute("application.detected_categories", list(summary.detected_categories))
+        span.set_attribute("application.provider_called", execution_result.audit.provider.called)
+        span.set_attribute("application.provider_failed", execution_result.audit.provider.failed)
+        span.set_attribute(
+            "application.reconstruction_attempted",
+            execution_result.audit.reconstruction.attempted,
+        )
+        span.set_attribute("application.duration_ms", total_ms)
+
+        return DisclosureExecution(
+            summary=summary,
+            final_answer=final_answer,
+            provider=execution_result.audit.provider,
+            reconstruction=execution_result.audit.reconstruction,
+            treatment=treatment_code,
+            strategy=request.strategy,
+            governance=safe_governance_view(context),
+            total_ms=total_ms,
+        )
 
     def compare_strategies(self, request: DisclosureApplicationRequest) -> StrategyComparison:
         """Run ``request`` through every B0-B4 strategy via ``preview`` --
@@ -708,34 +770,69 @@ class DisclosureApplicationService:
         self, request: DisclosureApplicationRequest, *, confirmation_token: str
     ) -> DisclosureExecution:
         """Execute an uploaded document only if this exact request is the
-        preview a reviewer approved.
+        preview a reviewer approved -- and execute *that* decision.
 
-        The decision phase runs once here to recompute the approved state,
-        and once more inside ``execute`` -> ``run_disclosure_case``. That is
-        unavoidable and deliberate: the payload must be known *before* the
-        provider is contacted in order to be compared against the approved
-        one, and ``run_disclosure_case`` owns the call. Both recomputations
-        are deterministic for a given request -- pseudonyms come from this
-        service's one vault, which issues a stable pseudonym per original --
-        which is the same property the preview -> execute flow already
-        relied on to be able to show a reviewer the payload that would be
-        sent.
+        The decision phase over the document runs **exactly once** here. The
+        one ``DisclosureDecision`` it produces is projected into the approved
+        state, the confirmation is verified against that state, and the very
+        same object is then handed to
+        ``pipeline.execute_disclosure_decision``. So the payload the token
+        authenticates and the payload the provider receives are one object,
+        not two objects expected to agree.
+
+        That distinction is the whole point of this method, and it was the
+        second review finding on this slice. Verifying one decision and then
+        asking ``run_disclosure_case`` to compute another left the demo's
+        central guarantee resting on ``Detector``/``TaskAnalyzer`` happening
+        to be deterministic -- both are replaceable injections, so a
+        stateful, non-deterministic or simply buggy one would have made the
+        reviewer approve one payload while the provider received a different
+        one (pinned by
+        ``tests/test_application_document_presets.py::test_execute_document_sends_the_exact_decision_authenticated_by_the_preview_confirmation``).
 
         Order matters. The confirmation is verified first, so the
         unsafe-control refusal below cannot be reached by an execute that no
         preview authorised, and so that refusal is provably a rule of its
         own rather than the confirmation check under another name.
-        """
-        approved = self.preview(request)
-        self._preview_confirmation_signer.verify(
-            confirmation_token, self._confirmation_state(request, approved)
-        )
-        self._refuse_unsafe_control_outside_the_trust_boundary(request)
-        return self._execute(request)
 
-    def _refuse_unsafe_control_outside_the_trust_boundary(
-        self, request: DisclosureApplicationRequest
-    ) -> None:
+        Span topology note: this path decides *outside* any
+        ``pipeline.run_disclosure_case`` span -- it has none, because it
+        never calls ``run_disclosure_case`` -- so ``detection.detect`` /
+        ``<treatment>.sanitize`` / ``<treatment>.reconstruct`` are children
+        of this method's ``application.execute`` span instead. The T10
+        scientific runner is untouched by that: it calls
+        ``run_disclosure_case`` directly and keeps the exact topology
+        ``experiments/stage_timing.py`` reads.
+        """
+        tracer = get_tracer()
+        started = time.perf_counter()
+        with tracer.start_as_current_span("application.execute") as span:
+            treatment_code, treatment = self._build_treatment(request)
+            disclosure_request, context = self._build_disclosure_request(request)
+
+            decision = decide_disclosure(treatment, disclosure_request, detector=self._detector)
+            approved = self._preview_of(
+                request, treatment_code=treatment_code, context=context, decision=decision
+            )
+
+            self._preview_confirmation_signer.verify(
+                confirmation_token, self._confirmation_state(request, approved)
+            )
+            self._refuse_unsafe_control_outside_the_trust_boundary(treatment)
+
+            execution_result = execute_disclosure_decision(
+                treatment, disclosure_request, self._provider, decision=decision
+            )
+            return self._execution_of(
+                request,
+                treatment_code=treatment_code,
+                context=context,
+                execution_result=execution_result,
+                span=span,
+                started=started,
+            )
+
+    def _refuse_unsafe_control_outside_the_trust_boundary(self, treatment) -> None:
         """B0 -- Direct discloses the document unchanged. On the advisor
         demo's document surface it may be previewed and compared, never
         executed against a provider outside the trust boundary.
@@ -760,8 +857,11 @@ class DisclosureApplicationService:
         This changes no experimental semantics -- B0 itself is unchanged, it
         stays available in preview and comparison, and the T10 runner builds
         its own treatments and never goes through this service.
+
+        Takes the treatment object the caller already built, rather than
+        rebuilding one from the request: the rule must be applied to the
+        very treatment that is about to be executed.
         """
-        _, treatment = self._build_treatment(request)
         if (
             isinstance(treatment, UnsafeControlTreatment)
             and self._provider.provider_class != DEFAULT_PROVIDER_NAME

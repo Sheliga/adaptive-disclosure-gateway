@@ -210,8 +210,15 @@ been what the reviewer approved** — which is the demo's entire guarantee.
 
 `POST /documents/preview` therefore returns a `confirmation_token` alongside the review, and
 `POST /documents/execute` requires it. On execute the server re-normalizes the re-uploaded file,
-re-resolves the governance and the treatment, recomputes what would be disclosed, and only then
-checks the token against that recomputed state. Nothing is read out of the token and trusted.
+re-resolves the governance and the treatment, computes the disclosure decision for it **once**,
+and checks the token against the state that one decision produces. Nothing is read out of the
+token and trusted.
+
+That single decision is also the one that is executed: it is handed directly to
+`pipeline.execute_disclosure_decision`, the only code that invokes a provider on a disclosure
+payload. The payload the token authenticates and the payload the provider receives are one
+object, not two objects expected to agree — an assumption that would have rested on the wired
+`Detector`/`TaskAnalyzer` happening to be deterministic, and both are replaceable injections.
 
 The token binds, as keyed digests or canonical values and never as raw text: the normalized
 document, the task, the document type, the resolved analysis mode, the resolved governance

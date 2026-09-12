@@ -29,7 +29,11 @@ import traceback
 import pytest
 
 from adaptive_disclosure_gateway.application.contracts import DisclosureStrategy
-from adaptive_disclosure_gateway.application.ingestion import IngestionError, ParsedDocument
+from adaptive_disclosure_gateway.application.ingestion import (
+    IngestionError,
+    ParsedDocument,
+    normalize_text,
+)
 from adaptive_disclosure_gateway.application.presets import (
     CONTRACT_DOCUMENT_TYPE,
     DocumentAnalysisPresetError,
@@ -40,9 +44,15 @@ from adaptive_disclosure_gateway.application.preview_confirmation import (
     PreviewConfirmationError,
 )
 from adaptive_disclosure_gateway.application.service import DisclosureApplicationService
-from adaptive_disclosure_gateway.domain import Treatment
+from adaptive_disclosure_gateway.detection import Detector
+from adaptive_disclosure_gateway.domain import SensitiveSpan, Treatment
 from adaptive_disclosure_gateway.policies import PolicyRepository
 from adaptive_disclosure_gateway.providers import FakeProvider
+from adaptive_disclosure_gateway.task_analysis import (
+    DeterministicTaskAnalyzer,
+    TaskAnalysis,
+    TaskRelevance,
+)
 from tests.api_support import HR_TEXT, POLICY_DIR, RecordingProvider, default_context
 from tests.contracts_fixture import (
     CONTRACTING_PARTY,
@@ -75,13 +85,14 @@ class StubContractParser:
 
 
 def build_service(
-    provider=None, *, document_parser=None, **context_overrides
+    provider=None, *, document_parser=None, detector=None, **context_overrides
 ) -> DisclosureApplicationService:
     return DisclosureApplicationService(
         policy_repository=PolicyRepository.from_directory(POLICY_DIR),
         provider=provider if provider is not None else FakeProvider(),
         default_context=default_context(**context_overrides),
         document_parser=document_parser,
+        detector=detector,
     )
 
 
@@ -361,3 +372,164 @@ def test_a_confirmed_document_execute_reaches_the_provider_through_the_applicati
     assert provider.received[0].payload == reviewed.preview.external_payload
     assert execution.provider.called is True
     assert CONTRACTING_PARTY not in provider.received[0].payload
+
+
+# --- the decision the confirmation authenticates is the decision executed ----
+#
+# Review round 2. The confirmation authenticated a decision and then the
+# provider was handed a *second*, freshly recomputed one; the two were only
+# expected to agree. ``Detector`` and ``TaskAnalyzer`` are replaceable
+# injections, so "they agree" was a property of the components wired in on
+# the day, not of the architecture. A stateful one is enough to make the
+# approved payload and the transmitted payload differ -- which is exactly
+# the demo's central guarantee failing.
+
+
+class DecidesDifferentlyTheSecondTime:
+    """A detector that reports nothing the second time it is asked about the
+    same document, so a second decision over it discloses it raw.
+
+    Every other input -- notably the pipeline's fail-closed pass over
+    ``request.task`` -- is delegated to the real ``Detector`` and counted
+    separately, so a decision about the document is never conflated with a
+    detection over the task.
+    """
+
+    def __init__(self, document_text: str) -> None:
+        self._document_text = document_text
+        self._real = Detector()
+        self.document_detection_calls = 0
+        self.task_detection_calls = 0
+
+    def start_counting_document_decisions(self) -> None:
+        self.document_detection_calls = 0
+
+    def detect(self, text: str) -> list[SensitiveSpan]:
+        if text != self._document_text:
+            self.task_detection_calls += 1
+            return self._real.detect(text)
+        self.document_detection_calls += 1
+        if self.document_detection_calls > 1:
+            return []
+        return self._real.detect(text)
+
+
+class BecomesPermissiveTheSecondTime:
+    """A task analyzer whose second judgement asks for every category's exact
+    original value -- the most disclosing answer B3/B4 can act on.
+
+    The second replaceable injection in the decision phase, independent of
+    the detector: if the decision were recomputed after the confirmation was
+    verified, this alone would change what is transmitted.
+    """
+
+    def __init__(self) -> None:
+        self._real = DeterministicTaskAnalyzer()
+        self.analyze_calls = 0
+
+    def start_counting_analyses(self) -> None:
+        self.analyze_calls = 0
+
+    def analyze(self, task: str, categories) -> TaskAnalysis:
+        self.analyze_calls += 1
+        if self.analyze_calls > 1:
+            return TaskAnalysis(
+                relevance_by_category={
+                    category: TaskRelevance.RELEVANT_WITH_EXACT_VALUE for category in categories
+                }
+            )
+        return self._real.analyze(task, categories)
+
+
+def _contract_request(service):
+    return service.build_document_request(
+        filename="contract.pdf",
+        file_bytes=b"%PDF-1.4 synthetic",
+        task=CONTRACT_TASK,
+        document_type=CONTRACT_DOCUMENT_TYPE,
+    )
+
+
+def _normalized_contract_text() -> str:
+    """The document text the decision phase actually sees, i.e. after the
+    ingestion boundary normalized what the parser returned. Read from the
+    real boundary rather than hardcoded, so a normalization change cannot
+    quietly turn the stateful detector below into a no-op.
+    """
+    return normalize_text(CONTRACTS_FIXTURE).text
+
+
+def test_execute_document_sends_the_exact_decision_authenticated_by_the_preview_confirmation():
+    """The guarantee, stated as a test: the provider receives the payload the
+    confirmation authenticated -- not a payload recomputed after it.
+
+    The detector decides differently the second time it is asked about this
+    document. An ``execute_document`` that verifies one decision and then
+    recomputes another would verify the safe payload and transmit the raw
+    contract; there is no assertion about component determinism here,
+    because the property must not depend on it.
+    """
+    provider = RecordingProvider()
+    detector = DecidesDifferentlyTheSecondTime(_normalized_contract_text())
+    service = build_service(provider, document_parser=StubContractParser(), detector=detector)
+    request = _contract_request(service)
+
+    reviewed = service.preview_document(request)
+    detector.start_counting_document_decisions()
+    execution = service.execute_document(request, confirmation_token=reviewed.confirmation_token)
+
+    assert detector.document_detection_calls == 1, (
+        "the document decision phase ran more than once inside execute_document -- "
+        "whichever decision was executed was not the one the confirmation authenticated"
+    )
+    assert len(provider.received) == 1
+    assert provider.received[0].payload == reviewed.preview.external_payload
+    assert provider.received[0].task == request.task
+    assert CONTRACTING_PARTY not in provider.received[0].payload
+    assert execution.summary.status == reviewed.preview.summary.status
+
+
+def test_execute_document_is_unaffected_by_a_task_analyzer_that_would_decide_differently():
+    """The same property through the other replaceable injection: a second
+    task analysis that asks for every exact original value must never be the
+    one that shapes what is transmitted.
+    """
+    provider = RecordingProvider()
+    analyzer = BecomesPermissiveTheSecondTime()
+    service = DisclosureApplicationService(
+        policy_repository=PolicyRepository.from_directory(POLICY_DIR),
+        provider=provider,
+        default_context=default_context(),
+        document_parser=StubContractParser(),
+        task_analyzer=analyzer,
+    )
+    request = _contract_request(service)
+
+    reviewed = service.preview_document(request)
+    analyzer.start_counting_analyses()
+    service.execute_document(request, confirmation_token=reviewed.confirmation_token)
+
+    assert analyzer.analyze_calls == 1
+    assert len(provider.received) == 1
+    assert provider.received[0].payload == reviewed.preview.external_payload
+    assert CONTRACTING_PARTY not in provider.received[0].payload
+
+
+def test_execute_document_runs_the_document_decision_phase_exactly_once():
+    """Counted against the real detector, with no stateful behaviour at all:
+    one decision about the document per ``execute_document`` call. Two would
+    mean the verified decision and the executed one are different objects,
+    however much they happen to agree.
+    """
+    provider = RecordingProvider()
+    detector = DecidesDifferentlyTheSecondTime(_normalized_contract_text())
+    service = build_service(provider, document_parser=StubContractParser(), detector=detector)
+    request = _contract_request(service)
+
+    reviewed = service.preview_document(request)
+    assert detector.document_detection_calls == 1
+    detector.start_counting_document_decisions()
+
+    service.execute_document(request, confirmation_token=reviewed.confirmation_token)
+
+    assert detector.document_detection_calls == 1

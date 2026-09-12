@@ -25,12 +25,30 @@ introduces no database, cache, session table or filesystem persistence.
 
 So the proof travels with the request instead. ``preview`` issues a token
 over a fingerprint of the state it just showed; ``execute`` re-uploads the
-same file, **re-computes that state from the new request**, and verifies the
-token against the recomputed state. Nothing is read *out* of the token and
-trusted -- the token carries no state at all, only the validity window and a
-MAC. A divergence anywhere is a rejection, and the provider is never called.
+same file, **computes the disclosure decision for it once**, and verifies the
+token against the state that one decision produces. Nothing is read *out* of
+the token and trusted -- the token carries no state at all, only the validity
+window and a MAC. A divergence anywhere is a rejection, and the provider is
+never called.
 
 Duplicating the upload on execute is the cost, and it is deliberate.
+
+The decision that is verified is the decision that is executed
+--------------------------------------------------------------
+
+Authentication of a state is only worth what the *transmission* of that
+state is worth. An ``execute`` that verified one decision and then recomputed
+a second one for the provider would authenticate payload A and transmit
+payload B, with nothing but the components' determinism holding the two
+together -- and ``Detector``/``TaskAnalyzer`` are replaceable injections, so
+that is a property of a deployment, not of the design. This was the second
+review finding on this slice.
+
+``DisclosureApplicationService.execute_document`` therefore runs the decision
+phase exactly once, builds the state verified here from that decision, and
+hands that same ``DisclosureDecision`` object to
+``pipeline.execute_disclosure_decision``. The token authenticates the object
+that is executed, not a twin of it.
 
 Why the binding must be server-keyed
 ------------------------------------
