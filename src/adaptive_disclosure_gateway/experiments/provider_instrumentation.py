@@ -47,6 +47,20 @@ class ProviderCallMetrics:
     response_bytes: int
     model_id: str
     model_snapshot: str
+    # Provider-reported token usage, carried straight through from
+    # ``ProviderResponse`` (T22 / issue #30) so the runner schema records the
+    # provider API's own numbers rather than a heuristic estimate. ``None``
+    # means the provider reported no usage at all -- which is exactly the
+    # case under ``FakeProvider`` (no tokenizer, no usage accounting; see
+    # docs/research/post-pilot-protocol-v1.md section 9.2) -- and is a
+    # different claim from ``0``. There is deliberately no cost field: this
+    # codebase records usage and no pricing, so a consumer reports cost as
+    # unavailable instead of deriving one from a table that would silently
+    # go stale.
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cache_creation_input_tokens: int | None = None
+    cache_read_input_tokens: int | None = None
 
 
 class TimingProviderDelegate:
@@ -79,5 +93,9 @@ class TimingProviderDelegate:
             response_bytes=len(response.text.encode("utf-8")),
             model_id=response.model_id,
             model_snapshot=response.model_snapshot,
+            input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens,
+            cache_creation_input_tokens=response.cache_creation_input_tokens,
+            cache_read_input_tokens=response.cache_read_input_tokens,
         )
         return response

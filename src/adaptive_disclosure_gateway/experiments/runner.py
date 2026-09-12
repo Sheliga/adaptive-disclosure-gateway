@@ -16,6 +16,7 @@ from pathlib import Path
 from adaptive_disclosure_gateway.corpus.loader import CorpusCase
 from adaptive_disclosure_gateway.domain import Treatment
 from adaptive_disclosure_gateway.policies import PolicyRepository
+from adaptive_disclosure_gateway.providers import Provider
 
 from .case_result import CaseResult
 from .corpus_source import load_hr_v1_cases
@@ -45,6 +46,7 @@ def run_case_for_treatment(
     run_classification: RunClassification,
     policy_repository: PolicyRepository,
     experiment_run_id: str,
+    provider: Provider | None = None,
 ) -> CaseResult:
     """Execute one case through one treatment (ground-truth-isolated --
     ``case.oracle`` is read only *after* ``execute_case`` returns, by
@@ -54,6 +56,16 @@ def run_case_for_treatment(
     value for every case/treatment call belonging to one pilot invocation --
     callers must generate it once (``run_identity.new_experiment_run_id``)
     and thread it through, never regenerate it per case or per treatment.
+
+    ``provider`` (T22 / issue #30) is the one seam a controlled
+    real-provider run needs: left ``None``, ``execute_case`` builds its usual
+    deterministic ``FakeProvider``, which is what TDD, CI and every
+    regression run get. Passing a real adapter here is the smallest possible
+    integration point -- it changes which provider answers, and nothing about
+    detection, the treatments, the policies or scoring. A caller doing that
+    is responsible for the case contexts' ``provider_class`` matching what
+    the adapter declares (``invoke_provider``'s pre-flight check refuses a
+    mismatch rather than silently proceeding).
     """
     case_execution = execute_case(
         case_input=case.input,
@@ -61,6 +73,7 @@ def run_case_for_treatment(
         corpus_version=corpus_version,
         run_classification=run_classification,
         policy_repository=policy_repository,
+        provider=provider,
     )
     score = score_case(case.input, case.oracle, case_execution)
     metadata = new_run_metadata(experiment_run_id)
@@ -80,6 +93,7 @@ def run_pilot(
     run_classification: RunClassification = PILOT_DEVELOPMENT,
     treatments: Iterable[Treatment] = ALL_TREATMENTS,
     experiment_run_id: str | None = None,
+    provider: Provider | None = None,
 ) -> dict[Treatment, list[CaseResult]]:
     """Run every case in ``corpus_dir`` through every treatment in
     ``treatments``, using the policy documents in ``policy_dir``. Each
@@ -91,6 +105,12 @@ def run_pilot(
     to the same id used elsewhere (e.g. the contextual matrix comparisons
     and ``artifacts.write_pilot_artifacts``' manifest for the same
     invocation); left ``None``, a fresh one is generated for this call alone.
+
+    ``provider`` (T22 / issue #30) is threaded verbatim into every case
+    execution of this run, so one batch is answered by exactly one provider
+    configuration -- the comparability requirement in
+    ``docs/research/post-pilot-protocol-v1.md`` section 9.3. Left ``None``,
+    every case uses the deterministic ``FakeProvider`` default, unchanged.
     """
     active_experiment_run_id = (
         experiment_run_id if experiment_run_id is not None else new_experiment_run_id()
@@ -109,6 +129,7 @@ def run_pilot(
                     run_classification=run_classification,
                     policy_repository=policy_repository,
                     experiment_run_id=active_experiment_run_id,
+                    provider=provider,
                 )
             )
     return results

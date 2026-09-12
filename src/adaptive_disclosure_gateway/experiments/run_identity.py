@@ -45,7 +45,13 @@ from typing import Literal
 # RunMetadata gained experiment_run_id/case_execution_id in place of a bare
 # run_id (blocker 5), and CaseExecution/CaseScore gained detector and
 # resource_metrics fields (blockers 2, 3).
-SCHEMA_VERSION = "t10-experiment-runner-v2"
+# Bumped to v3 for T22 / issue #30: ProviderCallMetrics gained the four
+# provider-reported token-usage fields (input_tokens, output_tokens,
+# cache_creation_input_tokens, cache_read_input_tokens), which are part of
+# every serialized CaseResult. They are None under FakeProvider -- the shape
+# changed, so the version changes; the M2/HR and Contracts v1 artifacts
+# already on disk stay correctly labeled v2 and are not rewritten.
+SCHEMA_VERSION = "t10-experiment-runner-v3"
 
 # T07/B3's frozen baseline commit (docs/experimental-design.md, issue #8):
 # every B3 -- and, since B4 retains B3's analyzer/action-space machinery,

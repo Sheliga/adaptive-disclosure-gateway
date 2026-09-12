@@ -38,7 +38,7 @@ Milestone tracker: Issue #32.
 - B4 frozen implementation commit: `5abea8514fa10ac64b9bc3714bbfd3f18682f713`.
 - B4 retains B3's task-aware baseline and adds contextual policy constraints.
 - HR contextual matrix: `hr-v2` / `hr-v3`; original corpus cases remain on frozen `hr-v1`.
-- experiment schema: `t10-experiment-runner-v2`.
+- experiment schema: `t10-experiment-runner-v3` (bumped by T22 / Issue #30: `ProviderCallMetrics` gained four provider-reported token-usage fields). The M2 HR and Contracts v1 artifacts on disk remain correctly labeled `t10-experiment-runner-v2` and were not rewritten.
 - artifact bundle schema: `t10-pilot-artifact-bundle-v2`.
 - final M2 pilot artifact: `artifacts/experiments/hr/v1/13198a3b95bd49b88a62f591f3da1224/`.
 
@@ -158,16 +158,52 @@ ordinal claim or this primary metric.
 
 #### T22 / Issue #30 — real provider
 
-Status: **promoted after M2; may proceed in parallel with T12/Contracts/T24**.
+Status: **implemented; in validation in an open PR to `develop`**.
 
-Implement at least one real provider behind the existing narrow `Provider` protocol. Required before authoritative claims about:
+An Anthropic Messages API adapter (`providers/anthropic_api.py`, `AnthropicProvider`) now
+implements the existing narrow `Provider` protocol, behind a new optional `anthropic`
+dependency extra. Operational reference: [`docs/provider-configuration.md`](provider-configuration.md).
 
-- actual LLM task utility;
-- provider tokens;
-- external API cost;
-- genuine provider/provider-class behavior.
+Delivered:
 
-Provider/model/scaffolding/decoding configuration must be frozen under the T23 protocol before confirmatory comparison.
+- one real adapter on the unchanged `ProviderRequest(payload, task)` boundary, invoked only
+  through `invoke_provider`;
+- opt-in selection (`ADG_PROVIDER=anthropic`); **`FakeProvider` remains the default
+  everywhere** — TDD, CI, offline development, deterministic regression and the
+  pilot/development corpora are unaffected;
+- native transport timeout on the SDK client in addition to the caller-side deadline;
+- no retry (`max_retries=0` pinned by test — the SDK retries twice by default) and no
+  fallback of any kind, including the server-side `fallbacks` parameter, which is
+  deliberately not enabled because a silent model switch would break the frozen-configuration
+  requirement;
+- real usage metadata (`input_tokens`, `output_tokens`, cache token counts) carried into the
+  runner schema, `None` under FakeProvider so "usage unavailable" stays distinguishable from
+  zero;
+- `model_snapshot` recorded from the serving model or as the explicit
+  `model_snapshot_unavailable` sentinel — never synthesized;
+- a freezable configuration record (`AnthropicProvider.configuration_record()`) covering the
+  protocol §9.3 fields, shaped for `artifacts.write_pilot_artifacts(reproducibility=...)`;
+- runner integration through an optional `provider` argument on `run_pilot` /
+  `run_case_for_treatment` — the smallest point that lets one controlled batch use one
+  provider configuration.
+
+Known limitation, recorded rather than worked around: `temperature`/`top_p`/`top_k` were
+removed on current models and return HTTP 400, so **bit-exact decoding determinism is not
+configurable**. `decoding_config` records `temperature: null` plus
+`sampling_parameters_supported: false` rather than a fabricated `temperature: 0.0`; what is
+frozen is `max_tokens`, thinking mode and `output_config.effort`.
+
+Deliberately not delivered: no cost/pricing table (a report says *cost unavailable*), no
+change to scientific scoring, and no reinterpretation of the FakeProvider
+information-sufficiency proxy as real-response utility — protocol §6.3/§9.2 keep those
+distinct, and resolving that is a later methodological step, not part of T22.
+
+Live smoke test: **pending** — no credential was available in the implementing environment.
+Every adapter path is validated offline against a fake SDK client, and the drift tests run
+against the really installed SDK (`anthropic` 1.5.0) without network or credential.
+
+Provider/model/scaffolding/decoding configuration must still be frozen under the T23 protocol
+before confirmatory comparison; T22 delivers the readiness, not the freeze.
 
 T22 is also consumed by the advisor-facing demo when available. FakeProvider remains sufficient to build/test the demo shell, but a real-provider mode is preferred before sharing the demo broadly with prospective advisors.
 

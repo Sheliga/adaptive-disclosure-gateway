@@ -16,6 +16,17 @@ from typing import Any, Protocol, runtime_checkable
 
 DEFAULT_TIMEOUT_SECONDS = 30.0
 
+# The value ``ProviderResponse.model_snapshot`` carries when the provider
+# genuinely exposes no snapshot/version distinct from the model id that was
+# requested (T22 / issue #30). Recorded explicitly rather than synthesized:
+# ``docs/research/post-pilot-protocol-v1.md`` §9.3 requires model_snapshot
+# "when the vendor exposes one", and a fabricated date or a copy of the
+# model id would be a *false* reproducibility claim -- strictly worse than
+# an honest "unavailable", because nothing downstream could tell the two
+# apart. Never parse or pattern-match this string: it is a sentinel for
+# human/manifest reading, not a structured field.
+MODEL_SNAPSHOT_UNAVAILABLE = "model_snapshot_unavailable"
+
 
 @dataclass(frozen=True)
 class ProviderRequest:
@@ -61,6 +72,21 @@ class ProviderResponse:
     model_snapshot: str
     decoding_config: Mapping[str, Any]
     transmitted_bytes: int
+    # Provider-reported token usage (T22 / issue #30). Optional, defaulting
+    # to None, for two reasons. First, FakeProvider and every existing
+    # construction site keep working unchanged -- these are additive fields
+    # on a boundary deliberately kept narrow. Second, and more importantly,
+    # ``None`` is not the same claim as ``0``: it means *this provider did
+    # not report usage*, so a consumer can say "usage unavailable" instead
+    # of silently reporting a zero token count that looks like a
+    # measurement. Never populate these by estimating from the payload --
+    # issue #30 requires the provider API's own numbers or nothing
+    # (``count_transmitted_bytes`` above remains the separate, documented
+    # byte-volume proxy, and is not a token count).
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cache_creation_input_tokens: int | None = None
+    cache_read_input_tokens: int | None = None
 
 
 class ProviderError(Exception):

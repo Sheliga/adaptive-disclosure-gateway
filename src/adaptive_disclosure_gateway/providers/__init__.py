@@ -1,5 +1,7 @@
+from .anthropic_api import AnthropicProvider, build_anthropic_client, sdk_version
 from .base import (
     DEFAULT_TIMEOUT_SECONDS,
+    MODEL_SNAPSHOT_UNAVAILABLE,
     Provider,
     ProviderClassMismatchError,
     ProviderError,
@@ -10,16 +12,40 @@ from .base import (
     invoke_provider,
 )
 from .fake import FakeProvider
+from .settings import (
+    ANTHROPIC_PROVIDER_NAME,
+    DEFAULT_PROVIDER_NAME,
+    PROMPT_SCAFFOLDING_VERSION,
+    AnthropicProviderConfig,
+    ProviderConfigurationError,
+    anthropic_config_from_env,
+    build_provider_from_env,
+    provider_name,
+    real_provider_enabled,
+)
 
 __all__ = [
+    "ANTHROPIC_PROVIDER_NAME",
+    "DEFAULT_PROVIDER_NAME",
     "DEFAULT_TIMEOUT_SECONDS",
+    "MODEL_SNAPSHOT_UNAVAILABLE",
+    "PROMPT_SCAFFOLDING_VERSION",
+    "AnthropicProvider",
+    "AnthropicProviderConfig",
     "FakeProvider",
     "Provider",
     "ProviderClassMismatchError",
+    "ProviderConfigurationError",
     "ProviderError",
     "ProviderRequest",
     "ProviderResponse",
     "ProviderTimeoutError",
+    "anthropic_config_from_env",
+    "build_anthropic_client",
+    "build_provider_from_env",
     "count_transmitted_bytes",
     "invoke_provider",
+    "provider_name",
+    "real_provider_enabled",
+    "sdk_version",
 ]
