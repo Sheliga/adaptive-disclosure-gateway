@@ -21,8 +21,11 @@ Two input surfaces, one application boundary:
 - ``POST /documents/{preview,execute}`` take ``multipart/form-data`` and are
   the real structured-upload path (issue #41 gate A): the binary reaches the
   T12 ingestion boundary intact, and governance is selected by a
-  server-validated preset rather than by caller-supplied policy strings. See
-  their own comment block below.
+  server-validated preset rather than by caller-supplied policy strings.
+  ``/documents/execute`` additionally requires the confirmation token its
+  preview issued -- the two calls are bound to each other rather than merely
+  adjacent. See their own comment block below and
+  ``application/preview_confirmation.py``.
 
 Both map onto the same ``DisclosureApplicationService`` and return the same
 response schemas; they differ in how the content and the governance arrive,
@@ -75,12 +78,16 @@ from adaptive_disclosure_gateway.api.limits import RequestBodySizeLimitMiddlewar
 from adaptive_disclosure_gateway.application.contracts import (
     DisclosureApplicationRequest,
     DisclosureStrategy,
+    UnsafeControlExecutionError,
 )
 from adaptive_disclosure_gateway.application.examples import ExampleNotFoundError
 from adaptive_disclosure_gateway.application.ingestion import IngestionError
 from adaptive_disclosure_gateway.application.presets import (
     DocumentAnalysisPresetError,
     list_document_presets,
+)
+from adaptive_disclosure_gateway.application.preview_confirmation import (
+    PreviewConfirmationError,
 )
 from adaptive_disclosure_gateway.application.requests import ContentSourceError, MissingTaskError
 from adaptive_disclosure_gateway.application.service import DisclosureApplicationService
@@ -234,6 +241,8 @@ def create_app(
     @app.exception_handler(ContentSourceError)
     @app.exception_handler(MissingTaskError)
     @app.exception_handler(DocumentAnalysisPresetError)
+    @app.exception_handler(PreviewConfirmationError)
+    @app.exception_handler(UnsafeControlExecutionError)
     async def _handle_bad_request(_request: Request, exc: Exception) -> JSONResponse:
         # Registered once, for every route, rather than repeated as a
         # per-route try/except: this is the single place a caller-input
@@ -243,6 +252,14 @@ def create_app(
         # ``DocumentAnalysisPresetError`` joins this set for the same
         # reason: its message names only the server's own supported document
         # types/analysis modes, never the token the caller sent.
+        # ``PreviewConfirmationError`` carries one fixed constant message
+        # for every failure mode -- never the confirmation token, the
+        # recomputed state, the document, the task or the payload -- and
+        # ``UnsafeControlExecutionError`` names only the treatment class and
+        # the surface. Both are 400 rather than 200-with-an-outcome because
+        # nothing was executed at all: unlike a blocked disclosure or a
+        # failed provider call, these are refusals to run the request, not
+        # results of running it.
         return _error_response(exc, status_code=400)
 
     @app.exception_handler(ExampleNotFoundError)
@@ -341,6 +358,18 @@ def create_app(
     # retention of the uploaded document between the two calls, which is
     # exactly what "no persistent storage of uploaded source documents by
     # default" forbids.
+    #
+    # Two separate requests are not by themselves a review step, though.
+    # Until the preview confirmation existed, a client could preview under
+    # `recommended`/B4 and execute the same upload under `strategy=b0`: the
+    # separation was there and the guarantee was not. `/documents/preview`
+    # therefore issues a server-signed token over what it showed, and
+    # `/documents/execute` requires it and re-computes that state from its
+    # own request before the provider is reachable. The binding lives in the
+    # application layer (`application/preview_confirmation.py` and
+    # `DisclosureApplicationService.{preview,execute}_document`); these
+    # routes only carry the token, exactly as this adapter carries
+    # everything else.
 
     @app.get("/documents/types", response_model=None)
     def list_document_types(_request: Request) -> dict[str, object]:
@@ -360,34 +389,12 @@ def create_app(
         analysis_mode: Annotated[str | None, Form()] = None,
         strategy: Annotated[DisclosureStrategy | None, Form()] = None,
     ) -> JSONResponse:
-        service = _get_service(request)
-        application_request = _document_application_request(
-            service,
-            upload=file,
-            task=task,
-            document_type=document_type,
-            analysis_mode=analysis_mode,
-            strategy=strategy,
-        )
+        """The review half of preview -> confirm -> execute.
 
-        preview = service.preview(application_request)
-        content = schemas.PreviewResponse.from_domain(preview).model_dump()
-        return JSONResponse(status_code=200, content=content)
-
-    @app.post("/documents/execute", response_model=None)
-    def execute_document(
-        request: Request,
-        file: Annotated[UploadFile, File()],
-        task: Annotated[str, Form()],
-        document_type: Annotated[str, Form()],
-        analysis_mode: Annotated[str | None, Form()] = None,
-        strategy: Annotated[DisclosureStrategy | None, Form()] = None,
-    ) -> JSONResponse:
-        """The confirmed half of preview -> confirm -> execute.
-
-        Like ``POST /disclosure/execute``, a blocked request or a failed
-        provider call is a legitimate outcome recorded on the result, not an
-        HTTP error: this returns 200 either way.
+        Returns the same review the JSON routes return, plus the
+        ``confirmation_token`` the matching ``/documents/execute`` requires.
+        The token is what makes the two stateless calls one flow -- see
+        ``application/preview_confirmation.py``.
         """
         service = _get_service(request)
         application_request = _document_application_request(
@@ -399,7 +406,52 @@ def create_app(
             strategy=strategy,
         )
 
-        execution = service.execute(application_request)
+        document_preview = service.preview_document(application_request)
+        content = schemas.DocumentPreviewResponse.from_document_preview(
+            document_preview
+        ).model_dump()
+        return JSONResponse(status_code=200, content=content)
+
+    @app.post("/documents/execute", response_model=None)
+    def execute_document(
+        request: Request,
+        file: Annotated[UploadFile, File()],
+        task: Annotated[str, Form()],
+        document_type: Annotated[str, Form()],
+        confirmation_token: Annotated[str, Form()],
+        analysis_mode: Annotated[str | None, Form()] = None,
+        strategy: Annotated[DisclosureStrategy | None, Form()] = None,
+    ) -> JSONResponse:
+        """The confirmed half of preview -> confirm -> execute.
+
+        ``confirmation_token`` is REQUIRED, and is the whole reason this
+        route is not simply "preview, but also call the provider". The
+        service re-normalizes the re-uploaded file, re-resolves the
+        governance and the treatment, recomputes the state that would be
+        disclosed, and only then checks the token against it. Any divergence
+        from the approved review -- a different document, task, analysis
+        mode, strategy, resolved policy or provider class -- is refused
+        before the provider is contacted.
+
+        Like ``POST /disclosure/execute``, a blocked request or a failed
+        provider call is a legitimate outcome recorded on the result, not an
+        HTTP error: this returns 200 in those cases. A failed confirmation
+        is different in kind -- nothing was executed at all -- and is a 400
+        through ``PreviewConfirmationError``.
+        """
+        service = _get_service(request)
+        application_request = _document_application_request(
+            service,
+            upload=file,
+            task=task,
+            document_type=document_type,
+            analysis_mode=analysis_mode,
+            strategy=strategy,
+        )
+
+        execution = service.execute_document(
+            application_request, confirmation_token=confirmation_token
+        )
         content = schemas.ExecuteResponse.from_domain(execution).model_dump()
         return JSONResponse(status_code=200, content=content)
 

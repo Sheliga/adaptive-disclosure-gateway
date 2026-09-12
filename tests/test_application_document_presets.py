@@ -16,7 +16,10 @@ mechanism could plausibly have:
   ``application/requests.py::_EXAMPLE_OVERRIDE_FIELDS`` already records for
   prepared examples);
 - the preset being decorative -- resolving the right strings while the
-  disclosure decision is unchanged.
+  disclosure decision is unchanged;
+- an uploaded document being executable through a path that checks no
+  preview confirmation, so what reaches the provider need not be what a
+  reviewer approved.
 """
 
 from __future__ import annotations
@@ -33,11 +36,14 @@ from adaptive_disclosure_gateway.application.presets import (
     list_document_presets,
     resolve_governance_preset,
 )
+from adaptive_disclosure_gateway.application.preview_confirmation import (
+    PreviewConfirmationError,
+)
 from adaptive_disclosure_gateway.application.service import DisclosureApplicationService
 from adaptive_disclosure_gateway.domain import Treatment
 from adaptive_disclosure_gateway.policies import PolicyRepository
 from adaptive_disclosure_gateway.providers import FakeProvider
-from tests.api_support import POLICY_DIR, default_context
+from tests.api_support import HR_TEXT, POLICY_DIR, RecordingProvider, default_context
 from tests.contracts_fixture import (
     CONTRACTING_PARTY,
     CONTRACTS_FIXTURE,
@@ -265,3 +271,93 @@ def test_a_parser_failure_never_echoes_the_document_text_or_bytes():
         traceback.format_exception(type(excinfo.value), excinfo.value, excinfo.value.__traceback__)
     )
     assert marker not in rendered
+
+
+# --- an uploaded document is executable only through the confirmed path ------
+#
+# The HTTP route calls ``execute_document``. Nothing but this guard stopped a
+# second adapter -- a future MCP tool, a script, a refactor of the route --
+# from calling the more obvious ``execute`` with a document request and
+# reaching the provider with no reviewed preview behind it. Structural rather
+# than conventional on purpose: the confirmation cannot be forgotten by a
+# caller that does not know it exists.
+
+
+def test_an_uploaded_document_cannot_be_executed_through_the_unconfirmed_method():
+    provider = RecordingProvider()
+    service = build_service(provider, document_parser=StubContractParser())
+    request = service.build_document_request(
+        filename="contract.pdf",
+        file_bytes=b"%PDF-1.4 synthetic",
+        task=CONTRACT_TASK,
+        document_type=CONTRACT_DOCUMENT_TYPE,
+    )
+
+    with pytest.raises(PreviewConfirmationError):
+        service.execute(request)
+
+    assert provider.received == []
+
+
+def test_the_historical_text_surface_is_untouched_by_the_confirmation_requirement():
+    """``/disclosure/*`` and the CLI build requests with no document
+    descriptor, and must keep executing without one -- the confirmation is a
+    property of the structured-document surface, not a new global gate.
+    """
+    provider = RecordingProvider()
+    service = build_service(provider)
+    # HR content under the service's own HR default context: the point is
+    # that `execute` still runs, not what the Contracts policy would say
+    # about a contract analysed as an HR record.
+    request = service.build_application_request(
+        text=HR_TEXT, task="Summarize the team composition."
+    )
+
+    execution = service.execute(request)
+
+    assert execution.provider.called is True
+    assert len(provider.received) == 1
+
+
+def test_a_document_request_records_the_resolved_analysis_mode_not_the_caller_s_none():
+    """The confirmation binds the analysis mode. If ``None`` were recorded
+    verbatim, a preview that accepted the default and an execute that named
+    that same default explicitly would be two different states, and the
+    approval would break for a client doing nothing wrong.
+    """
+    service = build_service(document_parser=StubContractParser())
+    kwargs = {
+        "filename": "contract.pdf",
+        "file_bytes": b"%PDF-1.4 synthetic",
+        "task": CONTRACT_TASK,
+        "document_type": CONTRACT_DOCUMENT_TYPE,
+    }
+
+    defaulted = service.build_document_request(**kwargs)
+    explicit = service.build_document_request(**kwargs, analysis_mode="contract_summary")
+
+    assert defaulted.document == explicit.document
+    assert defaulted.document.analysis_mode == "contract_summary"
+    assert defaulted.document.document_type == CONTRACT_DOCUMENT_TYPE
+
+
+def test_a_confirmed_document_execute_reaches_the_provider_through_the_application_layer():
+    """The application-layer happy path, independent of HTTP: preview,
+    confirm, execute -- one provider call, carrying the reviewed payload.
+    """
+    provider = RecordingProvider()
+    service = build_service(provider, document_parser=StubContractParser())
+    request = service.build_document_request(
+        filename="contract.pdf",
+        file_bytes=b"%PDF-1.4 synthetic",
+        task=CONTRACT_TASK,
+        document_type=CONTRACT_DOCUMENT_TYPE,
+    )
+
+    reviewed = service.preview_document(request)
+    execution = service.execute_document(request, confirmation_token=reviewed.confirmation_token)
+
+    assert len(provider.received) == 1
+    assert provider.received[0].payload == reviewed.preview.external_payload
+    assert execution.provider.called is True
+    assert CONTRACTING_PARTY not in provider.received[0].payload

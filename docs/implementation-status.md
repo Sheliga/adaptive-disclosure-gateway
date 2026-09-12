@@ -455,7 +455,8 @@ The gate Issue #41 calls *Gate A*: connect capabilities that already existed int
 ```text
 multipart HTTP upload -> T12 normalized ingestion -> NormalizedContent
   -> Contracts governance preset (domain=contracts, policy_version=contracts-v1)
-  -> B4 — Policy-governed preview -> explicit confirmation -> configured provider
+  -> B4 — Policy-governed preview -> server-signed confirmation
+  -> confirmed execute (re-uploaded, re-verified) -> configured provider
   -> local reconstruction
 ```
 
@@ -464,6 +465,8 @@ multipart HTTP upload -> T12 normalized ingestion -> NormalizedContent
 - `DisclosureApplicationService.build_document_request` — the one entry point an upload adapter uses; it has no `governance` parameter, so an adapter cannot supply a domain/policy version/purpose of its own. The service also takes an injectable `document_parser`, keeping the T12 adapter replaceable and the test suite offline.
 - `api/limits.py` — a pure ASGI request-body ceiling (`ADG_MAX_UPLOAD_BYTES`, default 8 MiB) enforced before any route or body parser runs, on both the declared `Content-Length` and the streamed byte count. It is deliberately below `ingestion.MAX_INPUT_BYTES` (10 MiB) so the HTTP boundary is the binding one for an upload.
 - `application/settings.build_default_service` — now builds the provider through `providers.build_provider_from_env`, and derives the default `GovernanceContext.provider_class` from that provider. `ADG_PROVIDER=anthropic` therefore works in a deployment without hand-injecting a custom service, with `provider_class = external_llm`; `FakeProvider` stays the default and an unrecognized value fails closed.
+- `application/preview_confirmation.py` — the server-signed proof binding one execute to the preview a reviewer approved. Added during review of this slice, which found that `/documents/preview` and `/documents/execute` were two unrelated requests: a client could preview under `recommended`/B4 and execute the same upload under `strategy=b0`, so what reached the provider need not have been what was reviewed. `/documents/execute` now requires the token the matching preview issued, re-computes the approved state from the re-uploaded request, and refuses any divergence before the provider call. HMAC-SHA256 (standard library), stateless — no database, cache, session or stored document — keyed by `ADG_PREVIEW_CONFIRMATION_SECRET`, which a deployment wired to an external provider must configure or it refuses to start. Bound: normalized document, task, document type, resolved analysis mode, resolved governance, strategy/treatment, provider class and the external payload; content is bound as *keyed* digests, so the token itself discloses nothing.
+- B0 — Direct is not executable against a provider outside the trust boundary through `/documents/execute`, and fails closed before the provider call. A product/demo-surface rule only: B0's experimental semantics, its role as the unsafe control, and its visibility in preview and comparison are unchanged, and the T10 runner never passes through this surface.
 
 Uploads stay ephemeral: bytes are read into memory, handed to ingestion and never written to disk.
 

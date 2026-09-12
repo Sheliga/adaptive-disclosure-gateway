@@ -43,6 +43,9 @@ from adaptive_disclosure_gateway.api.limits import (
 )
 from adaptive_disclosure_gateway.application.ingestion import ParsedDocument
 from adaptive_disclosure_gateway.application.presets import CONTRACT_DOCUMENT_TYPE
+from adaptive_disclosure_gateway.application.preview_confirmation import (
+    PreviewConfirmationSigner,
+)
 from adaptive_disclosure_gateway.application.service import DisclosureApplicationService
 from adaptive_disclosure_gateway.policies import PolicyRepository
 from adaptive_disclosure_gateway.providers import (
@@ -62,6 +65,7 @@ from tests.contracts_fixture import (
     CONTRACTING_PARTY,
     CONTRACTING_PARTY_CNPJ,
     CONTRACTS_FIXTURE,
+    CONTRACTS_OBLIGATION_FIXTURE,
     REPRESENTATIVE,
     REPRESENTATIVE_CPF,
 )
@@ -87,18 +91,35 @@ CONTRACT_IDENTITY_VALUES = (
     CONTRACTED_PARTY_CNPJ,
     REPRESENTATIVE_CPF,
 )
+# A fixed secret, injected explicitly wherever two services must honour
+# each other's tokens. No test reads a deployment secret from the
+# environment.
+SHARED_TEST_SECRET = "a-test-only-preview-confirmation-secret-value"
+
+
+class _MovableClock:
+    """An injectable clock, so token expiry is testable without sleeping."""
+
+    def __init__(self, now: float = 1_700_000_000.0) -> None:
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+
 SYNTHETIC_PDF_BYTES = b"%PDF-1.4 synthetic contract body"
 SYNTHETIC_DOCX_BYTES = b"PK\x03\x04 synthetic contract body"
 
 
 def build_service(
-    provider=None, *, document_parser=None, **context_overrides
+    provider=None, *, document_parser=None, confirmation_signer=None, **context_overrides
 ) -> DisclosureApplicationService:
     return DisclosureApplicationService(
         policy_repository=PolicyRepository.from_directory(POLICY_DIR),
         provider=provider if provider is not None else FakeProvider(),
         default_context=default_context(**context_overrides),
         document_parser=document_parser,
+        preview_confirmation_signer=confirmation_signer,
     )
 
 
@@ -120,6 +141,23 @@ def upload(
     fields = {"task": CONTRACT_TASK, "document_type": CONTRACT_DOCUMENT_TYPE}
     fields.update(form_fields)
     return client.post(path, files={"file": (filename, data, media_type)}, data=fields)
+
+
+def confirmed_execute(client, preview: dict, **form_fields):
+    """Execute the document the reviewer just approved, carrying that
+    preview's own confirmation token.
+
+    Everything else about the request is re-sent byte for byte: the server
+    holds nothing between the two calls, so a confirmed execute is an
+    identical upload plus the server-signed proof that this exact state was
+    reviewed.
+    """
+    return upload(
+        client,
+        path="/documents/execute",
+        confirmation_token=preview["confirmation_token"],
+        **form_fields,
+    )
 
 
 # --- PDF/DOCX upload -> T12 -> Contracts -> preview --------------------------
@@ -263,7 +301,7 @@ def test_a_confirmed_document_execute_reaches_the_provider_with_the_reviewed_pay
     client = build_client(service)
 
     preview = upload(client).json()
-    execution = upload(client, path="/documents/execute").json()
+    execution = confirmed_execute(client, preview).json()
 
     assert len(provider.received) == 1
     sent = provider.received[0]
@@ -289,6 +327,436 @@ def test_there_is_no_upload_endpoint_that_both_uploads_and_calls_the_provider_un
     }
 
     assert paths == {"/documents/preview", "/documents/execute", "/documents/types"}
+
+
+# --- a preview authorises exactly one execute --------------------------------
+#
+# Found in review of this PR's first head (c450e8e): `/documents/preview` and
+# `/documents/execute` were two unrelated requests. A client could preview
+# under `recommended`/B4 -- Policy-governed with `analysis_mode=contract_summary`,
+# show the reviewer that result, and then execute the same upload under
+# `strategy=b0` (B0 -- Direct, the raw document) with
+# `analysis_mode=financial_audit`. The backend accepted it as a fresh
+# execution, so what reached the provider need not be what the reviewer
+# approved -- which is the demo's whole guarantee.
+#
+# The fix is a server-signed confirmation token, verified against a state
+# RE-COMPUTED from the execute request rather than read out of the token.
+# Nothing is stored between the two calls: the file is re-uploaded and the
+# proof travels with it.
+#
+# Every rejection below asserts the provider was never called. A 400 with
+# the provider already contacted would be a worse defect than no check at
+# all.
+
+
+class MappedContractParser:
+    """A ``DocumentParser`` double whose output depends on the bytes it was
+    given, so "same filename, different document" is a real difference at
+    the normalization boundary rather than an artifact of a fixed stub.
+    """
+
+    parser_name = "mapped_document_parser"
+    parser_version = "test"
+
+    def __init__(self, mapping: dict[bytes, str]) -> None:
+        self._mapping = mapping
+
+    def parse(self, *, safe_name: str, data: bytes) -> ParsedDocument:
+        return ParsedDocument(text=self._mapping[data])
+
+
+OTHER_CONTRACT_BYTES = b"%PDF-1.4 a different synthetic contract body"
+
+CONFIRMATION_ERROR_KIND = "PreviewConfirmationError"
+
+
+def assert_refused_before_the_provider(response, *, kind=CONFIRMATION_ERROR_KIND):
+    assert response.status_code == 400, response.text
+    body = response.json()
+    assert body["kind"] == kind
+    return body
+
+
+def test_a_document_preview_issues_a_confirmation_token():
+    service = build_service(document_parser=StubContractParser())
+    client = build_client(service)
+
+    body = upload(client).json()
+
+    assert isinstance(body["confirmation_token"], str)
+    assert body["confirmation_token"].startswith("document-preview-confirmation-v1.")
+
+
+def test_the_confirmation_token_carries_no_document_task_or_payload():
+    """The token is handed to the browser, so it is part of the disclosure
+    surface. Nothing it carries may be a representation of the content.
+    """
+    service = build_service(document_parser=StubContractParser())
+    client = build_client(service)
+
+    body = upload(client).json()
+    token = body["confirmation_token"]
+
+    for value in CONTRACT_IDENTITY_VALUES:
+        assert value not in token
+    assert CONTRACT_TASK not in token
+    assert body["external_payload"] not in token
+
+
+def test_a_confirmed_execute_of_exactly_the_reviewed_state_reaches_the_provider_once():
+    provider = RecordingProvider()
+    service = build_service(provider, document_parser=StubContractParser())
+    client = build_client(service)
+
+    preview = upload(client, strategy="recommended").json()
+    execution = confirmed_execute(client, preview, strategy="recommended")
+
+    assert execution.status_code == 200
+    assert len(provider.received) == 1
+    assert provider.received[0].payload == preview["external_payload"]
+    assert execution.json()["provider"]["called"] is True
+
+
+def test_a_document_execute_without_a_confirmation_token_never_reaches_the_provider():
+    """The defect this whole section exists for, in its bluntest form: an
+    execute that no preview ever authorised. Before the fix this reached the
+    provider with the raw document under ``strategy=b0``.
+    """
+    provider = RecordingProvider()
+    service = build_service(provider, document_parser=StubContractParser())
+    client = build_client(service)
+
+    response = upload(client, path="/documents/execute", strategy="b0")
+
+    assert provider.received == []
+    assert response.status_code == 422
+
+
+def test_an_approved_preview_does_not_authorise_a_different_strategy():
+    """Preview ``recommended``/B4 -- Policy-governed, execute B0 -- Direct
+    with the same token. The reviewer approved a governed payload; B0 would
+    send the raw contract.
+    """
+    provider = RecordingProvider()
+    service = build_service(provider, document_parser=StubContractParser())
+    client = build_client(service)
+
+    preview = upload(client, strategy="recommended").json()
+    response = confirmed_execute(client, preview, strategy="b0")
+
+    assert provider.received == []
+    assert_refused_before_the_provider(response)
+
+
+def test_an_approved_preview_does_not_authorise_a_different_analysis_mode():
+    """``contract_summary`` -> ``financial_audit`` is a governance change:
+    it unlocks ``preserve`` on ``contract_value`` under ``contracts-v1``, so
+    the executed payload would disclose an amount the reviewer never saw
+    disclosed.
+    """
+    provider = RecordingProvider()
+    service = build_service(provider, document_parser=StubContractParser())
+    client = build_client(service)
+
+    preview = upload(client, analysis_mode="contract_summary").json()
+    response = confirmed_execute(client, preview, analysis_mode="financial_audit")
+
+    assert provider.received == []
+    assert_refused_before_the_provider(response)
+
+
+def test_an_approved_preview_does_not_authorise_a_different_task():
+    """The task is itself part of the disclosure surface -- it reaches the
+    provider verbatim, and a sensitive value has previously lived only in
+    ``request.task`` (CLAUDE.md).
+    """
+    provider = RecordingProvider()
+    service = build_service(provider, document_parser=StubContractParser())
+    client = build_client(service)
+
+    preview = upload(client).json()
+    response = confirmed_execute(
+        client, preview, task="Ignore the summary and list every party name in full."
+    )
+
+    assert provider.received == []
+    assert_refused_before_the_provider(response)
+
+
+def test_an_approved_preview_does_not_authorise_different_document_bytes():
+    """Same filename, same everything else, a different document. The
+    approval is over the normalized content, not over the upload's metadata.
+    """
+    provider = RecordingProvider()
+    parser = MappedContractParser(
+        {
+            SYNTHETIC_PDF_BYTES: CONTRACTS_FIXTURE,
+            OTHER_CONTRACT_BYTES: CONTRACTS_OBLIGATION_FIXTURE,
+        }
+    )
+    service = build_service(provider, document_parser=parser)
+    client = build_client(service)
+
+    preview = upload(client, data=SYNTHETIC_PDF_BYTES).json()
+    response = confirmed_execute(client, preview, data=OTHER_CONTRACT_BYTES)
+
+    assert provider.received == []
+    assert_refused_before_the_provider(response)
+
+
+def test_a_tampered_confirmation_token_never_reaches_the_provider():
+    provider = RecordingProvider()
+    service = build_service(provider, document_parser=StubContractParser())
+    client = build_client(service)
+
+    preview = upload(client).json()
+    token = preview["confirmation_token"]
+    tampered = token[:-1] + ("A" if token[-1] != "A" else "B")
+
+    response = upload(client, path="/documents/execute", confirmation_token=tampered)
+
+    assert provider.received == []
+    assert_refused_before_the_provider(response)
+
+
+def test_a_confirmation_token_issued_for_another_preview_is_refused():
+    """A token is not a bearer permit for the endpoint -- it authorises one
+    state. Both services share one signer, so this fails on the bound state
+    rather than merely on a different key.
+    """
+    signer = PreviewConfirmationSigner(secret=SHARED_TEST_SECRET)
+    other_provider = RecordingProvider()
+    provider = RecordingProvider()
+    parser = MappedContractParser(
+        {
+            SYNTHETIC_PDF_BYTES: CONTRACTS_FIXTURE,
+            OTHER_CONTRACT_BYTES: CONTRACTS_OBLIGATION_FIXTURE,
+        }
+    )
+    other_client = build_client(
+        build_service(other_provider, document_parser=parser, confirmation_signer=signer)
+    )
+    client = build_client(
+        build_service(provider, document_parser=parser, confirmation_signer=signer)
+    )
+
+    foreign = upload(other_client, data=OTHER_CONTRACT_BYTES).json()
+    response = upload(
+        client,
+        path="/documents/execute",
+        data=SYNTHETIC_PDF_BYTES,
+        confirmation_token=foreign["confirmation_token"],
+    )
+
+    assert provider.received == []
+    assert_refused_before_the_provider(response)
+
+
+def test_a_preview_under_the_fake_provider_does_not_authorise_an_external_execute():
+    """``provider_class`` is bound because it is what the reviewer was told
+    the payload would cross into. Both deployments share one signer, so only
+    the provider class differs.
+    """
+    signer = PreviewConfirmationSigner(secret=SHARED_TEST_SECRET)
+    client_double = _FakeAnthropicClient()
+    fake_client = build_client(
+        build_service(
+            FakeProvider(), document_parser=StubContractParser(), confirmation_signer=signer
+        )
+    )
+    external_client = build_client(
+        build_service(
+            AnthropicProvider(AnthropicProviderConfig(), client=client_double),
+            document_parser=StubContractParser(),
+            confirmation_signer=signer,
+            provider_class="external_llm",
+        )
+    )
+
+    preview = upload(fake_client).json()
+    response = upload(
+        external_client,
+        path="/documents/execute",
+        confirmation_token=preview["confirmation_token"],
+    )
+
+    assert client_double.messages.calls == []
+    assert_refused_before_the_provider(response)
+
+
+def test_a_preview_under_an_external_provider_does_not_authorise_a_fake_execute():
+    """The inverse direction, so the binding cannot be a one-way check."""
+    signer = PreviewConfirmationSigner(secret=SHARED_TEST_SECRET)
+    provider = RecordingProvider()
+    external_client = build_client(
+        build_service(
+            AnthropicProvider(AnthropicProviderConfig(), client=_FakeAnthropicClient()),
+            document_parser=StubContractParser(),
+            confirmation_signer=signer,
+            provider_class="external_llm",
+        )
+    )
+    fake_client = build_client(
+        build_service(provider, document_parser=StubContractParser(), confirmation_signer=signer)
+    )
+
+    preview = upload(external_client).json()
+    response = upload(
+        fake_client, path="/documents/execute", confirmation_token=preview["confirmation_token"]
+    )
+
+    assert provider.received == []
+    assert_refused_before_the_provider(response)
+
+
+def test_an_expired_confirmation_never_reaches_the_provider():
+    """A review window, not a permanent grant. The clock is injected, so
+    this pins real expiry rather than waiting on wall time.
+    """
+    clock = _MovableClock()
+    provider = RecordingProvider()
+    service = build_service(
+        provider,
+        document_parser=StubContractParser(),
+        confirmation_signer=PreviewConfirmationSigner(
+            secret=SHARED_TEST_SECRET, ttl_seconds=900, clock=clock
+        ),
+    )
+    client = build_client(service)
+
+    preview = upload(client).json()
+    clock.now += 901
+    response = confirmed_execute(client, preview)
+
+    assert provider.received == []
+    assert_refused_before_the_provider(response)
+
+
+def test_a_confirmation_rejection_echoes_no_token_task_filename_or_content():
+    """The rejection body is an output boundary like any other."""
+    service = build_service(document_parser=StubContractParser())
+    client = build_client(service)
+
+    preview = upload(client).json()
+    response = confirmed_execute(client, preview, strategy="b0")
+    rendered = response.text
+
+    assert preview["confirmation_token"] not in rendered
+    assert preview["external_payload"] not in rendered
+    assert CONTRACT_TASK not in rendered
+    assert "contract.pdf" not in rendered
+    for value in CONTRACT_IDENTITY_VALUES:
+        assert value not in rendered
+    assert response.json()["detail"] == (
+        "document preview confirmation is invalid or no longer matches this request"
+    )
+
+
+def test_the_execute_surface_requires_a_confirmation_token_in_its_contract():
+    """Pinned from the OpenAPI schema so the requirement cannot be relaxed
+    to an optional field without failing here.
+    """
+    service = build_service(document_parser=StubContractParser())
+    client = build_client(service)
+    schema = client.get("/openapi.json").json()
+    body_schema = schema["paths"]["/documents/execute"]["post"]["requestBody"]["content"][
+        "multipart/form-data"
+    ]["schema"]
+    ref = body_schema["$ref"].rsplit("/", 1)[-1]
+    definition = schema["components"]["schemas"][ref]
+
+    assert set(definition["properties"]) == {
+        "file",
+        "task",
+        "document_type",
+        "analysis_mode",
+        "strategy",
+        "confirmation_token",
+    }
+    assert set(definition["required"]) == {
+        "file",
+        "task",
+        "document_type",
+        "confirmation_token",
+    }
+
+
+# --- B0 -- Direct is never executed against an external provider -------------
+#
+# A product/demo-surface rule, not an experimental one: B0 -- Direct's
+# experimental semantics are unchanged, and it stays fully visible in
+# preview and comparison. What it must not do is send an untransformed
+# advisor document across the organizational boundary. `compare_strategies`
+# already refuses to execute for exactly this reason; this extends the same
+# stance to the one route that can execute an uploaded document.
+
+
+def test_the_direct_control_is_never_executed_against_an_external_provider():
+    """Carries a *valid* B0 confirmation, so this proves the rule exists in
+    its own right rather than being the confirmation check in disguise.
+    """
+    client_double = _FakeAnthropicClient()
+    service = build_service(
+        AnthropicProvider(AnthropicProviderConfig(), client=client_double),
+        document_parser=StubContractParser(),
+        provider_class="external_llm",
+    )
+    client = build_client(service)
+
+    preview = upload(client, strategy="b0").json()
+    response = confirmed_execute(client, preview, strategy="b0")
+
+    assert client_double.messages.calls == []
+    assert_refused_before_the_provider(response, kind="UnsafeControlExecutionError")
+
+
+def test_the_direct_control_remains_previewable_under_an_external_provider():
+    """The refusal is about executing, not about seeing. A reviewer must
+    still be able to look at what B0 -- Direct would have disclosed.
+    """
+    service = build_service(
+        AnthropicProvider(AnthropicProviderConfig(), client=_FakeAnthropicClient()),
+        document_parser=StubContractParser(),
+        provider_class="external_llm",
+    )
+    client = build_client(service)
+
+    body = upload(client, strategy="b0").json()
+
+    assert body["treatment"] == "b0"
+    assert CONTRACTING_PARTY in body["external_payload"]
+
+
+def test_the_direct_control_refusal_names_no_document_content():
+    service = build_service(
+        AnthropicProvider(AnthropicProviderConfig(), client=_FakeAnthropicClient()),
+        document_parser=StubContractParser(),
+        provider_class="external_llm",
+    )
+    client = build_client(service)
+
+    preview = upload(client, strategy="b0").json()
+    rendered = confirmed_execute(client, preview, strategy="b0").text
+
+    for value in CONTRACT_IDENTITY_VALUES:
+        assert value not in rendered
+    assert CONTRACT_TASK not in rendered
+
+
+def test_the_direct_control_still_executes_against_the_deterministic_fake_provider():
+    """Development against FakeProvider is unaffected: nothing crosses an
+    organizational boundary there, and the confirmation flow still applies.
+    """
+    provider = RecordingProvider()
+    service = build_service(provider, document_parser=StubContractParser())
+    client = build_client(service)
+
+    preview = upload(client, strategy="b0").json()
+    response = confirmed_execute(client, preview, strategy="b0")
+
+    assert response.status_code == 200
+    assert len(provider.received) == 1
 
 
 # --- fail-closed ingestion ---------------------------------------------------
@@ -539,7 +1007,8 @@ def test_a_real_provider_configuration_executes_as_external_llm_and_leaks_no_sec
     client = build_client(service)
 
     health = client.get("/health").json()
-    execution = upload(client, path="/documents/execute").json()
+    preview = upload(client).json()
+    execution = confirmed_execute(client, preview).json()
 
     assert health["provider"]["provider_class"] == "external_llm"
     assert health["provider"]["deterministic_demo_mode"] is False
@@ -569,7 +1038,8 @@ def test_a_contract_request_under_a_mismatched_provider_configuration_never_call
     service = build_service(provider, document_parser=StubContractParser(), provider_class="fake")
     client = build_client(service)
 
-    execution = upload(client, path="/documents/execute").json()
+    preview = upload(client).json()
+    execution = confirmed_execute(client, preview).json()
 
     assert client_double.messages.calls == []
     assert execution["provider"]["failed"] is True
@@ -603,7 +1073,8 @@ def test_the_reconstructed_answer_is_produced_locally_after_the_provider_call():
     )
     client = build_client(service)
 
-    execution = upload(client, path="/documents/execute").json()
+    preview = upload(client).json()
+    execution = confirmed_execute(client, preview).json()
 
     assert execution["reconstruction"]["attempted"] is True
     assert CONTRACTING_PARTY in execution["final_answer"]
@@ -711,7 +1182,7 @@ def test_a_real_synthetic_contract_executes_and_is_reconstructed_locally():
     data = minimal_pdf_bytes(CONTRACTS_FIXTURE.splitlines())
 
     preview = upload(client, data=data).json()
-    execution = upload(client, path="/documents/execute", data=data).json()
+    execution = confirmed_execute(client, preview, data=data).json()
 
     assert len(provider.received) == 1
     assert provider.received[0].payload == preview["external_payload"]

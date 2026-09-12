@@ -32,10 +32,14 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from adaptive_disclosure_gateway.application.preview_confirmation import (
+    PreviewConfirmationConfigurationError,
+    PreviewConfirmationSigner,
+)
 from adaptive_disclosure_gateway.application.service import DisclosureApplicationService
 from adaptive_disclosure_gateway.domain import GovernanceContext
 from adaptive_disclosure_gateway.policies import PolicyRepository
-from adaptive_disclosure_gateway.providers import build_provider_from_env
+from adaptive_disclosure_gateway.providers import DEFAULT_PROVIDER_NAME, build_provider_from_env
 
 # src/adaptive_disclosure_gateway/application/settings.py -> repo root is 3
 # parents up.
@@ -57,6 +61,54 @@ def examples_directory() -> Path:
     """
     value = os.getenv("ADG_EXAMPLES_DIR")
     return Path(value) if value else DEFAULT_EXAMPLES_DIR
+
+
+PREVIEW_CONFIRMATION_SECRET_ENV_VAR = "ADG_PREVIEW_CONFIRMATION_SECRET"
+"""Names the variable only. The value is read once, at service construction,
+and handed straight to the signer -- it never becomes a module constant, a
+config object attribute, a response field or a log line, exactly as
+``providers/settings.py`` handles the API key."""
+
+
+def build_preview_confirmation_signer(*, provider) -> PreviewConfirmationSigner:
+    """The signer the default demo service binds its document previews with.
+
+    Three cases, and the third is the point:
+
+    - ``ADG_PREVIEW_CONFIRMATION_SECRET`` is configured: a durable signer.
+      This is what a real deployment needs -- a token issued by one process
+      verifies in another, and survives a restart.
+    - no secret, and the wired provider is the deterministic in-process one:
+      per-process key material (see
+      ``PreviewConfirmationSigner.with_ephemeral_secret``). Confirmation is
+      still fully enforced; what is given up is durability, which a local
+      development run does not need. This is NOT a fallback to "confirmation
+      disabled".
+    - no secret, and the wired provider crosses the organizational boundary:
+      **refused**. A deployment that can send an advisor's document to an
+      external provider must be able to prove which preview authorised each
+      call, and a signer whose key dies with the process cannot do that
+      across workers or restarts. Failing to start is the fail-closed
+      outcome; starting and accepting unverifiable executes is not, and
+      neither is starting with confirmation silently switched off.
+
+    The provider class, not the concrete class, decides which of the last
+    two applies -- fail-closed on anything but the recognized in-process
+    class, matching ``DisclosureApplicationService``'s own unsafe-control
+    check.
+    """
+    raw = os.getenv(PREVIEW_CONFIRMATION_SECRET_ENV_VAR)
+    if raw is not None and raw.strip():
+        return PreviewConfirmationSigner(secret=raw.strip())
+    if provider.provider_class == DEFAULT_PROVIDER_NAME:
+        return PreviewConfirmationSigner.with_ephemeral_secret()
+    raise PreviewConfirmationConfigurationError(
+        f"{PREVIEW_CONFIRMATION_SECRET_ENV_VAR} must be configured before a deployment wired to "
+        "a provider outside the trust boundary can serve the structured-document surface: "
+        "without durable key material a document preview cannot be proven to have authorised "
+        "the execute that follows it. Generate one with 'python -c \"import secrets; "
+        "print(secrets.token_urlsafe(32))\"' and configure it server-side only"
+    )
 
 
 def default_governance_context(*, provider_class: str) -> GovernanceContext:
@@ -115,6 +167,13 @@ def build_default_service() -> DisclosureApplicationService:
     here -- ``AnthropicProvider`` constructs its client lazily at the first
     call, so an API without a key configured still starts and still serves
     ``/health``, and fails closed only when a call is actually attempted.
+
+    The preview-confirmation signer is built here for the same reason the
+    governance context's ``provider_class`` is derived here: the two halves
+    must not be configurable apart. Selecting a provider outside the trust
+    boundary without configuring
+    ``ADG_PREVIEW_CONFIRMATION_SECRET`` fails to start -- see
+    ``build_preview_confirmation_signer``.
     """
     provider = build_provider_from_env()
     return DisclosureApplicationService(
@@ -122,4 +181,5 @@ def build_default_service() -> DisclosureApplicationService:
         provider=provider,
         default_context=default_governance_context(provider_class=provider.provider_class),
         examples_directory=examples_directory(),
+        preview_confirmation_signer=build_preview_confirmation_signer(provider=provider),
     )

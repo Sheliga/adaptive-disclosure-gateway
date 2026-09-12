@@ -140,11 +140,14 @@ from adaptive_disclosure_gateway.application.contracts import (
     DisclosureExecution,
     DisclosurePreview,
     DisclosureStrategy,
+    DocumentDisclosurePreview,
+    DocumentRequestDescriptor,
     GovernanceOverrides,
     ProviderMode,
     StrategyComparison,
     StrategyComparisonEntry,
     StrategyOption,
+    UnsafeControlExecutionError,
     list_strategy_options,
     resolve_treatment,
     safe_governance_view,
@@ -159,7 +162,15 @@ from adaptive_disclosure_gateway.application.ingestion import (
     normalize_text,
     normalize_text_file,
 )
-from adaptive_disclosure_gateway.application.presets import resolve_governance_preset
+from adaptive_disclosure_gateway.application.presets import (
+    resolve_analysis_mode,
+    resolve_governance_preset,
+)
+from adaptive_disclosure_gateway.application.preview_confirmation import (
+    PreviewConfirmationError,
+    PreviewConfirmationSigner,
+    PreviewConfirmationState,
+)
 from adaptive_disclosure_gateway.application.requests import (
     ContentSourceError,
     MissingTaskError,
@@ -177,7 +188,7 @@ from adaptive_disclosure_gateway.pipeline import (
     run_disclosure_case,
 )
 from adaptive_disclosure_gateway.policies import PolicyRepository
-from adaptive_disclosure_gateway.providers import FakeProvider, Provider
+from adaptive_disclosure_gateway.providers import DEFAULT_PROVIDER_NAME, FakeProvider, Provider
 from adaptive_disclosure_gateway.task_analysis import TaskAnalyzer
 from adaptive_disclosure_gateway.treatment_factory import build_treatment
 from adaptive_disclosure_gateway.vault import InMemoryVault, Vault
@@ -254,6 +265,7 @@ class DisclosureApplicationService:
         default_context: GovernanceContext,
         examples_directory: str | Path | None = None,
         document_parser: DocumentParser | None = None,
+        preview_confirmation_signer: PreviewConfirmationSigner | None = None,
     ) -> None:
         self._policy_repository = policy_repository
         self._provider = provider
@@ -270,6 +282,20 @@ class DisclosureApplicationService:
         # ``None`` means "let ingestion load its default Docling adapter
         # lazily, only if a document format actually needs it".
         self._document_parser = document_parser
+        # Held for this service's lifetime and never exposed, exactly like
+        # the vault above. ``None`` does NOT mean "no confirmation": it
+        # means per-process key material (see
+        # ``PreviewConfirmationSigner.with_ephemeral_secret``), so a service
+        # constructed without configuration still refuses an execute that
+        # no preview authorised. There is deliberately no way to build this
+        # service with confirmation disabled -- a deployment that must have
+        # a *durable* secret is refused at construction in
+        # ``application/settings.build_default_service``, not here.
+        self._preview_confirmation_signer = (
+            preview_confirmation_signer
+            if preview_confirmation_signer is not None
+            else PreviewConfirmationSigner.with_ephemeral_secret()
+        )
 
     def _build_treatment(self, request: DisclosureApplicationRequest):
         treatment_code = resolve_treatment(request.strategy)
@@ -331,7 +357,23 @@ class DisclosureApplicationService:
         See the module docstring for why the summary is built from a
         standalone ``decide_disclosure`` call rather than from
         ``run_disclosure_case``'s own internal one.
+
+        A request from the structured-document surface is refused here. That
+        surface's whole guarantee is that what reaches the provider is what
+        a reviewer approved, and this method has no confirmation to check
+        against -- so the guard is structural rather than a convention the
+        HTTP layer is trusted to follow: ``execute_document`` is the only
+        way to execute an uploaded document, and a future adapter cannot
+        reach the provider with one by calling the more obvious method.
         """
+        if request.document is not None:
+            raise PreviewConfirmationError(
+                "a request from the structured-document surface is executed only through "
+                "execute_document, which verifies the confirmation issued by its preview"
+            )
+        return self._execute(request)
+
+    def _execute(self, request: DisclosureApplicationRequest) -> DisclosureExecution:
         tracer = get_tracer()
         started = time.perf_counter()
         with tracer.start_as_current_span("application.execute") as span:
@@ -577,10 +619,155 @@ class DisclosureApplicationService:
         closed there with ``IngestionError``.
         """
         overrides = resolve_governance_preset(document_type, analysis_mode=analysis_mode)
-        return self.build_application_request(
+        request = self.build_application_request(
             filename=filename,
             file_bytes=file_bytes,
             task=task,
             strategy=strategy,
             governance=overrides,
         )
+        # Records that this request came from the structured-document
+        # surface, and under which caller-facing selection. That is what
+        # makes ``preview_document``/``execute_document`` applicable to it,
+        # and what the preview-confirmation fingerprint binds.
+        return dataclasses.replace(
+            request,
+            document=DocumentRequestDescriptor(
+                document_type=document_type,
+                analysis_mode=resolve_analysis_mode(document_type, analysis_mode=analysis_mode),
+            ),
+        )
+
+    # --- the confirmed structured-document flow ------------------------------
+    #
+    # ``preview_document`` -> the reviewer reads the disclosure review ->
+    # ``execute_document`` with that preview's own token.
+    #
+    # These wrap ``preview``/``execute`` rather than reimplementing either:
+    # what they add is the binding between the two calls. See
+    # ``application/preview_confirmation.py`` for the mechanism and for the
+    # defect it closes.
+
+    def _confirmation_state(
+        self, request: DisclosureApplicationRequest, preview: DisclosurePreview
+    ) -> PreviewConfirmationState:
+        """The exact state an approval is an approval of.
+
+        Every field is read from the request being handled and from the
+        preview just computed for it -- never from a token. That is what
+        makes ``execute_document`` a re-computation rather than a decoding:
+        a client cannot assert its own state, only present a proof that the
+        server once computed the identical one.
+        """
+        document = request.document
+        if document is None:
+            # Not reachable through ``build_document_request``; a guard so a
+            # future caller cannot obtain a confirmation for a request that
+            # carries no document selection to bind.
+            raise PreviewConfirmationError(
+                "preview confirmation applies to the structured-document surface only"
+            )
+        governance = preview.governance
+        return PreviewConfirmationState(
+            normalized_document=request.content.text,
+            task=request.task,
+            document_type=document.document_type,
+            analysis_mode=document.analysis_mode,
+            domain=governance.domain,
+            policy_version=governance.policy_version,
+            purpose=governance.purpose,
+            requester_role=governance.requester_role,
+            requested_pseudonym_scope=governance.requested_pseudonym_scope.value,
+            # Both provider classes are bound: the one the governance
+            # context *declares* (which policy itself reads) and the one the
+            # wired provider actually *is*. They can legitimately differ,
+            # and a change to either changes where the payload would go.
+            governance_provider_class=governance.provider_class,
+            provider_class=preview.provider_mode.provider_class,
+            strategy=preview.strategy.value,
+            treatment=preview.treatment.value,
+            external_payload=preview.external_payload,
+        )
+
+    def preview_document(self, request: DisclosureApplicationRequest) -> DocumentDisclosurePreview:
+        """``preview``, plus the server-signed proof of what was shown.
+
+        Nothing about the review itself changes -- this still never reaches
+        the provider. The token is what lets a later ``execute_document``
+        establish that it is executing this very state and not another.
+        """
+        preview = self.preview(request)
+        return DocumentDisclosurePreview(
+            preview=preview,
+            confirmation_token=self._preview_confirmation_signer.issue(
+                self._confirmation_state(request, preview)
+            ),
+        )
+
+    def execute_document(
+        self, request: DisclosureApplicationRequest, *, confirmation_token: str
+    ) -> DisclosureExecution:
+        """Execute an uploaded document only if this exact request is the
+        preview a reviewer approved.
+
+        The decision phase runs once here to recompute the approved state,
+        and once more inside ``execute`` -> ``run_disclosure_case``. That is
+        unavoidable and deliberate: the payload must be known *before* the
+        provider is contacted in order to be compared against the approved
+        one, and ``run_disclosure_case`` owns the call. Both recomputations
+        are deterministic for a given request -- pseudonyms come from this
+        service's one vault, which issues a stable pseudonym per original --
+        which is the same property the preview -> execute flow already
+        relied on to be able to show a reviewer the payload that would be
+        sent.
+
+        Order matters. The confirmation is verified first, so the
+        unsafe-control refusal below cannot be reached by an execute that no
+        preview authorised, and so that refusal is provably a rule of its
+        own rather than the confirmation check under another name.
+        """
+        approved = self.preview(request)
+        self._preview_confirmation_signer.verify(
+            confirmation_token, self._confirmation_state(request, approved)
+        )
+        self._refuse_unsafe_control_outside_the_trust_boundary(request)
+        return self._execute(request)
+
+    def _refuse_unsafe_control_outside_the_trust_boundary(
+        self, request: DisclosureApplicationRequest
+    ) -> None:
+        """B0 -- Direct discloses the document unchanged. On the advisor
+        demo's document surface it may be previewed and compared, never
+        executed against a provider outside the trust boundary.
+
+        Read from the existing ``pipeline.UnsafeControlTreatment`` capability
+        marker -- exactly how ``run_disclosure_case`` and
+        ``compare_strategies`` already check it -- rather than a hardcoded
+        ``Treatment.DIRECT`` comparison, so a future treatment carrying the
+        same marker inherits the rule.
+
+        "Outside the trust boundary" is read from the provider's own
+        declared ``provider_class`` -- the same field policy itself reads,
+        and the same one ``invoke_provider`` checks against the governance
+        context -- rather than from its concrete Python class. Only the
+        deterministic in-process class (``providers.DEFAULT_PROVIDER_NAME``)
+        is exempt, because nothing leaves the process for it and the
+        confirmation flow still applies to it in full. Anything else,
+        including a class this codebase does not recognize, is refused: the
+        check fails closed on an unknown provider class rather than
+        enumerating the ones known to be external.
+
+        This changes no experimental semantics -- B0 itself is unchanged, it
+        stays available in preview and comparison, and the T10 runner builds
+        its own treatments and never goes through this service.
+        """
+        _, treatment = self._build_treatment(request)
+        if (
+            isinstance(treatment, UnsafeControlTreatment)
+            and self._provider.provider_class != DEFAULT_PROVIDER_NAME
+        ):
+            raise UnsafeControlExecutionError(
+                "the direct/unsafe-control treatment is available for preview and strategy "
+                "comparison only; it is never executed against a provider outside the trust "
+                "boundary through the document surface"
+            )

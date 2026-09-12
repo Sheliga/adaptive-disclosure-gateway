@@ -21,7 +21,13 @@ What these tests exist to catch:
   rules to a call that never leaves the process;
 - an unrecognized ``ADG_PROVIDER`` value being coerced back to the default;
 - the API credential reaching the constructed service, its provider, or its
-  health record.
+  health record;
+- a deployment wired to an external provider starting up without the durable
+  preview-confirmation key material that makes a document execute provably
+  bound to a reviewed preview -- or starting up with that check silently
+  switched off;
+- the confirmation signing secret reaching a health record, a repr, a
+  configuration record or a token.
 """
 
 from __future__ import annotations
@@ -30,6 +36,11 @@ import json
 
 import pytest
 
+from adaptive_disclosure_gateway.application.preview_confirmation import (
+    PreviewConfirmationConfigurationError,
+    PreviewConfirmationError,
+    PreviewConfirmationState,
+)
 from adaptive_disclosure_gateway.application.settings import (
     build_default_service,
     default_governance_context,
@@ -41,6 +52,28 @@ from adaptive_disclosure_gateway.providers import (
 )
 
 MARKER_API_KEY = "sk-ant-marker-DO-NOT-LEAK-9f3b2a1c"
+MARKER_CONFIRMATION_SECRET = "confirmation-marker-DO-NOT-LEAK-4e7d1b8a-2c5f"
+
+
+def _confirmation_state() -> PreviewConfirmationState:
+    """A minimal approved state, so a signer can be exercised without
+    standing up the whole document surface."""
+    return PreviewConfirmationState(
+        normalized_document="Contracting party: Aurora Servicos Digitais Ltda",
+        task="Summarize the obligations of each party.",
+        document_type="contract",
+        analysis_mode="contract_summary",
+        domain="contracts",
+        policy_version="contracts-v1",
+        purpose="contract_summary",
+        requester_role="contract_analyst",
+        requested_pseudonym_scope="request",
+        governance_provider_class="external_llm",
+        provider_class="external_llm",
+        strategy="recommended",
+        treatment="b4",
+        external_payload="Contracting party: PSEUDO-party_name-0001",
+    )
 
 
 def test_the_default_service_uses_the_deterministic_fake_provider_when_unconfigured(monkeypatch):
@@ -54,6 +87,7 @@ def test_the_default_service_uses_the_deterministic_fake_provider_when_unconfigu
 
 def test_the_default_service_uses_the_real_adapter_when_adg_provider_selects_it(monkeypatch):
     monkeypatch.setenv("ADG_PROVIDER", "anthropic")
+    monkeypatch.setenv("ADG_PREVIEW_CONFIRMATION_SECRET", MARKER_CONFIRMATION_SECRET)
 
     service = build_default_service()
     health = service.describe_health()
@@ -69,6 +103,7 @@ def test_the_default_governance_context_provider_class_matches_the_configured_pr
     real-provider request in the deployed demo.
     """
     monkeypatch.setenv("ADG_PROVIDER", "anthropic")
+    monkeypatch.setenv("ADG_PREVIEW_CONFIRMATION_SECRET", MARKER_CONFIRMATION_SECRET)
     real_service = build_default_service()
 
     monkeypatch.setenv("ADG_PROVIDER", "fake")
@@ -93,6 +128,7 @@ def test_an_unrecognized_provider_name_fails_closed_rather_than_falling_back(mon
 
 def test_the_constructed_service_carries_no_api_credential(monkeypatch):
     monkeypatch.setenv("ADG_PROVIDER", "anthropic")
+    monkeypatch.setenv("ADG_PREVIEW_CONFIRMATION_SECRET", MARKER_CONFIRMATION_SECRET)
     monkeypatch.setenv("ANTHROPIC_API_KEY", MARKER_API_KEY)
 
     service = build_default_service()
@@ -113,8 +149,101 @@ def test_selecting_the_real_provider_builds_no_client_and_makes_no_call(monkeypa
     call is actually attempted.
     """
     monkeypatch.setenv("ADG_PROVIDER", "anthropic")
+    monkeypatch.setenv("ADG_PREVIEW_CONFIRMATION_SECRET", MARKER_CONFIRMATION_SECRET)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
     service = build_default_service()
 
     assert service.describe_health().provider_class == "external_llm"
+
+
+# --- preview confirmation is deployment configuration, not an option --------
+#
+# A deployment that can reach an external provider must be able to prove
+# which preview authorised each call. That needs durable key material: a
+# per-process secret dies with the worker, so a preview issued by one worker
+# would not verify on another, and a restart would invalidate every open
+# review. The deployment therefore fails to start rather than serving
+# structured uploads it cannot bind.
+
+
+def test_a_real_provider_deployment_without_a_confirmation_secret_fails_to_start(monkeypatch):
+    """The fail-closed direction. Starting *without* confirmation, or with
+    it silently disabled, would let a client execute an uploaded contract
+    against the real model with no reviewed preview behind it.
+    """
+    monkeypatch.setenv("ADG_PROVIDER", "anthropic")
+    monkeypatch.delenv("ADG_PREVIEW_CONFIRMATION_SECRET", raising=False)
+
+    with pytest.raises(PreviewConfirmationConfigurationError):
+        build_default_service()
+
+
+def test_a_blank_confirmation_secret_is_not_treated_as_configured(monkeypatch):
+    monkeypatch.setenv("ADG_PROVIDER", "anthropic")
+    monkeypatch.setenv("ADG_PREVIEW_CONFIRMATION_SECRET", "   ")
+
+    with pytest.raises(PreviewConfirmationConfigurationError):
+        build_default_service()
+
+
+def test_a_confirmation_secret_too_short_to_key_an_hmac_fails_to_start(monkeypatch):
+    """Refused rather than accepted as weaker-but-working key material."""
+    monkeypatch.setenv("ADG_PROVIDER", "anthropic")
+    monkeypatch.setenv("ADG_PREVIEW_CONFIRMATION_SECRET", "too-short")
+
+    with pytest.raises(PreviewConfirmationConfigurationError):
+        build_default_service()
+
+
+def test_the_development_default_enforces_confirmation_rather_than_disabling_it(monkeypatch):
+    """No secret plus the deterministic provider is the one case that
+    starts. It must still refuse an execute that no preview authorised --
+    generated key material, not a disabled check.
+    """
+    monkeypatch.delenv("ADG_PROVIDER", raising=False)
+    monkeypatch.delenv("ADG_PREVIEW_CONFIRMATION_SECRET", raising=False)
+
+    signer = build_default_service()._preview_confirmation_signer
+
+    with pytest.raises(PreviewConfirmationError):
+        signer.verify("document-preview-confirmation-v1.e30.abc", _confirmation_state())
+
+
+def test_a_configured_confirmation_secret_survives_across_constructions(monkeypatch):
+    """What the ephemeral development signer cannot do, and why a real
+    deployment must configure one: a token issued by one process verifies in
+    another.
+    """
+    monkeypatch.delenv("ADG_PROVIDER", raising=False)
+    monkeypatch.setenv("ADG_PREVIEW_CONFIRMATION_SECRET", MARKER_CONFIRMATION_SECRET)
+    state = _confirmation_state()
+
+    issuing = build_default_service()._preview_confirmation_signer
+    verifying = build_default_service()._preview_confirmation_signer
+
+    verifying.verify(issuing.issue(state), state)
+
+
+def test_the_confirmation_secret_reaches_no_health_record_repr_or_token(monkeypatch):
+    """The signing secret is key material: it is not a configuration value a
+    client, a log line or an audit record may ever see.
+    """
+    monkeypatch.setenv("ADG_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", MARKER_API_KEY)
+    monkeypatch.setenv("ADG_PREVIEW_CONFIRMATION_SECRET", MARKER_CONFIRMATION_SECRET)
+
+    service = build_default_service()
+    signer = service._preview_confirmation_signer
+    rendered = " ".join(
+        (
+            repr(service),
+            repr(signer),
+            repr(service.describe_health()),
+            json.dumps(service._provider.configuration_record(), default=str, sort_keys=True),
+            signer.issue(_confirmation_state()),
+        )
+    )
+
+    assert MARKER_CONFIRMATION_SECRET not in rendered
+    assert MARKER_API_KEY not in rendered

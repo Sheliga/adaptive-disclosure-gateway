@@ -178,6 +178,30 @@ def get_document_preset(document_type: str) -> DocumentAnalysisPreset:
     return preset
 
 
+def resolve_analysis_mode(document_type: str, *, analysis_mode: str | None) -> str:
+    """The analysis mode a ``(document_type, analysis_mode)`` pair actually
+    selects: the preset's own default when the caller named none, and
+    otherwise the caller's value, which must appear verbatim in that
+    preset's allowlist.
+
+    Split out from ``resolve_governance_preset`` so the resolved mode can be
+    recorded on the request itself (``DocumentRequestDescriptor``) without
+    either caller re-deriving "which mode did None mean" -- two copies of
+    that rule could disagree, and the preview-confirmation fingerprint binds
+    the answer.
+    """
+    preset = get_document_preset(document_type)
+
+    if analysis_mode is None:
+        return preset.default_analysis_mode
+    if analysis_mode in preset.analysis_modes:
+        return analysis_mode
+    raise DocumentAnalysisPresetError(
+        "unsupported analysis mode for this document type; supported analysis modes: "
+        f"{preset.analysis_modes!r}"
+    )
+
+
 def resolve_governance_preset(
     document_type: str, *, analysis_mode: str | None
 ) -> GovernanceOverrides:
@@ -189,16 +213,7 @@ def resolve_governance_preset(
     value must appear verbatim in the preset's ``analysis_modes`` allowlist.
     """
     preset = get_document_preset(document_type)
-
-    if analysis_mode is None:
-        purpose = preset.default_analysis_mode
-    elif analysis_mode in preset.analysis_modes:
-        purpose = analysis_mode
-    else:
-        raise DocumentAnalysisPresetError(
-            "unsupported analysis mode for this document type; supported analysis modes: "
-            f"{preset.analysis_modes!r}"
-        )
+    purpose = resolve_analysis_mode(document_type, analysis_mode=analysis_mode)
 
     return GovernanceOverrides(
         domain=preset.domain,
