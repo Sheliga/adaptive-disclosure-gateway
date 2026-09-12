@@ -343,6 +343,78 @@ def test_execute_case_accepts_the_real_adapter_without_widening_its_signature():
 # --- Provider class wiring ----------------------------------------------------
 
 
+def test_execute_case_derives_the_real_providers_caller_deadline_from_its_native_timeout(
+    monkeypatch,
+):
+    # Review blocker 2: the native transport timeout (60s default) and the
+    # caller-side deadline (30s default) were inverted -- the caller gave up
+    # before the transport did, which is not real cancellation and can leave
+    # a stale call running while the batch moves on. execute_case's
+    # real-provider path must derive a caller-side deadline that genuinely
+    # exceeds the configured native timeout, not rely on run_pilot's default.
+    from adaptive_disclosure_gateway.corpus.loader import load_case
+    from adaptive_disclosure_gateway.experiments import execution as execution_module
+    from adaptive_disclosure_gateway.providers import CALLER_TIMEOUT_GRACE_SECONDS
+
+    captured: dict[str, float] = {}
+    original = execution_module.run_case_with_span_capture
+
+    def _spy(*args, **kwargs):
+        captured["timeout"] = kwargs["timeout"]
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(execution_module, "run_case_with_span_capture", _spy)
+
+    case = load_case(min(CORPUS_DIR.glob("*.yaml")))
+    provider = AnthropicProvider(
+        AnthropicProviderConfig(timeout_seconds=45.0), client=_RecordingClient()
+    )
+
+    execute_case(
+        case_input=case.input,
+        treatment=Treatment.STATIC_SANITIZATION,
+        corpus_version="hr/v1",
+        run_classification="pilot_development",
+        policy_repository=PolicyRepository.from_directory(POLICY_DIR),
+        provider=provider,
+    )
+
+    assert "timeout" in captured
+    assert captured["timeout"] == 45.0 + CALLER_TIMEOUT_GRACE_SECONDS
+    assert captured["timeout"] > provider.native_timeout_seconds
+
+
+def test_execute_case_keeps_the_previous_default_deadline_for_the_fake_provider_path(
+    monkeypatch,
+):
+    # Requirement 3: the FakeProvider/default path must be unaffected by the
+    # derived-deadline logic added for the real-provider path.
+    from adaptive_disclosure_gateway.corpus.loader import load_case
+    from adaptive_disclosure_gateway.experiments import execution as execution_module
+    from adaptive_disclosure_gateway.providers import DEFAULT_TIMEOUT_SECONDS
+
+    captured: dict[str, float] = {}
+    original = execution_module.run_case_with_span_capture
+
+    def _spy(*args, **kwargs):
+        captured["timeout"] = kwargs["timeout"]
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(execution_module, "run_case_with_span_capture", _spy)
+
+    case = load_case(min(CORPUS_DIR.glob("*.yaml")))
+
+    execute_case(
+        case_input=case.input,
+        treatment=Treatment.STATIC_SANITIZATION,
+        corpus_version="hr/v1",
+        run_classification="pilot_development",
+        policy_repository=PolicyRepository.from_directory(POLICY_DIR),
+    )
+
+    assert captured["timeout"] == DEFAULT_TIMEOUT_SECONDS
+
+
 def test_a_provider_class_mismatch_still_blocks_the_real_adapter_before_any_call():
     client = _RecordingClient()
     provider = AnthropicProvider(

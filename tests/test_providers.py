@@ -18,12 +18,15 @@ import pytest
 from adaptive_disclosure_gateway.detection import Detector
 from adaptive_disclosure_gateway.domain import DisclosureRequest, GovernanceContext
 from adaptive_disclosure_gateway.providers import (
+    CALLER_TIMEOUT_GRACE_SECONDS,
+    DEFAULT_TIMEOUT_SECONDS,
     FakeProvider,
     ProviderClassMismatchError,
     ProviderError,
     ProviderRequest,
     ProviderResponse,
     ProviderTimeoutError,
+    caller_timeout_for_provider,
     count_transmitted_bytes,
     invoke_provider,
 )
@@ -105,6 +108,11 @@ class _CountingStubProvider:
     response: ProviderResponse | None = None
     error: Exception | None = None
     delay_seconds: float = 0.0
+    # Optional native-transport-timeout declaration (T22 / issue #30, review
+    # blocker 2) -- absent by default, matching FakeProvider and every
+    # existing stub in this module, which have no notion of a native
+    # transport timeout at all.
+    native_timeout_seconds: float | None = None
     received: list[ProviderRequest] = field(default_factory=list)
 
     def generate(self, request: ProviderRequest) -> ProviderResponse:
@@ -270,6 +278,70 @@ def test_provider_timeout_error_carries_provider_invoked_true():
 
 def test_provider_timeout_error_is_a_provider_error_so_callers_can_fail_closed_uniformly():
     assert issubclass(ProviderTimeoutError, ProviderError)
+
+
+# --- caller_timeout_for_provider: caller deadline must exceed a real
+# provider's native transport timeout (T22 / issue #30, review blocker 2) --
+# the native transport timeout is the only layer that can actually stop an
+# in-flight HTTP request; invoke_provider's own deadline merely abandons the
+# worker thread. If the caller-side deadline is shorter, the caller gives up
+# while the request is still guaranteed to be alive underneath it.
+
+
+def test_caller_timeout_for_provider_derives_a_deadline_that_exceeds_a_declared_native_timeout():
+    stub = _CountingStubProvider(
+        provider_class="external_llm", response=_stub_response(), native_timeout_seconds=42.0
+    )
+
+    deadline = caller_timeout_for_provider(stub)
+
+    assert deadline > stub.native_timeout_seconds
+    assert deadline == stub.native_timeout_seconds + CALLER_TIMEOUT_GRACE_SECONDS
+
+
+def test_caller_timeout_for_provider_keeps_the_previous_default_with_no_native_timeout_declared():
+    # FakeProvider (and every stub in this module before T22) has no notion
+    # of a native transport timeout at all. This path must be bit-identical
+    # to what it was before the derived-deadline logic existed.
+    stub = _CountingStubProvider(provider_class="fake", response=_stub_response())
+
+    assert caller_timeout_for_provider(stub) == DEFAULT_TIMEOUT_SECONDS
+
+
+def test_a_provider_with_a_native_timeout_still_fails_closed_on_a_hang_via_the_derived_deadline(
+    monkeypatch,
+):
+    # Review blocker 2, requirements 4 and 5: even under the *derived*
+    # caller-side deadline, a hung provider still times out closed, with
+    # exactly one call made (no retry) and no fallback response returned.
+    # The grace constant is patched to keep this test fast -- its value is
+    # exercised for real by the pure derivation tests above.
+    import adaptive_disclosure_gateway.providers.base as providers_base
+
+    monkeypatch.setattr(providers_base, "CALLER_TIMEOUT_GRACE_SECONDS", 0.05)
+    stub = _CountingStubProvider(
+        provider_class="fake",
+        response=_stub_response(),
+        delay_seconds=1.0,
+        native_timeout_seconds=0.01,
+    )
+    request = ProviderRequest(payload="p", task="t")
+
+    started = time.perf_counter()
+    with pytest.raises(ProviderTimeoutError):
+        invoke_provider(
+            stub,
+            request,
+            expected_provider_class="fake",
+            timeout=providers_base.caller_timeout_for_provider(stub),
+        )
+    elapsed = time.perf_counter() - started
+
+    # The derived deadline (native + patched grace, ~0.06s) must still be
+    # enforced well before the stub's 1s delay elapses.
+    assert elapsed < 0.5
+    # Exactly one call -- no retry, no second attempt, no fallback.
+    assert len(stub.received) == 1
 
 
 # --- Runtime payload isolation: nothing a treatment withheld reaches a

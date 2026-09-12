@@ -31,6 +31,7 @@ from adaptive_disclosure_gateway.providers import (
     AnthropicProvider,
     ProviderRequest,
     anthropic_config_from_env,
+    caller_timeout_for_provider,
     invoke_provider,
 )
 
@@ -58,7 +59,11 @@ def test_one_live_synthetic_call_returns_a_response_with_usable_metadata():
         provider,
         ProviderRequest(payload=SYNTHETIC_PAYLOAD, task=SYNTHETIC_TASK),
         expected_provider_class=provider.provider_class,
-        timeout=provider.config.timeout_seconds + 10.0,
+        # Derived the same way the scientific/runner path now derives it
+        # (T22 / issue #30, review blocker 2) rather than by a manual
+        # "+10s" workaround maintained independently here -- see
+        # caller_timeout_for_provider's docstring.
+        timeout=caller_timeout_for_provider(provider),
     )
 
     assert response.text.strip()

@@ -170,8 +170,27 @@ Delivered:
   through `invoke_provider`;
 - opt-in selection (`ADG_PROVIDER=anthropic`); **`FakeProvider` remains the default
   everywhere** — TDD, CI, offline development, deterministic regression and the
-  pilot/development corpora are unaffected;
-- native transport timeout on the SDK client in addition to the caller-side deadline;
+  pilot/development corpora are unaffected. **Fixed under review:** any other non-empty,
+  unrecognized value (e.g. a typo) now raises `ProviderConfigurationError` instead of
+  silently falling back to `FakeProvider`;
+- native transport timeout on the SDK client, with the caller-side deadline
+  (`invoke_provider`'s `timeout`) now **derived from it** on the real-provider path
+  (`providers.caller_timeout_for_provider`, native timeout + a fixed, documented grace) rather
+  than defaulting independently. **Fixed under review:** the default caller-side deadline
+  (30s) was previously shorter than the default native transport timeout (60s) on the
+  scientific/runner path (`execute_case`/`run_pilot`), so the caller could give up before the
+  transport did; the live integration test's manual `+10s` workaround is now the shared,
+  versioned helper every real-provider caller uses;
+- a model-id allowlist (`settings.SUPPORTED_ANTHROPIC_MODEL_IDS`, currently just
+  `claude-opus-5`, the default). **Fixed under review:** `AnthropicProviderConfig` previously
+  accepted any `model_id` string, which would have let an unvalidated model silently inherit
+  this adapter's "no sampling parameters" provenance claim; a model id outside the allowlist
+  now raises `ProviderConfigurationError` at construction;
+- `base_url` override **forbidden**. **Fixed under review:** a `base_url_overridden` boolean
+  was insufficient provenance (two batches could both say `true` and still have hit different
+  backends); any non-`None` `base_url` (including via `ADG_ANTHROPIC_BASE_URL`) now raises
+  `ProviderConfigurationError` at construction, and `configuration_record()` states the fixed
+  `base_url_policy` instead of a flag;
 - no retry (`max_retries=0` pinned by test — the SDK retries twice by default) and no
   fallback of any kind, including the server-side `fallbacks` parameter, which is
   deliberately not enabled because a silent model switch would break the frozen-configuration

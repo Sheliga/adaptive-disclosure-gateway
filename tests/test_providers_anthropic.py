@@ -620,6 +620,104 @@ def test_an_unknown_effort_level_fails_at_construction():
         AnthropicProviderConfig(effort="turbo")
 
 
+# --- Model allowlist: capability provenance must not be claimed for an
+# unvalidated model (T22 / issue #30, review blocker 3) ---------------------
+
+
+def test_the_default_model_id_is_accepted():
+    # claude-opus-5 is the default and the one model this adapter version
+    # has actually verified end-to-end (sampling params, thinking, effort,
+    # max_tokens, response shape, usage metadata). Must not raise.
+    AnthropicProviderConfig()
+
+
+def test_an_unvalidated_model_id_is_rejected_at_construction():
+    # An older or unvalidated model id would make this adapter's recorded
+    # decoding_config/sampling provenance a false claim -- it was verified
+    # only for the allowlisted models, not universally. Must fail at
+    # configuration time, never discovered later as an HTTP error or,
+    # worse, silently accepted with an unverified capability record.
+    with pytest.raises(ProviderConfigurationError):
+        AnthropicProviderConfig(model_id="claude-3-opus-20240229")
+
+
+def test_an_empty_model_id_is_rejected_at_construction():
+    with pytest.raises(ProviderConfigurationError):
+        AnthropicProviderConfig(model_id="")
+
+
+def test_no_supported_model_can_declare_sampling_parameters_supported():
+    # Structural guarantee, not a spot check: every model_id this adapter
+    # can be constructed with is in the validated allowlist, and for every
+    # one of them decoding_config must say sampling_parameters_supported is
+    # False -- there is no way to build a config that both passes
+    # construction and claims sampling support for an unvalidated model.
+    from adaptive_disclosure_gateway.providers.settings import SUPPORTED_ANTHROPIC_MODEL_IDS
+
+    assert SUPPORTED_ANTHROPIC_MODEL_IDS  # non-empty: the allowlist exists
+    for model_id in SUPPORTED_ANTHROPIC_MODEL_IDS:
+        provider = _provider(_FakeClient(_text_response()), model_id=model_id)
+        response = provider.generate(ProviderRequest(payload="p", task="t"))
+        assert response.decoding_config["sampling_parameters_supported"] is False
+        assert response.decoding_config["temperature"] is None
+
+
+# --- base_url override: forbidden for reproducibility (T22 / issue #30,
+# review blocker 4) -----------------------------------------------------------
+
+
+def test_a_base_url_override_is_rejected_at_construction():
+    # Two batches both recording base_url_overridden=true could still have
+    # hit different backends -- insufficient provenance. The narrow fix is
+    # to forbid the override outright for this adapter rather than try to
+    # record it faithfully.
+    with pytest.raises(ProviderConfigurationError):
+        AnthropicProviderConfig(base_url="https://compatible-gateway.example.com")
+
+
+MARKER_SECRET_IN_URL = "sk-ant-url-embedded-marker-DO-NOT-LEAK"
+
+
+def test_a_base_url_with_an_embedded_secret_never_reaches_an_error_message():
+    # Adversarial: even though the override is rejected, the rejection
+    # itself must not become a new side channel for whatever was embedded in
+    # the attempted URL (e.g. a credential in the userinfo component).
+    secret_url = f"https://user:{MARKER_SECRET_IN_URL}@evil-gateway.example.com/v1"
+
+    with pytest.raises(ProviderConfigurationError) as excinfo:
+        AnthropicProviderConfig(base_url=secret_url)
+
+    rendered = repr(excinfo.value) + str(excinfo.value)
+    assert MARKER_SECRET_IN_URL not in rendered
+    assert secret_url not in rendered
+
+
+def test_the_configuration_record_states_the_base_url_policy_not_a_boolean_flag():
+    # base_url_overridden: true/false was insufficient provenance (two
+    # batches could both say true and still have hit different backends).
+    # Since the override is now forbidden outright, the record states the
+    # fixed policy in words rather than a flag that could vary silently.
+    record = _provider(_FakeClient(_text_response())).configuration_record()
+
+    assert "base_url_overridden" not in record
+    assert "base_url_policy" in record
+    assert isinstance(record["base_url_policy"], str) and record["base_url_policy"]
+
+
+def test_a_base_url_with_an_embedded_secret_never_reaches_env_driven_configuration(monkeypatch):
+    from adaptive_disclosure_gateway.providers.settings import anthropic_config_from_env
+
+    secret_url = f"https://user:{MARKER_SECRET_IN_URL}@evil-gateway.example.com/v1"
+    monkeypatch.setenv("ADG_ANTHROPIC_BASE_URL", secret_url)
+
+    with pytest.raises(ProviderConfigurationError) as excinfo:
+        anthropic_config_from_env()
+
+    rendered = repr(excinfo.value) + str(excinfo.value)
+    assert MARKER_SECRET_IN_URL not in rendered
+    assert secret_url not in rendered
+
+
 # --- Provider selection stays fake by default -------------------------------
 
 
@@ -631,12 +729,37 @@ def test_the_default_provider_stays_fake_when_nothing_is_configured(monkeypatch)
     assert isinstance(build_provider_from_env(), FakeProvider)
 
 
-def test_an_unrecognized_provider_name_never_escalates_to_a_real_call(monkeypatch):
+def test_an_empty_or_whitespace_only_provider_name_stays_fake(monkeypatch):
     from adaptive_disclosure_gateway.providers import FakeProvider, build_provider_from_env
 
-    monkeypatch.setenv("ADG_PROVIDER", "some-typo")
+    monkeypatch.setenv("ADG_PROVIDER", "   ")
 
     assert isinstance(build_provider_from_env(), FakeProvider)
+
+
+def test_the_provider_name_fake_is_explicit_and_stays_fake(monkeypatch):
+    from adaptive_disclosure_gateway.providers import FakeProvider, build_provider_from_env
+
+    monkeypatch.setenv("ADG_PROVIDER", "fake")
+
+    assert isinstance(build_provider_from_env(), FakeProvider)
+
+
+def test_an_unrecognized_provider_name_fails_closed_rather_than_silently_using_fake(monkeypatch):
+    # Review blocker 1: post-pilot-protocol-v1 section 9.4 forbids a silent
+    # fallback. A typo in ADG_PROVIDER (e.g. "anthrpic" instead of
+    # "anthropic") must never quietly execute the batch on FakeProvider --
+    # that would produce FakeProvider results that get read as real-provider
+    # evidence. It must fail loudly at configuration time instead.
+    from adaptive_disclosure_gateway.providers import (
+        ProviderConfigurationError,
+        build_provider_from_env,
+    )
+
+    monkeypatch.setenv("ADG_PROVIDER", "anthrpic")
+
+    with pytest.raises(ProviderConfigurationError):
+        build_provider_from_env()
 
 
 def test_the_real_provider_is_selected_only_by_an_explicit_opt_in(monkeypatch):

@@ -1,5 +1,6 @@
 from .anthropic_api import AnthropicProvider, build_anthropic_client, sdk_version
 from .base import (
+    CALLER_TIMEOUT_GRACE_SECONDS,
     DEFAULT_TIMEOUT_SECONDS,
     MODEL_SNAPSHOT_UNAVAILABLE,
     Provider,
@@ -8,6 +9,7 @@ from .base import (
     ProviderRequest,
     ProviderResponse,
     ProviderTimeoutError,
+    caller_timeout_for_provider,
     count_transmitted_bytes,
     invoke_provider,
 )
@@ -16,6 +18,7 @@ from .settings import (
     ANTHROPIC_PROVIDER_NAME,
     DEFAULT_PROVIDER_NAME,
     PROMPT_SCAFFOLDING_VERSION,
+    SUPPORTED_ANTHROPIC_MODEL_IDS,
     AnthropicProviderConfig,
     ProviderConfigurationError,
     anthropic_config_from_env,
@@ -26,10 +29,12 @@ from .settings import (
 
 __all__ = [
     "ANTHROPIC_PROVIDER_NAME",
+    "CALLER_TIMEOUT_GRACE_SECONDS",
     "DEFAULT_PROVIDER_NAME",
     "DEFAULT_TIMEOUT_SECONDS",
     "MODEL_SNAPSHOT_UNAVAILABLE",
     "PROMPT_SCAFFOLDING_VERSION",
+    "SUPPORTED_ANTHROPIC_MODEL_IDS",
     "AnthropicProvider",
     "AnthropicProviderConfig",
     "FakeProvider",
@@ -43,6 +48,7 @@ __all__ = [
     "anthropic_config_from_env",
     "build_anthropic_client",
     "build_provider_from_env",
+    "caller_timeout_for_provider",
     "count_transmitted_bytes",
     "invoke_provider",
     "provider_name",

@@ -40,7 +40,14 @@ explicit act; nothing in this repository escalates to it automatically.
    export ADG_PROVIDER=anthropic
    ```
 
-`ADG_PROVIDER` unset, empty, or holding any unrecognized value yields `FakeProvider`.
+`ADG_PROVIDER` unset, empty, whitespace-only, or explicitly `fake` yields `FakeProvider`.
+`anthropic` selects the real adapter. **Any other non-empty value — including a typo such as
+`anthrpic` — raises `ProviderConfigurationError` at configuration time.** This changed under
+review (T22 / PR #62): an unrecognized value previously fell back to `FakeProvider` silently,
+which could make a batch planned as real-provider execute on `FakeProvider` without anyone
+noticing — exactly the silent substitution protocol §9.4 forbids. `ADG_PROVIDER` is never
+autocorrected and never mapped to another provider on its own judgment; an unrecognized value
+is a configuration error, full stop.
 
 ### Behaviour with no credential
 
@@ -58,12 +65,12 @@ With the extra not installed, the same thing happens with a different message.
 | --- | --- | --- |
 | `ADG_PROVIDER` | `fake` | `fake` or `anthropic` |
 | `ANTHROPIC_API_KEY` | — | the credential; read from the environment only |
-| `ADG_ANTHROPIC_MODEL_ID` | `claude-opus-5` | exact model id, never date-suffixed |
+| `ADG_ANTHROPIC_MODEL_ID` | `claude-opus-5` | exact model id, never date-suffixed — must be in the validated allowlist |
 | `ADG_ANTHROPIC_MAX_OUTPUT_TOKENS` | `16000` | `max_tokens` for one call |
 | `ADG_ANTHROPIC_EFFORT` | `high` | `low` / `medium` / `high` / `xhigh` / `max` |
 | `ADG_ANTHROPIC_THINKING` | `adaptive` | `adaptive` or `disabled` |
 | `ADG_ANTHROPIC_TIMEOUT_SECONDS` | `60` | native transport timeout on the SDK client |
-| `ADG_ANTHROPIC_BASE_URL` | — | proxy / compatible gateway override |
+| `ADG_ANTHROPIC_BASE_URL` | — | **forbidden** — setting this raises `ProviderConfigurationError` (see below) |
 | `ADG_PROVIDER_CLASS` | `external_llm` | the class the adapter declares to policy |
 | `ADG_ANTHROPIC_API_KEY_ENV_VAR` | `ANTHROPIC_API_KEY` | the *name* of the credential variable |
 
@@ -71,21 +78,80 @@ With the extra not installed, the same thing happens with a different message.
 configuration object refuses that combination at construction rather than letting it become
 an HTTP 400 part-way through a batch.
 
+## Model allowlist
+
+`AnthropicProviderConfig.model_id` only accepts a model id from
+`settings.SUPPORTED_ANTHROPIC_MODEL_IDS` — currently just the default, `claude-opus-5`. This
+exists for reproducibility and methodology, not because the shared `Provider` protocol
+architecturally limits which models could be called: the properties this adapter records as
+universal (no sampling parameters; the response/usage shape it reads) were verified against
+that specific model, not against every model id the Anthropic API happens to accept. An older
+or unvalidated model id could differ on any of those properties, which would make
+`decoding_config`'s `sampling_parameters_supported: false` a false provenance claim rather
+than a verified one.
+
+`ADG_ANTHROPIC_MODEL_ID` set to anything outside the allowlist raises
+`ProviderConfigurationError` at configuration time — never accepted on the theory that "the
+API will validate it later". Extending the allowlist requires independently verifying a new
+id's sampling, thinking, effort, `max_tokens`, response-shape and usage-metadata semantics
+first.
+
+## base_url override — forbidden
+
+Earlier revisions of this adapter accepted `ADG_ANTHROPIC_BASE_URL` for a proxy or
+compatible-gateway override and recorded only a boolean `base_url_overridden` flag in
+`configuration_record()`. Under review that was found to be insufficient provenance: two
+batches could both record `base_url_overridden: true` and still have used different backends,
+and a gateway/proxy would introduce a new, unrecorded experimental variable. **The override is
+now forbidden outright**: any non-`None` `base_url` — including via `ADG_ANTHROPIC_BASE_URL`
+— raises `ProviderConfigurationError` at `AnthropicProviderConfig` construction. The adapter
+always uses the SDK's official endpoint. `configuration_record()` states this fixed policy as
+`base_url_policy`, a string, rather than a flag that could vary silently.
+
+The rejection message never echoes the attempted URL: a URL can carry an embedded credential
+(userinfo, query string, a token in the path), and construction failing must not become a new
+side channel for it.
+
 See [`.env.example`](../.env.example) for a copyable, placeholder-only version.
 
 ## Timeout and cancellation
 
-Two independent layers, both required:
+Two layers, both required, and now **deterministically related** rather than two independent
+settings that can silently diverge:
 
 - **Native transport timeout** — configured on the SDK client itself
-  (`ADG_ANTHROPIC_TIMEOUT_SECONDS`). This is the only one that can actually stop an
-  in-flight HTTP request.
-- **Caller-side wall-clock deadline** — enforced by `invoke_provider` itself, unchanged from
-  before T22. It guarantees the caller returns even if a provider hangs, by abandoning the
-  worker thread.
+  (`ADG_ANTHROPIC_TIMEOUT_SECONDS`, default 60s). This is the only one that can actually stop
+  an in-flight HTTP request.
+- **Caller-side wall-clock deadline** — enforced by `invoke_provider` itself. It guarantees
+  the caller returns even if a provider hangs, by abandoning the worker thread — but it does
+  **not** stop the underlying request, so if it is shorter than the native timeout the caller
+  gives up while the request is still guaranteed to be alive underneath it.
+
+**Fixed under review (T22 / PR #62, blocker 2):** the default caller-side deadline
+(`providers.DEFAULT_TIMEOUT_SECONDS`, 30s) was *shorter* than the default native transport
+timeout (60s) for every code path except the live integration test, which worked around it
+manually with `provider timeout + 10s`. The scientific/runner path
+(`experiments.execution.execute_case`, and therefore `run_pilot`/`run_case_for_treatment`) did
+not have that workaround and used the plain 30s default even when a real, 60s-configured
+provider was injected.
+
+The fix: `providers.caller_timeout_for_provider(provider)` derives the caller-side deadline
+from the provider's own native timeout whenever it exposes one
+(`provider.native_timeout_seconds` — `AnthropicProvider` does), as
+`native timeout + providers.CALLER_TIMEOUT_GRACE_SECONDS` (a fixed, documented, versionable
+10s grace — the same buffer the live integration test used manually). This guarantees
+`caller deadline > native timeout` by construction, for exactly one call site to get right,
+rather than trusting every caller to compute a compatible pair of numbers independently. A
+provider with no `native_timeout_seconds` attribute (`FakeProvider`, and every provider
+written before this helper existed) is unaffected: `caller_timeout_for_provider` returns the
+unchanged 30s default. `execute_case` calls this helper itself, so `run_pilot(provider=...)`
+gets the correct deadline automatically — no caller needs to compute it by hand, and the live
+integration test now calls the same helper instead of maintaining its own `+10s` arithmetic.
 
 A timeout surfaces as `ProviderTimeoutError` (a `ProviderError`), is recorded in the audit
-record as a provider failure, and is never retried.
+record as a provider failure, and is never retried — exactly one call is attempted regardless
+of which deadline was used, and a timeout never falls back to a second call or a different
+provider.
 
 ## No retry, no fallback
 
@@ -129,8 +195,8 @@ that would silently go stale.
 `AnthropicProvider.configuration_record()` returns the freezable, metadata-only configuration
 record protocol §9.3 requires — provider, provider class, model id, SDK name and version,
 transport timeout, retry policy, fallback policy, decoding configuration, prompt-scaffolding
-version, and the cost-accounting statement. It is shaped to drop straight into
-`artifacts.write_pilot_artifacts(reproducibility=...)`.
+version, the fixed `base_url_policy` statement, and the cost-accounting statement. It is
+shaped to drop straight into `artifacts.write_pilot_artifacts(reproducibility=...)`.
 
 ## Limitation: decoding determinism is not configurable
 

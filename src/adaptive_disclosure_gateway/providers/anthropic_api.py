@@ -39,6 +39,23 @@ before their bases by MRO order, so ``RateLimitError`` classifies as rate
 limiting rather than as its ``APIStatusError`` base, and ``APITimeoutError``
 as a timeout rather than as its ``APIConnectionError`` base.
 
+Model allowlist
+---------------
+``AnthropicProviderConfig`` only accepts a ``model_id`` from
+``settings.SUPPORTED_ANTHROPIC_MODEL_IDS`` -- currently just the default,
+``claude-opus-5``. This exists for reproducibility and methodology, not
+because the shared ``Provider`` protocol architecturally limits which
+models could be called: the properties this module records as universal
+(no sampling parameters, the response/usage shape read by
+``_to_provider_response``) were verified against the specific models
+listed above, not against every model id the Anthropic API happens to
+accept. An older or unvalidated model id could differ on any of those
+properties, which would make ``decoding_config``'s
+``sampling_parameters_supported: False`` a false provenance claim rather
+than a verified one. A model id outside the allowlist is refused at
+``AnthropicProviderConfig`` construction, never accepted on the theory
+that "the API will validate it later".
+
 Methodological limitation: decoding determinism
 -----------------------------------------------
 ``temperature``, ``top_p`` and ``top_k`` were removed on current models
@@ -229,6 +246,18 @@ class AnthropicProvider:
     def config(self) -> AnthropicProviderConfig:
         return self._config
 
+    @property
+    def native_timeout_seconds(self) -> float:
+        """The native transport timeout configured on the SDK client
+        (T22 / issue #30, review blocker 2).
+
+        Read by ``providers.caller_timeout_for_provider`` to derive a
+        caller-side wall-clock deadline that is guaranteed to exceed this
+        value -- see that function's docstring for why the two must never be
+        allowed to diverge independently.
+        """
+        return self._config.timeout_seconds
+
     def _active_client(self) -> Any:
         if self._client is None:
             self._client = build_anthropic_client(self._config)
@@ -375,6 +404,15 @@ class AnthropicProvider:
         likewise absent: this adapter records real token usage and no
         pricing, so a consumer reports cost as unavailable rather than
         computing one from a table that would silently go stale.
+
+        ``base_url_policy`` states the fixed policy in words rather than a
+        boolean flag (T22 / issue #30, review blocker 4): a prior
+        ``base_url_overridden: true/false`` flag was insufficient
+        provenance, since two batches could both say ``true`` and still have
+        used different backends. ``AnthropicProviderConfig`` now forbids the
+        override outright at construction, so this is always the same fixed
+        statement -- never a value derived from (and therefore never able to
+        leak) whatever a caller attempted to pass.
         """
         return {
             "provider": "anthropic",
@@ -388,7 +426,9 @@ class AnthropicProvider:
             "fallback_policy": "none (no model fallback, no provider fallback, no fallback to b0)",
             "decoding_config": self.decoding_config(),
             "prompt_scaffolding_version": PROMPT_SCAFFOLDING_VERSION,
-            "base_url_overridden": self._config.base_url is not None,
+            "base_url_policy": (
+                "fixed to the official Anthropic endpoint; override forbidden for this adapter"
+            ),
             "api_key_env_var": self._config.api_key_env_var,
             "cost_accounting": "unavailable (token usage recorded; no pricing table)",
         }

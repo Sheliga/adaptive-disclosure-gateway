@@ -38,6 +38,20 @@ ANTHROPIC_PROVIDER_NAME = "anthropic"
 # Exact model id, never date-suffixed.
 DEFAULT_ANTHROPIC_MODEL_ID = "claude-opus-5"
 
+# Model ids this adapter version has actually verified end-to-end: sampling
+# parameters (removed and rejected), thinking, effort, max_tokens, response
+# shape and usage metadata. This allowlist exists for reproducibility and
+# methodology, not because the shared ``Provider`` protocol architecturally
+# limits which models could be called -- see anthropic_api.py's module
+# docstring. `AnthropicProviderConfig.__post_init__` refuses any other
+# model id at construction time: an older or unvalidated model id would
+# make this adapter's recorded decoding_config/sampling provenance a false
+# claim, verified only for the models actually checked here. Extend this
+# set only after independently verifying a new id against all six
+# properties above -- never merely because "the API will validate it
+# later".
+SUPPORTED_ANTHROPIC_MODEL_IDS = frozenset({DEFAULT_ANTHROPIC_MODEL_ID})
+
 # The environment variable the Anthropic SDK itself documents. Named here
 # (not embedded in the adapter) so a deployment can point the adapter at a
 # differently-named variable without the key ever becoming a config value.
@@ -111,6 +125,26 @@ class AnthropicProviderConfig:
     api_key_env_var: str = DEFAULT_API_KEY_ENV_VAR
 
     def __post_init__(self) -> None:
+        if self.model_id not in SUPPORTED_ANTHROPIC_MODEL_IDS:
+            raise ProviderConfigurationError(
+                "model_id is not in this adapter's validated allowlist "
+                f"({sorted(SUPPORTED_ANTHROPIC_MODEL_IDS)!r}); only ids whose sampling, "
+                "thinking, effort, max_tokens, response-shape and usage-metadata semantics "
+                "have been independently verified for this adapter version are accepted"
+            )
+        if self.base_url is not None:
+            # Two batches could both record base_url_overridden=true and
+            # still have hit different backends -- insufficient provenance,
+            # and a gateway/proxy introduces a new, unrecorded experimental
+            # variable. Forbidden outright for this adapter rather than
+            # attempting to record it faithfully. Never interpolate the
+            # attempted value here: a URL can carry an embedded credential
+            # (userinfo, query string, token path) and this message must
+            # not become a new side channel for it.
+            raise ProviderConfigurationError(
+                "base_url override is not supported by this adapter; the official "
+                "Anthropic endpoint is used unconditionally (see docs/provider-configuration.md)"
+            )
         if self.effort not in VALID_EFFORT_LEVELS:
             raise ProviderConfigurationError(
                 f"effort must be one of {VALID_EFFORT_LEVELS!r}, not {self.effort!r}"
@@ -134,10 +168,16 @@ class AnthropicProviderConfig:
 
 
 def provider_name() -> str:
-    """``ADG_PROVIDER``, defaulting to ``"fake"``.
+    """``ADG_PROVIDER``, normalized (lowercased and stripped), defaulting to
+    ``"fake"`` when unset, empty or whitespace-only.
 
-    The real provider is strictly opt-in: an unset, empty or unrecognized
-    value yields the deterministic default, never a real external call.
+    This performs no validation that the normalized value actually names a
+    known provider -- an unrecognized non-empty value is returned verbatim.
+    ``build_provider_from_env`` is what fails closed on that case
+    (``ProviderConfigurationError``); it must never be silently coerced to
+    ``"fake"`` here, or a batch planned for the real provider could execute
+    on FakeProvider without anyone noticing (post-pilot-protocol-v1 section
+    9.4's no-silent-fallback rule).
     """
     value = (os.getenv("ADG_PROVIDER") or "").strip().lower()
     return value or DEFAULT_PROVIDER_NAME
@@ -192,21 +232,37 @@ def anthropic_config_from_env() -> AnthropicProviderConfig:
 def build_provider_from_env():
     """The provider an adapter/script should use, per ``ADG_PROVIDER``.
 
-    Returns a ``FakeProvider`` unless ``ADG_PROVIDER`` explicitly selects the
-    real adapter -- the default is deterministic and offline, and an
-    unrecognized value never silently escalates to a real external call.
+    Returns a ``FakeProvider`` when ``ADG_PROVIDER`` is unset, empty,
+    whitespace-only, or explicitly ``"fake"``; returns the real adapter only
+    when it explicitly names ``"anthropic"``. Any other non-empty value --
+    in particular a typo such as ``"anthrpic"`` -- raises
+    ``ProviderConfigurationError`` rather than silently falling back to
+    ``FakeProvider``. That fallback used to happen for *any* unrecognized
+    value, which could make a run planned as real-provider silently execute
+    on FakeProvider instead: exactly the silent substitution
+    post-pilot-protocol-v1 section 9.4 forbids. This function never guesses
+    or autocorrects a misspelled name and never substitutes a different
+    provider on its own judgment -- an unrecognized value is a
+    configuration error, full stop.
 
-    Selecting the real provider with no credential configured fails closed
-    at the first call (``build_anthropic_client``), never by degrading to
-    ``FakeProvider``: the post-pilot protocol's §9.4 no-silent-fallback rule
-    means a batch must fail visibly rather than quietly produce
-    FakeProvider results that would be read as real-provider evidence.
+    Selecting the real provider with no credential configured separately
+    fails closed at the first call (``build_anthropic_client``), never by
+    degrading to ``FakeProvider``.
     """
     # Imported here rather than at module scope: anthropic_api imports this
     # module for its configuration type, so a top-level import would cycle.
     from .anthropic_api import AnthropicProvider
     from .fake import FakeProvider
 
-    if real_provider_enabled():
+    name = provider_name()
+    if name == DEFAULT_PROVIDER_NAME:
+        return FakeProvider()
+    if name == ANTHROPIC_PROVIDER_NAME:
         return AnthropicProvider(anthropic_config_from_env())
-    return FakeProvider()
+    raise ProviderConfigurationError(
+        "ADG_PROVIDER names a provider this codebase does not recognize; only "
+        f"{DEFAULT_PROVIDER_NAME!r} and {ANTHROPIC_PROVIDER_NAME!r} are supported. An "
+        "unrecognized value is rejected rather than silently defaulting to FakeProvider "
+        "(post-pilot-protocol-v1 section 9.4's no-silent-fallback rule) -- it is never "
+        "autocorrected or mapped to another provider."
+    )

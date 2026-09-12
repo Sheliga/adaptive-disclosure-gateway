@@ -16,6 +16,21 @@ from typing import Any, Protocol, runtime_checkable
 
 DEFAULT_TIMEOUT_SECONDS = 30.0
 
+# The fixed buffer, in seconds, by which invoke_provider's caller-side
+# wall-clock deadline must exceed a real provider's own native transport
+# timeout (T22 / issue #30, review blocker 2). A provider's native transport
+# timeout is the only layer that can actually stop an in-flight HTTP
+# request; invoke_provider's own deadline merely abandons the worker thread
+# (see its docstring). If the caller-side deadline were shorter than -- or
+# only coincidentally close to -- the transport timeout, the caller could
+# give up while the request underneath is still guaranteed to be alive,
+# which is not real cancellation and can leave a stale call running while a
+# batch moves on to later cases. Matches the manual "provider timeout + 10s"
+# workaround the live integration test used before this helper existed;
+# documented and versionable here, once, rather than duplicated at every
+# call site that constructs a real provider's caller-side deadline.
+CALLER_TIMEOUT_GRACE_SECONDS = 10.0
+
 # The value ``ProviderResponse.model_snapshot`` carries when the provider
 # genuinely exposes no snapshot/version distinct from the model id that was
 # requested (T22 / issue #30). Recorded explicitly rather than synthesized:
@@ -220,6 +235,33 @@ def count_transmitted_bytes(payload: str) -> int:
     providers are compared.
     """
     return len(payload.encode("utf-8"))
+
+
+def caller_timeout_for_provider(
+    provider: Provider, *, default: float = DEFAULT_TIMEOUT_SECONDS
+) -> float:
+    """The caller-side wall-clock deadline ``invoke_provider`` should use for
+    ``provider`` (T22 / issue #30, review blocker 2).
+
+    When ``provider`` exposes a native transport timeout
+    (``provider.native_timeout_seconds``, a positive number of seconds), the
+    caller-side deadline is derived deterministically as that timeout plus
+    ``CALLER_TIMEOUT_GRACE_SECONDS`` -- guaranteeing the caller-side deadline
+    always exceeds the transport's own, rather than depending on two
+    independent settings that can silently diverge (the defect this fixes:
+    a 60s native timeout under a 30s caller-side deadline meant the caller
+    gave up while the HTTP request underneath was still guaranteed to be
+    alive).
+
+    A provider with no native transport timeout attribute -- ``FakeProvider``
+    and every provider that predates this helper -- is unaffected: this
+    returns ``default`` unchanged, so that path keeps exactly the behaviour
+    it had before T22.
+    """
+    native = getattr(provider, "native_timeout_seconds", None)
+    if isinstance(native, int | float) and not isinstance(native, bool) and native > 0:
+        return float(native) + CALLER_TIMEOUT_GRACE_SECONDS
+    return default
 
 
 def invoke_provider(

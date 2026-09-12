@@ -79,6 +79,16 @@ class TimingProviderDelegate:
         self.provider_class = wrapped.provider_class
         self.last_call: ProviderCallMetrics | None = None
 
+    @property
+    def native_timeout_seconds(self) -> float | None:
+        """Passes through the wrapped provider's native transport timeout,
+        if it declares one (T22 / issue #30, review blocker 2), so
+        ``providers.caller_timeout_for_provider`` still derives the correct
+        caller-side deadline even when it is handed an already-wrapped
+        delegate rather than the bare provider.
+        """
+        return getattr(self._wrapped, "native_timeout_seconds", None)
+
     def generate(self, request: ProviderRequest) -> ProviderResponse:
         started = time.perf_counter()
         response = self._wrapped.generate(request)
