@@ -132,9 +132,13 @@ the under-studied direction.
 `preserve`. Obligation text is the *task-bearing content* of a contract, not
 a sensitive information unit; detecting it would put ordinary clause prose
 under disclosure control for no safety gain and considerable utility loss.
-The thing that actually matters — that obligation *assignment* survives
-pseudonymization — is preserved structurally by the role/value split above
-and pinned by test, with no relation model added. See "Relation semantics".
+The thing that actually matters — that a concrete obligation stays correctly
+*attributed* to the right pseudonymized party — is preserved structurally by
+the role/value split above and pinned by test, with no relation model added,
+but **only for an obligation phrased by role** (e.g. an `Obligation:` line
+reading "Contracting party must pay Contracted party ..."). See "Relation
+semantics" below for exactly what is and is not proven, and for which
+obligation shape.
 
 **`confidential_clause` dropped.** No deterministic detector for it is
 possible within this project's stated posture. A `Confidential clause:` label
@@ -146,7 +150,8 @@ judgement, and the detector is explicitly not a semantic component.
 ## Relation semantics — what T24 may rely on
 
 Issue #56 asks for "who owes what to whom" to survive. It does, through two
-mechanisms that already existed. **No relation model was added.**
+mechanisms that already existed. **No relation model was added.** This has
+two layers, proven by separate tests, and it matters not to conflate them:
 
 1. **Role in the label, identity in the value.** The detector captures only
    its `value` group, so the role word is never part of a detected span and
@@ -157,8 +162,44 @@ mechanisms that already existed. **No relation model was added.**
    same company reads identically across the contract and its amendments,
    while the two parties never collapse into one reference.
 
-Together: `ACME must pay R$ X to Beta by D` becomes `[party A] must pay
-[banded amount] to [party B] by [date]`, with assignment intact.
+Those two mechanisms, on their own, prove that **party roles survive with
+stable, distinguishable pseudonyms** — pinned by
+`test_party_roles_survive_pseudonymization_with_stable_distinguishable_pseudonyms`
+against `CONTRACTS_FIXTURE`. `CONTRACTS_FIXTURE` states no obligation at all
+(no "X must pay Y" sentence anywhere in it), so that test cannot, and does
+not, prove that a concrete obligation stays correctly *attributed* to the
+right party. That is a separate, stronger claim, proven separately:
+
+**A concrete obligation — "X must pay Y `<amount>` by `<date>`" —
+attributed to the right pseudonymized role.** `CONTRACTS_OBLIGATION_FIXTURE`
+adds one, and `test_role_referenced_obligation_binds_the_correct_pseudonym_to_each_role`
+demonstrates that `ACME must pay Beta R$ X by D` becomes `[party A] must pay
+[party B] [banded amount] by [transformed deadline]` — reconstructable from
+the transformed payload alone, not merely "two distinguishable pseudonyms
+exist somewhere in it".
+
+**This is proven for exactly one obligation shape: phrased BY ROLE**, e.g.
+an `Obligation:` line reading "Contracting party must pay Contracted party
+the contract value by the deadline". That shape needs no relation model
+because it reuses the same two words already used as labels elsewhere in the
+document; the sentence itself carries no detected span (`obligation` has no
+detection rule — see "obligation dropped" above) and is never itself
+transformed, so it reaches the payload unchanged in every treatment. The
+amount and deadline it refers to are carried, and transformed, by the
+document's existing `Contract value:` / `Deadline:` lines, not restated
+inline in the obligation sentence — restating them inline would put literal
+figures outside every detection rule and leak them.
+
+**This is explicitly NOT proven for an obligation phrased in natural prose
+naming a party directly** (e.g. "Aurora … shall pay the contract value to
+Boreal … on the deadline"). `CONTRACTS_COREFERENCE_FIXTURE`'s `Clause 4` IS
+exactly this shape, and
+`test_a_party_named_in_unlabeled_prose_is_not_detected_and_reaches_the_payload`
+shows what actually happens: the raw party name is not inside any detected
+span, so it — and with it that specific obligation — reaches the external
+payload verbatim, even though the same company's labeled mention two lines
+above was pseudonymized. See "Known limitations" below; closing this gap is
+coreference resolution, explicitly out of scope for Issue #56.
 
 Consequences by treatment, all pinned as tests:
 
@@ -166,9 +207,16 @@ Consequences by treatment, all pinned as tests:
 - **B1 — Static Sanitization**: roles survive (they are labels) but both
   party values are removed, so the two parties become indistinguishable from
   each other and cross-document identity is lost. This is the B1→B2 utility
-  gap the experiment measures, unusually visible in this domain.
+  gap the experiment measures, unusually visible in this domain. For a
+  role-referenced obligation, the ROLE relation itself ("Contracting party
+  must pay Contracted party") still reads intact under B1 — what is lost is
+  which real company each role refers to, not the relation between the
+  roles.
 - **B2 / B3 / B4**: role, stability and distinguishability all preserved, and
-  authorized local reconstruction restores `Contracting party: ACME …`.
+  authorized local reconstruction restores `Contracting party: ACME …`. B4
+  additionally hard-preserves the exact `deadline` (see the category table
+  above), so a role-referenced obligation's deadline is disclosed exactly
+  under B4 while its amount is still banded.
 
 ## Governance dimensions and their identifiability
 
@@ -197,6 +245,16 @@ detected span, so it is neither pseudonymized nor removed and it reaches the
 external payload verbatim — even though the same company's labeled mention
 two lines above was pseudonymized. This is a real disclosure gap, not merely
 a utility gap. Building coreference resolution is far outside Issue #56.
+
+This is the same gap a natural-prose **obligation** sentence falls into when
+it names a party directly instead of referring to it by role: "Aurora …
+shall pay the contract value to Boreal … on the deadline" leaks the name and
+therefore that specific obligation. "Who owes what to whom" is proven to
+survive only for an obligation phrased BY ROLE (an `Obligation:` line reading
+"Contracting party must pay Contracted party …" — see "Relation semantics"
+above); it is not proven, and does not hold, for a natural-prose obligation
+naming a party. T24 cases stating an obligation must use the role-referenced
+shape, or be classified knowing this gap.
 
 > **Constraint on T24:** every party mention must sit on its own labeled
 > line, using consistent party naming (`ACME Serviços Ltda` everywhere, not

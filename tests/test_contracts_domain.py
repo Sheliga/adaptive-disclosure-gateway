@@ -22,7 +22,16 @@ What this module pins, in order:
 3. **Relation preservation across B1 -> B4** -- the "who owes what to whom"
    requirement Issue #56 names. No relation model was added; see below for
    why the existing role-in-label / identity-in-value split plus the vault's
-   per-value pseudonym stability already carries it.
+   per-value pseudonym stability already carries it. This has two layers,
+   kept as separate tests on purpose: that party roles survive pseudonymization
+   with stable, distinguishable pseudonyms (true for `CONTRACTS_FIXTURE`,
+   which names no obligation at all), and that a CONCRETE obligation ("X must
+   pay Y <amount> by <date>", `CONTRACTS_OBLIGATION_FIXTURE`) stays correctly
+   attributed to the right pseudonymized role. The second is proven only for
+   an obligation phrased BY ROLE, the shape the labeled-line detector
+   actually supports -- not for one phrased in natural prose naming a party
+   directly, which `test_a_party_named_in_unlabeled_prose_is_not_detected_and_reaches_the_payload`
+   below shows leaks the name (and with it the obligation) verbatim.
 4. **Documented limitations**, pinned as tests so they cannot quietly stop
    being true (or quietly stop being documented).
 5. **Adversarial no-leak checks** for every new sensitive path.
@@ -69,7 +78,9 @@ from tests.contracts_fixture import (
     CONTRACTS_COREFERENCE_FIXTURE,
     CONTRACTS_FIXTURE,
     CONTRACTS_FIXTURE_SENSITIVE_VALUES,
+    CONTRACTS_OBLIGATION_FIXTURE,
     FIRST_DEADLINE,
+    OBLIGATION_TEXT,
     PENALTY_AMOUNT,
     REPRESENTATIVE,
     REPRESENTATIVE_CPF,
@@ -289,9 +300,21 @@ def test_b1_removes_party_identities_and_with_them_any_way_to_tell_the_parties_a
 
 
 @pytest.mark.parametrize("make_discloser", [_b2, _b3, _b4])
-def test_party_roles_and_obligation_assignment_survive_pseudonymization(make_discloser):
-    """The relation Issue #56 asks about -- "who owes what to whom" -- is
-    carried by two existing mechanisms, with no new abstraction:
+def test_party_roles_survive_pseudonymization_with_stable_distinguishable_pseudonyms(
+    make_discloser,
+):
+    """What this test actually proves, no more: role labels survive
+    pseudonymization, the same party's pseudonym is stable across the
+    contract and its amendment, and the two parties' pseudonyms never
+    collide. ``CONTRACTS_FIXTURE`` names no concrete obligation -- it has no
+    "X must pay Y" sentence anywhere -- so this test cannot and does not
+    prove that an obligation stays correctly attributed to the right party.
+    That claim needs a fixture that actually states an obligation; see
+    ``CONTRACTS_OBLIGATION_FIXTURE`` and
+    ``test_role_referenced_obligation_binds_the_correct_pseudonym_to_each_role``
+    below, which is the test that carries the "who owes what to whom" name.
+
+    The two mechanisms this test does pin, with no new abstraction:
 
     - the ROLE is in the label, so it is never part of a detected span and
       is never transformed;
@@ -300,11 +323,8 @@ def test_party_roles_and_obligation_assignment_survive_pseudonymization(make_dis
       as the same pseudonym in the contract and in the amendment, while the
       two companies never collide.
 
-    Together those two facts mean ``Contracting party: PSEUDO-party_name-a``
-    ... ``Contracted party: PSEUDO-party_name-b`` preserves the assignment
-    exactly. If either mechanism regresses -- a rule that swallows the label
-    into the value, or a vault that stops being stable per value -- this
-    fails.
+    If either mechanism regresses -- a rule that swallows the label into the
+    value, or a vault that stops being stable per value -- this fails.
     """
     result = _run(make_discloser(), CONTRACTS_FIXTURE)
 
@@ -395,6 +415,158 @@ def test_a_bank_account_blocks_the_whole_request_in_every_treatment(make_disclos
     assert BANK_ACCOUNT not in result.external_payload
 
 
+# --- 3b. A CONCRETE obligation -- "X must pay Y <amount> by <date>" -------
+#
+# The tests above prove role labels survive and pseudonyms are stable and
+# distinguishable. None of them prove obligation *assignment*, because
+# CONTRACTS_FIXTURE never states an obligation. These tests add one, using
+# the shape the labeled-line detector actually supports: the obligation
+# refers to the two parties BY ROLE ("Contracting party", "Contracted
+# party"), the same words already used as labels elsewhere in the document,
+# rather than by name. `obligation` is deliberately not a detected category
+# (see docs/contracts-policy-matrix.md's "obligation dropped"), so the
+# sentence carries no span and reaches the payload character-for-character
+# in every treatment -- what changes across the boundary is only which
+# pseudonym plays each role, in the lines directly above it.
+
+
+def _obligation_result(make_discloser):
+    return _run(make_discloser(), CONTRACTS_OBLIGATION_FIXTURE)
+
+
+@pytest.mark.parametrize("make_discloser", [_b2, _b3, _b4])
+def test_role_referenced_obligation_binds_the_correct_pseudonym_to_each_role(make_discloser):
+    """The concrete demonstration Issue #56 asks for: a reader can
+    reconstruct "[pseudonym A] must pay [pseudonym B] ... by ..." from the
+    transformed payload alone -- not merely that two distinct, stable
+    pseudonyms exist somewhere in it. The role-to-pseudonym binding (from the
+    labeled lines) and the obligation sentence (naming both roles) are
+    asserted together, over the SAME payload, so a defect that swapped which
+    party got which pseudonym, or dropped a role word from the obligation
+    line, fails this test.
+    """
+    result = _obligation_result(make_discloser)
+
+    assert result.status == "allowed"
+    contracting = _value_after(result.external_payload, "Contracting party")
+    contracted = _value_after(result.external_payload, "Contracted party")
+    assert len(contracting) == 1
+    assert len(contracted) == 1
+    contracting_pseudonym, contracted_pseudonym = contracting[0], contracted[0]
+
+    assert contracting_pseudonym.startswith("PSEUDO-party_name-")
+    assert contracted_pseudonym.startswith("PSEUDO-party_name-")
+    assert contracting_pseudonym != contracted_pseudonym
+
+    # The role -> pseudonym binding, read off the payload's own labeled lines.
+    assert f"Contracting party: {contracting_pseudonym}" in result.external_payload
+    assert f"Contracted party: {contracted_pseudonym}" in result.external_payload
+
+    # The obligation sentence: untouched, still naming both roles, because
+    # `obligation` carries no detected span.
+    assert f"Obligation: {OBLIGATION_TEXT}" in result.external_payload
+
+    # Combined, a reader has: "[contracting_pseudonym] must pay
+    # [contracted_pseudonym] the contract value by the deadline" -- the
+    # amount/deadline each resolve per the tests below.
+
+
+def test_contract_value_and_deadline_in_the_obligation_follow_their_own_rules_under_b2_and_b3():
+    """Verified by running the code, not assumed: under `RELATION_TASK` (used
+    throughout this module), both B2 (task-independent) and B3 (task-aware,
+    with the task mentioning "contract value" / "deadline" but no exactness
+    cue) generalize both quantities -- the same banding/coarsening already
+    pinned for B1 by `test_monetary_amounts_are_banded_not_disclosed` and
+    `test_deadlines_are_coarsened_to_month_and_year_by_the_static_baseline`.
+    """
+    for make_discloser in (_b2, _b3):
+        result = _obligation_result(make_discloser)
+
+        assert CONTRACT_VALUE not in result.external_payload
+        assert FIRST_DEADLINE not in result.external_payload
+        assert "Contract value: R$ 2400000-2450000" in result.external_payload
+        assert "Deadline: 2026-03" in result.external_payload
+        assert "Deadline: 2026-03-31" not in result.external_payload
+
+
+def test_b4_preserves_the_exact_deadline_in_the_obligation_but_still_bands_the_amount():
+    """The same B4 policy cell already pinned by
+    `test_policy_preserves_the_exact_deadline_where_b3_would_have_coarsened_it`
+    applies to the obligation fixture too: `contracts-v1` hard-preserves
+    `deadline`, so the obligation's deadline is the one quantity a reader
+    sees exactly, while `contract_value` is still minimized to a band under
+    the same policy.
+    """
+    result = _obligation_result(_b4)
+
+    assert "Deadline: 2026-03-31" in result.external_payload
+    assert "Contract value: R$ 2400000-2450000" in result.external_payload
+    assert CONTRACT_VALUE not in result.external_payload
+
+
+def test_b1_keeps_the_role_relation_in_the_obligation_but_loses_party_identity():
+    """Verified, not assumed: B1 has no vault, so both party values are
+    REMOVE-d to nothing -- but the obligation sentence is untouched prose, so
+    the ROLE relation ("Contracting party must pay Contracted party") still
+    reads intact. What is lost is identity, not the relation: a reader knows
+    *which role* owes the obligation but cannot tell which real company that
+    role refers to, nor tell the two roles' (now identical, empty) values
+    apart from each other -- the same B1->B2 utility gap
+    `test_b1_removes_party_identities_and_with_them_any_way_to_tell_the_parties_apart`
+    already pins for `CONTRACTS_FIXTURE`.
+    """
+    result = _obligation_result(_b1)
+
+    assert result.status == "allowed"
+    assert CONTRACTING_PARTY not in result.external_payload
+    assert CONTRACTED_PARTY not in result.external_payload
+    assert _value_after(result.external_payload, "Contracting party") == [""]
+    assert _value_after(result.external_payload, "Contracted party") == [""]
+    assert f"Obligation: {OBLIGATION_TEXT}" in result.external_payload
+    assert "Contract value: R$ 2400000-2450000" in result.external_payload
+    assert "Deadline: 2026-03" in result.external_payload
+
+
+@pytest.mark.parametrize("make_discloser", [_b1, _b2, _b3, _b4])
+def test_no_sensitive_value_leaks_through_the_role_referenced_obligation_line(make_discloser):
+    """Adversarial: the obligation sentence is untransformed prose (no
+    detection rule matches an `Obligation:` label), so this checks the one
+    thing that invites -- that phrasing an obligation by ROLE, instead of by
+    name, does not accidentally carry a literal amount or date past the
+    labeled-line rules that already govern them. A future edit that
+    interpolated the actual contract value or deadline into the sentence
+    would fail this.
+    """
+    result = _obligation_result(make_discloser)
+
+    for value in (CONTRACTING_PARTY, CONTRACTED_PARTY, CONTRACT_VALUE):
+        assert value not in result.external_payload, (
+            f"{make_discloser.__name__}: {value!r} reached the external payload"
+        )
+    if make_discloser is not _b4:
+        # B4 hard-preserves `deadline` under `contracts-v1` (see
+        # test_b4_preserves_the_exact_deadline_in_the_obligation_but_still_bands_the_amount
+        # above) -- a deliberate policy disclosure, not a leak.
+        assert FIRST_DEADLINE not in result.external_payload
+
+
+@pytest.mark.parametrize("make_discloser", [_b1, _b2, _b3, _b4])
+def test_role_referenced_obligation_telemetry_never_carries_a_value_or_a_pseudonym(
+    make_discloser, recorded_spans
+):
+    result = _obligation_result(make_discloser)
+
+    pseudonyms = [t.transformed for t in result.transformations if t.transformed]
+    assert_span_attributes_never_leak(
+        recorded_spans.get_finished_spans(),
+        CONTRACTING_PARTY,
+        CONTRACTED_PARTY,
+        CONTRACT_VALUE,
+        FIRST_DEADLINE,
+        *pseudonyms,
+    )
+
+
 # --- 4. Documented limitations, pinned ------------------------------------
 
 
@@ -412,6 +584,18 @@ def test_a_party_named_in_unlabeled_prose_is_not_detected_and_reaches_the_payloa
     this ticket. The consequence is a constraint on T24's corpus, recorded
     in ``docs/contracts-policy-matrix.md``: every party mention must sit on
     its own labeled line, or the case must be classified knowing this.
+
+    Confronted explicitly, because it bears directly on the obligation-
+    relation claim this module also makes: ``CONTRACTS_COREFERENCE_FIXTURE``'s
+    ``Clause 4`` IS a natural-prose *obligation* ("Aurora ... shall pay the
+    contract value to Boreal ... on the deadline"), in exactly the sense
+    Issue #56 asks "who owes what to whom" to survive for. Relation
+    preservation is proven only for the role-referenced ``Obligation:`` line
+    shape used by ``CONTRACTS_OBLIGATION_FIXTURE`` (see
+    ``test_role_referenced_obligation_binds_the_correct_pseudonym_to_each_role``
+    above) -- never for this natural-prose shape, where the raw party name,
+    and with it the specific obligation naming it, reaches the payload
+    verbatim.
 
     If a future change does start linking prose mentions, this test fails --
     which is the point: the limitation must not silently stop being

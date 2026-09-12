@@ -104,9 +104,51 @@ BANK_ACCOUNT = "001 / 1234 / 56789-0"
 # `docs/contracts-policy-matrix.md`'s "Known limitations" section. This
 # fixture exists to keep that gap visible and measured, not to suggest it is
 # handled.
+#
+# Note this fixture's ``Clause 4`` line IS a concrete obligation ("Aurora
+# ... shall pay the contract value to Boreal ... on the deadline"), phrased
+# in natural prose that names the parties directly. It is the boundary case
+# for the obligation-relation claim below: relation preservation is proven
+# only for the role-referenced ``Obligation:`` line shape
+# (``CONTRACTS_OBLIGATION_FIXTURE``), never for this shape, where the raw
+# name -- and with it this specific obligation -- reaches the payload
+# verbatim. See ``tests/test_contracts_domain.py``'s
+# ``test_a_party_named_in_unlabeled_prose_is_not_detected_and_reaches_the_payload``.
 CONTRACTS_COREFERENCE_FIXTURE = (
     "Contracting party: Aurora Servicos Digitais Ltda\n"
     "Contracted party: Boreal Engenharia SA\n"
     "Clause 4: Aurora Servicos Digitais Ltda shall pay the contract value "
     "to Boreal Engenharia SA on the deadline.\n"
+)
+
+# A REAL, unambiguous obligation -- "X must pay Y <amount> by <date>" --
+# binding one party to the other, shaped to fit the detector that actually
+# exists rather than the other way around. The detector is a labeled-line
+# matcher (detection/rules.py): the ROLE lives in the label, the IDENTITY
+# lives in the value. So an obligation phrased BY ROLE -- "Contracting party
+# must pay Contracted party ..." -- reuses exactly the same two words already
+# used as labels elsewhere in the document, and needs no relation model:
+# `obligation` carries no detection rule (see rules.py and
+# docs/contracts-policy-matrix.md's "obligation dropped"), so the sentence
+# is never itself transformed, and a reader recovers "who owes what to whom"
+# by combining it with the (pseudonymized) role lines and the (banded/
+# coarsened) amount/deadline lines that already exist for exactly this
+# purpose. See tests/test_contracts_domain.py's obligation-relation tests.
+#
+# Deliberately does NOT restate the amount/deadline inline in the sentence
+# itself (e.g. "... R$ 2400000.00 by 2026-03-31"): that text would sit
+# outside every detection rule (`obligation` has none) and would therefore
+# leak the literal figures in every treatment. Referring to "the contract
+# value" / "the deadline" instead keeps the sentence itself value-free, while
+# the actual amount and date are carried -- and transformed -- by the
+# existing `Contract value:` / `Deadline:` lines the obligation refers to.
+OBLIGATION_TEXT = "Contracting party must pay Contracted party the contract value by the deadline"
+
+CONTRACTS_OBLIGATION_FIXTURE = (
+    "CONTRACT\n"
+    "Contracting party: Aurora Servicos Digitais Ltda\n"
+    "Contracted party: Boreal Engenharia SA\n"
+    f"Obligation: {OBLIGATION_TEXT}\n"
+    "Contract value: R$ 2400000.00\n"
+    "Deadline: 2026-03-31\n"
 )
