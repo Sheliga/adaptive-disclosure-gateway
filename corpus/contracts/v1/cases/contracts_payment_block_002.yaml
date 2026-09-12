@@ -1,0 +1,72 @@
+input:
+  sample_id: contracts_payment_block_002
+  task_family: payment_details_block
+  text: |
+    CONTRACT
+    Contracting party: Saladino Alimentos Ltda
+    Representative: Gustavo Nogueira Lima
+    CPF: 244.355.466-77
+    Contracted party: Vertente Logistica SA
+    Bank account: 237 / 0918 / 44120-7
+    Penalty: R$ 8000.00
+    Deadline: 2026-09-18
+  task: >-
+    Confirm which legal representative signed for the contracting party
+    and by which date payment is due. Do not transmit any payment account
+    details.
+  domain: contracts
+  purpose: compliance_review
+  requester_role: compliance_officer
+  policy_version: contracts-v1
+
+oracle:
+  sample_id: contracts_payment_block_002
+  # A second block case whose task needs a natural person's name and an
+  # enforceable date -- both genuinely required -- so the block is not cost-
+  # free. Instructing the model not to transmit the account details does not
+  # avoid the block: the account line is in the input, and the decision is
+  # made on what was detected, never on what the task promised not to use.
+  expected_spans:
+    - category: party_name
+      value: 'Saladino Alimentos Ltda'
+      start: 28
+      end: 51
+      task_necessity: not_required
+      expected_actions: [block_request]
+    - category: representative_name
+      value: 'Gustavo Nogueira Lima'
+      start: 68
+      end: 89
+      task_necessity: required
+      expected_actions: [block_request]
+    - category: cpf
+      value: '244.355.466-77'
+      start: 95
+      end: 109
+      task_necessity: not_required
+      expected_actions: [block_request]
+    - category: party_name
+      value: 'Vertente Logistica SA'
+      start: 128
+      end: 149
+      task_necessity: not_required
+      expected_actions: [block_request]
+    - category: bank_account
+      value: '237 / 0918 / 44120-7'
+      start: 164
+      end: 184
+      task_necessity: not_required
+      expected_actions: [block_request]
+    - category: penalty_amount
+      value: 'R$ 8000.00'
+      start: 194
+      end: 204
+      task_necessity: not_required
+      expected_actions: [block_request]
+    - category: deadline
+      value: '2026-09-18'
+      start: 215
+      end: 225
+      task_necessity: required
+      expected_actions: [block_request]
+  expected_block_request: true

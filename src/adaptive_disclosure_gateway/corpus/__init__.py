@@ -1,4 +1,5 @@
-"""HR pilot corpus schema and loader (T09 / issue #4, Phase A).
+"""Versioned evaluation-corpus schema and loader (T09 / issue #4, Phase A;
+extended per-domain for Contracts by T24 / issue #37).
 
 Public surface:
 
@@ -6,13 +7,16 @@ Public surface:
 - ``CaseOracle`` -- ground truth used for scoring only, never privileged
   treatment input.
 - ``ExpectedSpan`` / ``ReconstructionExpectation`` / ``TaskNecessity`` /
-  ``TaskFamily`` -- the oracle's building blocks.
+  ``TaskFamily`` / ``ContractsTaskFamily`` / ``ObligationRelation`` -- the
+  oracle's building blocks.
 - ``CorpusCase`` / ``load_case`` / ``load_corpus`` / ``CorpusLoadError`` --
-  loading one or all versioned case files from ``corpus/hr/v1/cases/``.
+  loading one or all versioned case files from a corpus directory
+  (``corpus/hr/v1/cases/``, ``corpus/contracts/v1/cases/``).
 
-See ``corpus/hr/v1/SCHEMA.md`` (repository root) for the frozen case-file
-schema in prose, and ``corpus/hr/v1/README.md`` for what the corpus covers
-and its freeze/versioning rule.
+See ``corpus/hr/v1/SCHEMA.md`` and ``corpus/contracts/v1/SCHEMA.md``
+(repository root) for each corpus's frozen case-file schema in prose, and
+the matching ``README.md`` for what each corpus covers and its
+freeze/versioning rule.
 """
 
 from __future__ import annotations
@@ -25,8 +29,15 @@ from adaptive_disclosure_gateway.corpus.loader import (
     load_corpus,
 )
 from adaptive_disclosure_gateway.corpus.models import (
+    CORPUS_SCHEMA_VERSION,
+    FROZEN_CATEGORIES_BY_DOMAIN,
+    FROZEN_CONTRACTS_CATEGORIES,
     FROZEN_HR_CATEGORIES,
+    REGISTERED_CORPUS_DOMAINS,
+    TASK_FAMILIES_BY_DOMAIN,
+    ContractsTaskFamily,
     ExpectedSpan,
+    ObligationRelation,
     ReconstructionExpectation,
     TaskFamily,
     TaskNecessity,
@@ -34,12 +45,19 @@ from adaptive_disclosure_gateway.corpus.models import (
 from adaptive_disclosure_gateway.corpus.oracle import CaseOracle
 
 __all__ = [
+    "CORPUS_SCHEMA_VERSION",
+    "FROZEN_CATEGORIES_BY_DOMAIN",
+    "FROZEN_CONTRACTS_CATEGORIES",
     "FROZEN_HR_CATEGORIES",
+    "REGISTERED_CORPUS_DOMAINS",
+    "TASK_FAMILIES_BY_DOMAIN",
     "CaseOracle",
+    "ContractsTaskFamily",
     "CorpusCase",
     "CorpusCaseInput",
     "CorpusLoadError",
     "ExpectedSpan",
+    "ObligationRelation",
     "ReconstructionExpectation",
     "TaskFamily",
     "TaskNecessity",

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from adaptive_disclosure_gateway.corpus.models import TaskFamily
+from adaptive_disclosure_gateway.corpus.models import CorpusTaskFamily
 from adaptive_disclosure_gateway.domain import DisclosureRequest, GovernanceContext, PseudonymScope
 
 
@@ -31,7 +31,7 @@ class CorpusCaseInput(BaseModel):
     sample_id: str = Field(min_length=1)
     text: str
     task: str
-    task_family: TaskFamily
+    task_family: CorpusTaskFamily
 
     # GovernanceContext fields the case exercises. Optional ones default
     # exactly like GovernanceContext itself so a case only needs to state

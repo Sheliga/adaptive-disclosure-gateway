@@ -24,6 +24,11 @@ import yaml
 from pydantic import ValidationError
 
 from adaptive_disclosure_gateway.corpus.case_input import CorpusCaseInput
+from adaptive_disclosure_gateway.corpus.models import (
+    FROZEN_CATEGORIES_BY_DOMAIN,
+    REGISTERED_CORPUS_DOMAINS,
+    TASK_FAMILIES_BY_DOMAIN,
+)
 from adaptive_disclosure_gateway.corpus.oracle import CaseOracle
 
 _TOP_LEVEL_KEYS = {"input", "oracle"}
@@ -57,6 +62,75 @@ def _describe_validation_errors(exc: ValidationError) -> str:
         loc = ".".join(str(part) for part in error["loc"])
         parts.append(f"{loc} ({error['type']})")
     return "; ".join(parts)
+
+
+def _check_domain_consistency(path: Path, case_input: CorpusCaseInput, oracle: CaseOracle) -> None:
+    """Reject a case whose annotations reach into another domain's frozen
+    vocabulary (T24 / issue #37).
+
+    The schema-level ``CorpusCategory``/``CorpusTaskFamily`` types already
+    reject an invented category or family. They cannot reject a *real* one
+    borrowed from the wrong domain -- an HR case annotating ``penalty_amount``
+    or a Contracts case annotating ``salary`` -- because both live in the
+    same union. That check needs the case's own ``input.domain``, which is
+    why it lives here, alongside every other cross-half consistency rule
+    (``sample_id`` agreement, file-name agreement, duplicate detection).
+
+    Fails closed on an unregistered domain rather than accepting whatever
+    vocabulary the case happens to name.
+
+    No-leak: names only the file, the domain, a category name and a task
+    family -- all schema vocabulary, never a span ``value`` or case text.
+    """
+    domain = case_input.domain
+    allowed_categories = FROZEN_CATEGORIES_BY_DOMAIN.get(domain)
+    allowed_families = TASK_FAMILIES_BY_DOMAIN.get(domain)
+    if allowed_categories is None or allowed_families is None:
+        raise CorpusLoadError(
+            f"corpus case file {path.name} declares input.domain {domain!r}, which is "
+            f"not a registered corpus domain: {list(REGISTERED_CORPUS_DOMAINS)}"
+        )
+
+    # Bound to a local named for what it is -- a task-family *name* -- rather
+    # than interpolating `case_input.task_family.value` into the message:
+    # tests/test_no_sensitive_value_in_raises.py rejects a `.value` attribute
+    # access inside a raise, and that rule is right to be blunt rather than
+    # case-by-case. The family name is schema vocabulary, never case content.
+    family_name = str(case_input.task_family)
+    if family_name not in allowed_families:
+        raise CorpusLoadError(
+            f"corpus case file {path.name}: task_family {family_name!r} "
+            f"does not belong to domain {domain!r}"
+        )
+
+    annotated: list[tuple[str, str]] = [
+        ("oracle.expected_spans", span.category) for span in oracle.expected_spans
+    ]
+    annotated.extend(
+        ("oracle.reconstruction", expectation.category) for expectation in oracle.reconstruction
+    )
+    annotated.extend(
+        ("oracle.answer_depends_on_categories", category)
+        for category in (oracle.answer_depends_on_categories or [])
+    )
+    annotated.extend(
+        ("oracle.obligation_relations", category)
+        for relation in oracle.obligation_relations
+        for category in relation.depends_on_categories
+    )
+
+    foreign = sorted(
+        {
+            f"{field}:{category}"
+            for field, category in annotated
+            if category not in allowed_categories
+        }
+    )
+    if foreign:
+        raise CorpusLoadError(
+            f"corpus case file {path.name}: category/categories not frozen for domain "
+            f"{domain!r}: {foreign}"
+        )
 
 
 def load_case(path: Path) -> CorpusCase:
@@ -114,6 +188,8 @@ def load_case(path: Path) -> CorpusCase:
         raise CorpusLoadError(
             f"corpus case file {path.name}: input.sample_id and oracle.sample_id do not match"
         )
+
+    _check_domain_consistency(path, case_input, oracle)
 
     if path.stem != case_input.sample_id:
         raise CorpusLoadError(

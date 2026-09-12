@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-09-12 — T12 / Issue #9 Docling ingestion merged into `develop` via PR #55 (merge commit `776e683a49818db35021bb62315dfc1ed7fb00ab`, validated feature head `3c93f3297515c99c6fccd4c5e705f1e77cfada78`, real Docling 2.126.0 PDF/DOCX/XLSX validation); Issue #56 (Contracts domain extensions) is now the active gate before T24; T23 post-pilot protocol remains merged into `develop` via PR #53; T21 fourth slice (pt-BR / English localization) completed and integrated into `master` via PRs #51/#52 — T21/Issue #29 remains open for the remaining deliberately out-of-scope items.
+Last updated: 2026-09-12 — Issue #56 (Contracts domain extensions) **merged into `develop` via PR #59** (merge commit `5a67c30daab68d06bbd16d1cf06433de97245910`), which freezes the Contracts categories, policies, generalization strategies and relation semantics; T24 / Issue #37 (Contracts v1 corpus + frozen oracle) is now **in validation** in an open PR to `develop`. T12 / Issue #9 Docling ingestion merged into `develop` via PR #55 (merge commit `776e683a49818db35021bb62315dfc1ed7fb00ab`, validated feature head `3c93f3297515c99c6fccd4c5e705f1e77cfada78`, real Docling 2.126.0 PDF/DOCX/XLSX validation); T23 post-pilot protocol remains merged into `develop` via PR #53; T21 fourth slice (pt-BR / English localization) completed and integrated into `master` via PRs #51/#52 — T21/Issue #29 remains open for the remaining deliberately out-of-scope items.
 
 This file tracks the current engineering/research state and execution order. Architectural decisions belong in ADRs; experimental definitions belong in `docs/experimental-design.md`; factual pilot results belong in `docs/milestone-2-pilot.md`; the frozen confirmatory-analysis protocol belongs in `docs/research/`; the parallel advisor-facing application plan belongs in `docs/advisor-demo.md`; historical PR/Issue descriptions remain in GitHub.
 
@@ -32,6 +32,8 @@ Milestone tracker: Issue #32.
 ### Frozen implementation / evaluation state
 
 - `corpus/hr/v1/`: 13 controlled HR cases; frozen/versioned.
+- `corpus/contracts/v1/`: 12 controlled Contracts cases; frozen/versioned; run classification `pilot_development`, decided before any result existed (T24 / Issue #37, in validation).
+- corpus case-file schema: `corpus-case-schema-v2` (per-domain category/task-family registries plus the oracle's `obligation_relations`; additive, `corpus/hr/v1` files unchanged).
 - B3 frozen implementation commit: `31bce08b7ea6a5c905f7a20bbb4bb99a05682bab`.
 - B4 frozen implementation commit: `5abea8514fa10ac64b9bc3714bbfd3f18682f713`.
 - B4 retains B3's task-aware baseline and adds contextual policy constraints.
@@ -200,7 +202,8 @@ scoring needs. That scope was split out to Issue #56 (Contracts domain extension
 
 #### Issue #56 — Contracts domain extensions
 
-Status: **in validation** — implemented and under review in a PR to `develop`.
+Status: **complete** — merged into `develop` via PR #59, merge commit
+`5a67c30daab68d06bbd16d1cf06433de97245910`.
 
 Freezes the minimum development-time Contracts domain support needed before the T24 corpus is
 inspected at treatment-result level. `NormalizedContent.text` remains canonical and parser
@@ -225,14 +228,14 @@ Also fixed here: every policy model now rejects unknown keys, so an unimplemente
 knob can no longer be silently dropped from a policy YAML (it fails the document closed
 instead).
 
-**Known non-semantic T24 change:** `corpus/models.py` still hardcodes an HR-only category
-`Literal`, so a Contracts corpus cannot yet be expressed. That is corpus schema work owned by
-T24 / Issue #37, not treatment semantics, and is deliberately not implemented by Issue #56.
+**Known non-semantic T24 change (now delivered):** `corpus/models.py` hardcoded an HR-only
+category `Literal`, so a Contracts corpus could not be expressed. That was corpus schema work
+owned by T24 / Issue #37, not treatment semantics, and was deliberately not implemented by
+Issue #56. T24 delivered it as per-domain registries (`corpus-case-schema-v2`).
 
 #### T24 / Issue #37 — Contracts v1 validation corpus
 
-Status: **new second-domain evaluation task; depends methodologically on T23, and waits on Issue
-#56 freezing Contracts domain support first**.
+Status: **in validation** — implemented and under review in a PR to `develop`.
 
 T24 is deliberately separate from both T12 and Issue #56 — the three-way split:
 
@@ -241,6 +244,41 @@ T24 is deliberately separate from both T12 and Issue #56 — the three-way split
 - T24 = frozen Contracts corpus/oracle and evaluation evidence.
 
 If Contracts requires new categories/policies/generalization strategies, those extensions must be frozen (Issue #56) before a held-out corpus is inspected at treatment-result level, or the resulting run must remain development evidence.
+
+**Delivered:** `corpus/contracts/v1/` — 12 synthetic cases across six task families, with
+`SCHEMA.md` and `README.md` mirroring the HR corpus's structure and freeze rule; the
+per-domain corpus schema extension (`corpus-case-schema-v2`); the oracle's new
+`obligation_relations` field recording "who owes what to whom" in role terms, scoring-only and
+pinned isolated both structurally and behaviorally; `scripts/run_contracts_v1_pilot.py`; and a
+controlled B0–B4 execution over the corpus with `FakeProvider`, whose artifacts and freeze
+record live under `artifacts/experiments/contracts/v1/`.
+
+**Run classification: `pilot_development`**, decided by the project owner before the corpus
+existed and before any B0–B4 Contracts result had been produced or inspected. This corpus is
+therefore **not confirmatory evidence**; a held-out confirmatory Contracts run remains a
+separate future step. The corpus and oracle are frozen and versioned regardless, so that
+future run has a fixed artifact to be held out from.
+
+**Nothing frozen by Issue #56 changed**: no category, detector rule, policy document, B3 action
+space, generalization strategy or treatment definition was touched, and no metric frozen by
+`post-pilot-v1` was added or redefined.
+
+**Findings recorded, not fixed** (see `corpus/contracts/v1/README.md`):
+
+- `experiments/scoring/utility.py`'s GENERALIZE decidability rule is numeric-band-specific, so a
+  month-coarsened deadline (`2026-02`) is parsed as a numeric band and scored `answerable`. The
+  conformance oracle catches the same loss; the utility dimension reads it optimistically.
+  Changing it is a metric change frozen by `post-pilot-v1` and needs a protocol version.
+- `contracts-v1` preserves `deadline` unconditionally, so B4 is nonconformant on the six spans
+  where the task does not need it — the documented, identifiable B3→B4 cell in the
+  under-studied direction.
+- B2's task- and policy-independent map pseudonymizes `cnpj`/`cpf` where `contracts-v1` and the
+  oracle both require REMOVE; a measured property of B2 meeting a domain whose identifiers are
+  publicly resolvable, and part of the gap B4 closes.
+- Detection is 72/72 with no false positives, a property of the corpus's labeled-line format,
+  not evidence about detector quality — the same threat to validity `corpus/hr/v1` records.
+- All of the above was measured against `FakeProvider`; no real-LLM utility, token or cost claim
+  is supported until T22 / Issue #30 lands.
 
 ### Milestone 3 closure criterion
 
@@ -474,8 +512,8 @@ T22/real provider improves this substantially and should be enabled when availab
 1. M2 / HR pilot ✅
 2. **T23 / Issue #36 — freeze post-pilot protocol** ✅
 3. **T12 / Issue #9 — Docling ingestion/normalization** ✅
-4. **Issue #56 — Contracts domain extensions** (active)
-5. **T24 / Issue #37 — Contracts v1 corpus/oracle**
+4. **Issue #56 — Contracts domain extensions** ✅ (merged into `develop` via PR #59)
+5. **T24 / Issue #37 — Contracts v1 corpus/oracle** (in validation)
 6. Verify M3 closure / confirmatory-readiness
 7. Launch next frozen B0–B4 validation batch
 8. Only then analyze authoritative comparative results under the pre-frozen protocol
@@ -502,6 +540,8 @@ This ordering is internal to the demo track and does not reorder the scientific 
 - M2 pilot record: `docs/milestone-2-pilot.md`
 - Advisor demo plan: `docs/advisor-demo.md`
 - Contracts domain freeze: `docs/contracts-policy-matrix.md`
+- Contracts v1 corpus: `corpus/contracts/v1/README.md` (coverage, limitations, freeze rule, freeze record)
+- Contracts v1 corpus schema: `corpus/contracts/v1/SCHEMA.md`
 - HR policy matrix: `docs/hr-policy-matrix.md`
 - ADR 0001: `docs/adr/0001-milestone-1-architecture.md`
 - M2 tracker: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/32

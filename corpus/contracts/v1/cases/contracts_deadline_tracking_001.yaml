@@ -1,0 +1,72 @@
+input:
+  sample_id: contracts_deadline_tracking_001
+  task_family: deadline_tracking
+  text: |
+    CONTRACT
+    Contracting party: Icaro Servicos Hospitalares Ltda
+    CNPJ: 30.405.060/0001-70
+    Contracted party: Tramontana Equipamentos SA
+    Contract value: R$ 415000.00
+    Deadline: 2026-02-27
+  task: >-
+    Report the delivery deadline stated in this agreement for the
+    delivery-tracking calendar. Do not disclose the companies, their
+    registration numbers or the contract value.
+  domain: contracts
+  purpose: delivery_tracking
+  requester_role: delivery_coordinator
+  policy_version: contracts-v1
+
+oracle:
+  sample_id: contracts_deadline_tracking_001
+  # PRESERVE is the only acceptable action for a deadline a task actually
+  # needs, and this is exactly the argument docs/contracts-policy-matrix.md
+  # makes for `contracts-v1` resolving `deadline` to a hard PRESERVE: a
+  # legal deadline coarsened to a month is not a term of a contract --
+  # 'sometime in February' cannot be entered in a delivery calendar,
+  # complied with or enforced. B3 -- Task-aware, which has
+  # MonthYearDateStrategy available and no reason to go further, is expected
+  # to GENERALIZE here; B4 -- Policy-governed preserves. This is the
+  # counterpart of contracts_summary_001: the same policy rule that over-
+  # discloses when the deadline is not needed is the one that serves the
+  # task when it is.
+  expected_spans:
+    - category: party_name
+      value: 'Icaro Servicos Hospitalares Ltda'
+      start: 28
+      end: 60
+      task_necessity: not_required
+      expected_actions: [remove, pseudonymize]
+    - category: cnpj
+      value: '30.405.060/0001-70'
+      start: 67
+      end: 85
+      task_necessity: not_required
+      expected_actions: [remove]
+    - category: party_name
+      value: 'Tramontana Equipamentos SA'
+      start: 104
+      end: 130
+      task_necessity: not_required
+      expected_actions: [remove, pseudonymize]
+    - category: contract_value
+      value: 'R$ 415000.00'
+      start: 147
+      end: 159
+      task_necessity: not_required
+      expected_actions: [remove, generalize]
+    - category: deadline
+      value: '2026-02-27'
+      start: 170
+      end: 180
+      task_necessity: required
+      expected_actions: [preserve]
+  expected_block_request: false
+  expected_answer: >-
+    The response reports the delivery deadline stated in the agreement,
+    2026-02-27, to the day, and discloses neither company, neither
+    registration number nor the contract value.
+  answer_depends_on_categories: [deadline]
+  reconstruction:
+    - category: party_name
+      expected_reconstructable: true
