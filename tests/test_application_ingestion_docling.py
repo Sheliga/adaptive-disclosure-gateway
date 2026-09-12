@@ -115,8 +115,9 @@ def test_real_docling_adapter_extracts_pdf_text():
     assert result.source_kind == "document_file"
     assert result.media_type == "application/pdf"
     assert result.parser_name == "docling"
-    assert result.ingestion_version == "docling-markdown-v1"
+    assert result.ingestion_version == "docling-structured-markdown-v1"
     assert "ACME Services Agreement" in result.text
+    assert all(block.text in result.text for block in result.blocks)
 
 
 def test_real_docling_adapter_extracts_docx_text():
@@ -127,6 +128,7 @@ def test_real_docling_adapter_extracts_docx_text():
     assert result.parser_name == "docling"
     assert "ACME Master Services Agreement" in result.text
     assert "Renewal term" in result.text
+    assert any("ACME Master Services Agreement" in block.text for block in result.blocks)
 
 
 def test_real_docling_adapter_extracts_xlsx_table_text():
@@ -137,3 +139,4 @@ def test_real_docling_adapter_extracts_xlsx_table_text():
     assert result.parser_name == "docling"
     assert "Party" in result.text
     assert "ACME" in result.text
+    assert any(block.kind == "table" and "Party" in block.text for block in result.blocks)
