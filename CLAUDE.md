@@ -114,6 +114,15 @@ Rules:
 
 This CI strategy exists to reduce repeated GitHub Actions consumption while preserving one full remote validation at the feature integration boundary.
 
+The `develop → master` integration PR is the single required CI boundary: an intermediate
+develop-targeted PR never requires an exact-SHA GitHub Actions run before merging, regardless of
+how the review discussion phrases the request -- the mandatory local gates in the TDD section are
+sufficient. A draft PR to `master` may optionally be opened purely to obtain an early CI signal on
+an exact candidate SHA before that SHA is merged into `develop`; it must be closed without merging
+once the signal is obtained. This is a diagnostic probe, never a merge path -- PR #54 (a draft
+`research/t23-freeze-protocol → master` PR, closed unmerged after providing an early CI read for
+T23) is the precedent.
+
 ## Merge authorization
 
 Repository Claude Code sessions must never execute PR merges. Merge approval belongs to the

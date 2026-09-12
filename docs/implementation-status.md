@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-09-11 — T23 post-pilot protocol merged into `develop` via PR #53; T12 / Issue #9 Docling ingestion is now in implementation for review; T21 fourth slice (pt-BR / English localization) completed and integrated into `master` via PRs #51/#52 — T21/Issue #29 remains open for the remaining deliberately out-of-scope items.
+Last updated: 2026-09-12 — T12 / Issue #9 Docling ingestion merged into `develop` via PR #55 (merge commit `776e683a49818db35021bb62315dfc1ed7fb00ab`, validated feature head `3c93f3297515c99c6fccd4c5e705f1e77cfada78`, real Docling 2.126.0 PDF/DOCX/XLSX validation); Issue #56 (Contracts domain extensions) is now the active gate before T24; T23 post-pilot protocol remains merged into `develop` via PR #53; T21 fourth slice (pt-BR / English localization) completed and integrated into `master` via PRs #51/#52 — T21/Issue #29 remains open for the remaining deliberately out-of-scope items.
 
 This file tracks the current engineering/research state and execution order. Architectural decisions belong in ADRs; experimental definitions belong in `docs/experimental-design.md`; factual pilot results belong in `docs/milestone-2-pilot.md`; the frozen confirmatory-analysis protocol belongs in `docs/research/`; the parallel advisor-facing application plan belongs in `docs/advisor-demo.md`; historical PR/Issue descriptions remain in GitHub.
 
@@ -171,7 +171,10 @@ T22 is also consumed by the advisor-facing demo when available. FakeProvider rem
 
 #### T12 / Issue #9 — Docling ingestion
 
-Status: **in implementation for PR review after PR #53 merged**.
+Status: **merged into `develop` via PR #55** (merge commit
+`776e683a49818db35021bb62315dfc1ed7fb00ab`, validated feature head
+`3c93f3297515c99c6fccd4c5e705f1e77cfada78`, real Docling 2.126.0 PDF/DOCX/XLSX validation).
+Issue #9 is closed.
 
 Docling is ingestion infrastructure only. Keep a normalized internal document representation independent from Docling APIs and keep parser behavior constant across B0–B4.
 
@@ -180,16 +183,43 @@ extends the existing `NormalizedContent` ingestion boundary so direct text, UTF-
 and Docling-backed document files all reach the core as project-owned canonical text with
 parser/ingestion provenance.
 
+**Delivered:** a generic, parser-independent ingestion/normalization boundary — canonical
+`NormalizedContent.text`, project-owned `NormalizedBlock` / `ParsedDocument`, text/heading/table
+structure with offsets where reliable, a replaceable `DocumentParser`, Docling isolated in
+`application/ingestion.py`, uniform size limits with early rejection, no-leak-sanitized parser
+exceptions, and the same normalized representation reused across B0–B4. The boundary also emits
+`parser_name` / `parser_version` / `ingestion_version` provenance on `NormalizedContent`;
+recording these fields for a comparable scientific batch is already governed by
+`docs/research/post-pilot-protocol-v1.md` §13.2's `parser_ingestion_version` requirement, owned
+by the task that runs that batch (T24 / Issue #37), not by T12 itself.
+
+**Deliberately NOT delivered:** Contracts-specific semantic interpretation — party/role,
+obligations, deadlines, penalties, amounts and the relation-preserving requirements later
+scoring needs. That scope was split out to Issue #56 (Contracts domain extensions); T24 / Issue
+#37 continues to own the Contracts corpus/oracle and the evaluation evidence.
+
+#### Issue #56 — Contracts domain extensions
+
+Status: **active**, the current gate between T12 and T24.
+
+Freezes the minimum development-time Contracts domain support needed before the T24 corpus is
+inspected at treatment-result level: party/role, obligation, deadline, penalty and amount
+categories/policies/generalization strategies, and any minimal reusable extensions they require.
+`NormalizedContent.text` remains canonical and parser behavior remains constant across B0–B4;
+Issue #56 does not create or freeze the Contracts v1 corpus itself — that remains T24.
+
 #### T24 / Issue #37 — Contracts v1 validation corpus
 
-Status: **new second-domain evaluation task; depends methodologically on T23**.
+Status: **new second-domain evaluation task; depends methodologically on T23, and waits on Issue
+#56 freezing Contracts domain support first**.
 
-T24 is deliberately separate from T12:
+T24 is deliberately separate from both T12 and Issue #56 — the three-way split:
 
-- T12 = document ingestion/normalization infrastructure;
+- T12 = document ingestion/normalization infrastructure (generic, parser-independent, merged);
+- Issue #56 = development-time Contracts domain support (categories/policies/generalization strategies);
 - T24 = frozen Contracts corpus/oracle and evaluation evidence.
 
-If Contracts requires new categories/policies/generalization strategies, those extensions must be frozen before a held-out corpus is inspected at treatment-result level, or the resulting run must remain development evidence.
+If Contracts requires new categories/policies/generalization strategies, those extensions must be frozen (Issue #56) before a held-out corpus is inspected at treatment-result level, or the resulting run must remain development evidence.
 
 ### Milestone 3 closure criterion
 
@@ -198,7 +228,9 @@ M3 closes when:
 1. post-pilot metrics/thresholds/comparison/provider rules are frozen on `develop` via PR #53,
    `docs/research/post-pilot-protocol-v1.md`;
 2. a real provider is available behind the shared boundary;
-3. structured Contracts ingestion is available without becoming a treatment variable;
+3. structured Contracts ingestion is available without becoming a treatment variable ✅ (T12,
+   merged via PR #55 — the ingestion/normalization boundary itself; Contracts-specific semantic
+   interpretation is tracked separately by Issue #56 and by T24 / Issue #37, not by this criterion);
 4. Contracts v1 corpus/oracle is frozen with its run classification decided before result inspection;
 5. the next B0–B4 batch can start without post-result treatment/policy/metric tuning.
 
@@ -367,11 +399,11 @@ The primary path never requires knowing B0–B4: the UI simply omits `strategy`,
 
 #### Deliberately not in the third slice
 
-The English locale, `Histórico`, `Experimentos`, `Configurações`, remaining navigation polish, T12 structured-document ingestion (PDF/DOCX/XLSX), T22 real provider, and T25 deploy.
+The English locale, `Histórico`, `Experimentos`, `Configurações`, remaining navigation polish, T20's still-pending multipart/binary upload wiring to the now-merged T12 ingestion boundary (PDF/DOCX/XLSX), T22 real provider, and T25 deploy.
 
 #### Deliberately not in the fourth slice
 
-`Histórico`, `Experimentos`, the full `Configurações` area, remaining navigation polish, locale-aware number/date/byte formatting (kept deliberately simple/out of scope for this slice), T12 structured-document ingestion (PDF/DOCX/XLSX), T22 real provider, and T25 deploy. **T21/Issue #29 stays open** pending these.
+`Histórico`, `Experimentos`, the full `Configurações` area, remaining navigation polish, locale-aware number/date/byte formatting (kept deliberately simple/out of scope for this slice), T20's still-pending multipart/binary upload wiring to the now-merged T12 ingestion boundary (PDF/DOCX/XLSX), T22 real provider, and T25 deploy. **T21/Issue #29 stays open** pending these.
 
 #### Scientific state unchanged
 
@@ -419,12 +451,16 @@ T22/real provider improves this substantially and should be enabled when availab
 ### Critical research path
 
 1. M2 / HR pilot ✅
-2. **T23 / Issue #36 — freeze post-pilot protocol**
-3. In parallel: **T22 real provider** + **T12 Docling/normalization**
-4. **T24 / Issue #37 — Contracts v1 corpus/oracle**
-5. Verify M3 closure / confirmatory-readiness
-6. Launch next frozen B0–B4 validation batch
-7. Only then analyze authoritative comparative results under the pre-frozen protocol
+2. **T23 / Issue #36 — freeze post-pilot protocol** ✅
+3. **T12 / Issue #9 — Docling ingestion/normalization** ✅
+4. **Issue #56 — Contracts domain extensions** (active)
+5. **T24 / Issue #37 — Contracts v1 corpus/oracle**
+6. Verify M3 closure / confirmatory-readiness
+7. Launch next frozen B0–B4 validation batch
+8. Only then analyze authoritative comparative results under the pre-frozen protocol
+
+**T22 real provider** proceeds in parallel with steps 3–7 (see T22 status above); it gates
+authoritative utility/token/cost claims, not the Contracts corpus/oracle freeze itself.
 
 ### Parallel academic path
 
@@ -449,6 +485,7 @@ This ordering is internal to the demo track and does not reorder the scientific 
 - T23 methodology freeze: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/36
 - T22 real provider: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/30
 - T12 Docling: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/9
+- Contracts domain extensions: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/56
 - T24 Contracts corpus: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/37
 - M3 tracker: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/38
 - Demo tracker: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/41
