@@ -255,9 +255,34 @@ record live under `artifacts/experiments/contracts/v1/`.
 
 **Run classification: `pilot_development`**, decided by the project owner before the corpus
 existed and before any B0–B4 Contracts result had been produced or inspected. This corpus is
-therefore **not confirmatory evidence**; a held-out confirmatory Contracts run remains a
-separate future step. The corpus and oracle are frozen and versioned regardless, so that
-future run has a fixed artifact to be held out from.
+therefore **not confirmatory evidence**. `contracts/v1` was subsequently authored, run under
+B0–B4 and **inspected** — its results were read to validate end-to-end execution and to derive
+the findings below. Per `docs/research/post-pilot-protocol-v1.md` §1 (the same rule that makes
+`corpus/hr/v1` permanently `pilot_development`), held-out status turns on a dataset's *history*
+relative to the treatments/metrics being judged, not on whether its files are currently
+immutable — so `contracts/v1` is **permanently ineligible** for `held_out_confirmatory`. The
+corpus and oracle are frozen and versioned regardless; that freeze preserves reproducibility
+and lets it keep serving as development, regression, documentation and pilot evidence, but it
+does not confer held-out eligibility. A future confirmatory Contracts round requires a newly
+authored, independently frozen corpus not previously inspected against the evaluated
+treatments/metrics.
+
+**Post-hoc wording correction (no result changed).** The committed run manifest's
+`reproducibility.run_classification_note` string
+(`artifacts/experiments/contracts/v1/954ffae9f6e143d6af45e4842f6daef9/manifest.json`)
+originally implied this corpus could still become a future held-out artifact; that wording was
+corrected in this same PR to state the permanent-ineligibility position above. Only the note
+string changed — the run id, every timestamp, every count, every result and
+`run_classification` itself (still `pilot_development`) are byte-identical to the original run;
+nothing was re-executed.
+
+**Follow-up, documentation only (not implemented here).** Finding 1 below (the GENERALIZE
+decidability gap) needs a *methodological* revision, not a retune of this corpus: a future
+`post-pilot-v2` could define utility decidability per generalization type (e.g. a date-aware
+rule alongside the existing numeric-band rule). Only after such a protocol revision should a
+new, confirmatory-eligible Contracts corpus be authored — per the permanent-ineligibility
+position above, it could not reuse `contracts/v1`. Neither `post-pilot-v2` nor a Contracts v2
+corpus is created by this PR.
 
 **Nothing frozen by Issue #56 changed**: no category, detector rule, policy document, B3 action
 space, generalization strategy or treatment definition was touched, and no metric frozen by

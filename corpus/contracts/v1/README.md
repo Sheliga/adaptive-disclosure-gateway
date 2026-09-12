@@ -32,12 +32,24 @@ What it means concretely:
 
 - this corpus and the run recorded under
   `artifacts/experiments/contracts/v1/` are **not confirmatory evidence**;
-- a **held-out confirmatory Contracts run remains a separate future step**,
-  governed by `docs/research/post-pilot-protocol-v1.md`;
+- `contracts/v1` was subsequently authored, executed under B0–B4 and
+  **inspected** — its results were read to validate that the corpus runs
+  end to end and to derive the findings recorded below. Per
+  `docs/research/post-pilot-protocol-v1.md` §1 (the same rule that makes
+  `corpus/hr/v1` permanently `pilot_development`), held-out status is about
+  a dataset's *history* relative to the treatments and metrics being judged,
+  not about whether its files are currently immutable. Because
+  `contracts/v1` has already been inspected, it is **permanently ineligible**
+  for `held_out_confirmatory` — freezing it now cannot retroactively confer
+  that status;
 - the corpus and oracle are nonetheless **frozen and versioned** exactly as
-  `corpus/hr/v1` is (see the freeze rule below), precisely so that a future
-  confirmatory run has a fixed artifact to be held out *from*, and so that
-  nothing in it can be quietly adjusted once results exist.
+  `corpus/hr/v1` is (see the freeze rule below). That freeze preserves
+  reproducibility and the historical record — it lets this corpus keep
+  serving as development, regression, documentation and pilot evidence — but
+  it does **not** create held-out eligibility. A future confirmatory
+  Contracts round requires a **newly authored, independently frozen corpus**
+  that has not previously been inspected against the treatments/metrics
+  being evaluated.
 
 The classification is recorded in three independent places: here, in
 `RunIdentity.run_classification` for every result the runner produces, and in
@@ -204,7 +216,18 @@ identity/decoding configuration.
 - Contracts domain freeze (Issue #56 / PR #59): `5a67c30daab68d06bbd16d1cf06433de97245910`
 - Corpus freeze date: 2026-09-12
 - Corpus freeze base commit: `5a67c30daab68d06bbd16d1cf06433de97245910` (the `develop` commit this corpus was authored on; the corpus's own freeze commit is the commit that merges T24)
-- Run classification: `pilot_development`, fixed in advance
+- Run classification: `pilot_development`, fixed in advance, and permanent (see "Run
+  classification — decided in advance" above)
+
+**Post-hoc correction to the manifest's `run_classification_note` wording.** The committed
+`artifacts/experiments/contracts/v1/954ffae9f6e143d6af45e4842f6daef9/manifest.json`'s
+`reproducibility.run_classification_note` string originally implied that a future held-out
+confirmatory Contracts run could use this same, now-frozen corpus. That implication was
+incorrect for the reason given above and has been corrected in place to state the corpus's
+permanent `pilot_development` status. **Only that note string changed.** The run id, every
+timestamp, every count, every result and every other field — including
+`run_classification` itself, which stays `pilot_development` — are byte-identical to the run
+as originally executed; no B0–B4 result was re-run or altered.
 
 ## Nothing frozen by Issue #56 was changed
 

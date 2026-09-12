@@ -81,8 +81,10 @@ def test_every_contracts_result_is_classified_pilot_development():
     """The run classification was fixed in advance, before this branch existed
     and before any B0-B4 Contracts result was produced or inspected (see
     ``corpus/contracts/v1/README.md``). ``pilot_development`` means this
-    corpus is NOT confirmatory evidence; a held-out confirmatory run remains
-    a separate future step.
+    corpus is NOT confirmatory evidence. Because its results have since been
+    inspected, this corpus is permanently ineligible for
+    ``held_out_confirmatory`` (post-pilot-v1 Section 1): a future confirmatory
+    Contracts round requires a newly authored, independently frozen corpus.
     """
     results = run_pilot(
         corpus_dir=CORPUS_DIR,

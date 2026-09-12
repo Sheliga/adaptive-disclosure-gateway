@@ -46,7 +46,7 @@
     "provider_scope_note": "FakeProvider only. No claim about real LLM utility, token counts, cost or provider behaviour is supported by this run (T22 / Issue #30 is open and parallel).",
     "run_classification": "pilot_development",
     "run_classification_decided_before_any_result_existed": true,
-    "run_classification_note": "Fixed by the project owner before corpus/contracts/v1 existed and before any B0-B4 Contracts result was produced or inspected. This run is not confirmatory evidence; a held-out confirmatory run remains a separate future step.",
+    "run_classification_note": "Fixed by the project owner before corpus/contracts/v1 existed and before any B0-B4 Contracts result was produced or inspected. This run is not confirmatory evidence. Because this corpus's results were subsequently inspected, it is permanently ineligible for held_out_confirmatory (post-pilot-v1 Section 1); a future confirmatory Contracts round requires a newly authored, independently frozen corpus not previously inspected. [Note text corrected post-hoc; run id, timestamps, counts and results unchanged.]",
     "schema_version": "t10-experiment-runner-v2",
     "treatment_chain": [
       "b0",

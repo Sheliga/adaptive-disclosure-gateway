@@ -14,10 +14,19 @@ Contracts-shaped for those specs to run on).
 project owner before this corpus existed and before any B0-B4 Contracts
 result had been produced or inspected -- it is not a reaction to what the
 results look like. Concretely, that means: this run is NOT confirmatory
-evidence, and a held-out confirmatory Contracts run remains a separate future
-step. The corpus and its oracle are nonetheless frozen and versioned exactly
-as ``corpus/hr/v1`` is (see ``corpus/contracts/v1/README.md``'s freeze rule),
-so that future run has a fixed artifact to be held out *from*.
+evidence. Any run this script produces gets *inspected* by the act of
+running it, so per ``docs/research/post-pilot-protocol-v1.md`` Section 1
+(the same rule that makes ``corpus/hr/v1`` permanently ``pilot_development``)
+its corpus is permanently ineligible for ``held_out_confirmatory`` --
+held-out status turns on a dataset's history relative to the treatments and
+metrics being judged, not on whether its files are frozen. The corpus and
+its oracle are nonetheless frozen and versioned exactly as ``corpus/hr/v1``
+is (see ``corpus/contracts/v1/README.md``'s freeze rule): that freeze
+preserves reproducibility and lets this evidence keep serving as
+development, regression, documentation and pilot evidence, but it does not
+confer held-out eligibility. A future confirmatory Contracts round requires
+a newly authored, independently frozen corpus not previously inspected
+against the evaluated treatments/metrics.
 
 **Provider scope.** Everything here runs against ``FakeProvider``. Per T22 /
 Issue #30 -- open and parallel -- no output of this script supports a claim
@@ -146,8 +155,11 @@ def _reproducibility_manifest(*, results, policy_dir: Path) -> dict[str, object]
         "run_classification_note": (
             "Fixed by the project owner before corpus/contracts/v1 existed and "
             "before any B0-B4 Contracts result was produced or inspected. This "
-            "run is not confirmatory evidence; a held-out confirmatory run "
-            "remains a separate future step."
+            "run is not confirmatory evidence. Because this corpus's results "
+            "get inspected by the act of running it, it is permanently "
+            "ineligible for held_out_confirmatory (post-pilot-v1 Section 1); "
+            "a future confirmatory Contracts round requires a newly authored, "
+            "independently frozen corpus not previously inspected."
         ),
         # --- policy ---
         "policy_versions_available": _policy_versions_available(policy_dir),
