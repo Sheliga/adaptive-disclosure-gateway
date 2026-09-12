@@ -131,6 +131,23 @@ class MonthYearDateStrategy(GeneralizationStrategy):
 GENERALIZATION_STRATEGIES: dict[str, GeneralizationStrategy] = {
     "salary": NumericBandStrategy(band_width=5000.0, prefix="R$ "),
     "birth_date": MonthYearDateStrategy(),
+    # --- Contracts domain (Issue #56). Registry entries only: no new
+    # strategy class was needed, which is the point of this module existing.
+    #
+    # Band widths are authored from the MAGNITUDE of each information type,
+    # and were fixed before any Contracts case existed -- they are not tuned
+    # against any outcome. A contract's total value and a penalty differ by
+    # orders of magnitude, so one shared width cannot serve both: a R$ 5.000
+    # band around a R$ 2.400.000 contract is a point estimate wearing a
+    # range, while a R$ 50.000 band around a R$ 12.000 penalty discloses
+    # nothing at all. Both sit far above MIN_NUMERIC_BAND_WIDTH.
+    "contract_value": NumericBandStrategy(band_width=50000.0, prefix="R$ "),
+    "penalty_amount": NumericBandStrategy(band_width=5000.0, prefix="R$ "),
+    # A contractual deadline coarsens to month-and-year, the same fixed,
+    # non-configurable floor birth_date uses. See
+    # transformations/task_aware.py for why GENERALIZE is offered for
+    # deadline at all even though `contracts-v1` itself prefers PRESERVE.
+    "deadline": MonthYearDateStrategy(),
 }
 
 

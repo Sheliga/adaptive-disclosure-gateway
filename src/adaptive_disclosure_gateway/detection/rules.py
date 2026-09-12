@@ -73,4 +73,67 @@ LABELED_HR_RULES: tuple[DetectionRule, ...] = tuple(
     for category, label in _LABELS
 )
 
-BUILT_IN_RULES: tuple[DetectionRule, ...] = STRUCTURED_RULES + LABELED_HR_RULES
+# Labeled-line rules for the Contracts domain (Issue #56). Same deliberate
+# limitation as the HR set above -- a fixed "Label: value" line format, one
+# value per line, case-sensitive, no entity recognition and no coreference.
+#
+# The one Contracts-specific thing worth reading carefully is the role/value
+# split. A contract's meaning is relational: "who owes what to whom" is only
+# preserved if the ROLE survives while the IDENTITY is transformed. That
+# falls out of ``group="value"`` for free, with no relation model, because
+# the role word lives in the *label*:
+#
+#     Contracting party: Aurora Servicos Digitais Ltda
+#     ^--- role, never inside the span   ^--- identity, the detected span
+#
+# so a pseudonymized payload still reads ``Contracting party:
+# PSEUDO-party_name-...`` / ``Contracted party: PSEUDO-party_name-...``.
+# Combined with the vault's per-value pseudonym stability (the same original
+# always resolves to the same pseudonym within a scope), obligation
+# assignment survives B2-B4 unchanged. Pinned by
+# tests/test_contracts_domain.py's relation-preservation tests.
+#
+# Both party labels map to the SAME ``party_name`` category on purpose: the
+# role is document structure, not a separate information type, and splitting
+# it into two categories would have duplicated every policy/action-space
+# entry to express something the label already carries.
+#
+# ``representative_name`` is separate from ``party_name`` because the two are
+# different objects under Brazilian data-protection law: a contracting party
+# is typically a legal entity (not a natural person, so not an LGPD data
+# subject), while a signatory/legal representative is a natural person whose
+# name is personal data. Keeping them apart lets a policy govern them
+# independently without a schema change, and keeps the audit trail able to
+# say which of the two was disclosed.
+#
+# What is deliberately NOT here: `obligation` and `confidential_clause`.
+# Obligation text is the task-bearing content of a contract, not a sensitive
+# information unit -- putting ordinary clause prose under disclosure control
+# buys no safety and destroys the utility the task needs, and the relation it
+# carries is already preserved by the role/value split above. A
+# "confidential clause" label would not detect a clause at all; it would
+# detect an author's *classification* of one, which is oracle information and
+# must never reach the detector at runtime. See
+# docs/contracts-policy-matrix.md.
+_CONTRACTS_LABELS: tuple[tuple[str, str], ...] = (
+    ("party_name", "Contracting party"),
+    ("party_name", "Contracted party"),
+    ("representative_name", "Representative"),
+    ("bank_account", "Bank account"),
+    ("contract_value", "Contract value"),
+    ("penalty_amount", "Penalty"),
+    ("deadline", "Deadline"),
+)
+
+LABELED_CONTRACTS_RULES: tuple[DetectionRule, ...] = tuple(
+    DetectionRule(
+        category,
+        re.compile(rf"^{re.escape(label)}:[ \t]*(?P<value>.+?)[ \t]*$", re.MULTILINE),
+        group="value",
+    )
+    for category, label in _CONTRACTS_LABELS
+)
+
+BUILT_IN_RULES: tuple[DetectionRule, ...] = (
+    STRUCTURED_RULES + LABELED_HR_RULES + LABELED_CONTRACTS_RULES
+)

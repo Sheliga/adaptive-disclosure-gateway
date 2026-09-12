@@ -98,6 +98,50 @@ TASK_AWARE_ACTION_SPACES: dict[str, tuple[DisclosureAction, ...]] = {
     "salary": (DisclosureAction.REMOVE, DisclosureAction.GENERALIZE, DisclosureAction.PRESERVE),
     "department": (DisclosureAction.REMOVE, DisclosureAction.PRESERVE),
     "medical_data": (DisclosureAction.BLOCK_REQUEST,),
+    # --- Contracts domain (Issue #56), built by the same rules as the HR
+    # entries above, not by inventing new ones:
+    #
+    # party_name/representative_name: direct entity identifiers, so REMOVE
+    # and PSEUDONYMIZE only -- there is no defined "generalized" form of a
+    # company or a person, and PRESERVE of a direct identifier does not
+    # belong in a generic, context-independent space.
+    #
+    # bank_account: unconditionally BLOCK_REQUEST, the same shape as
+    # medical_data. A single-element space, so every relevance level
+    # (including AMBIGUOUS) resolves to the only available action.
+    #
+    # contract_value/penalty_amount: numeric categories with registered
+    # NumericBandStrategy entries (transformations/generalization.py), so the
+    # full three-step space applies -- exactly like salary.
+    #
+    # deadline: a date category with a registered MonthYearDateStrategy, so
+    # GENERALIZE is genuinely available and belongs in the space. Including
+    # it is the LESS disclosing choice, not the more: without an
+    # intermediate step, any positively-mentioned deadline would jump
+    # straight to PRESERVE. Whether a month-and-year deadline is still
+    # useful to a contract reader is a utility question for the corpus to
+    # measure, not a reason to withhold the option from B3. Note that
+    # `contracts-v1` itself resolves deadline to a hard PRESERVE -- policy
+    # moving *above* B3's own choice is a legitimate, measurable B3->B4
+    # cell (see transformations/policy_governed.py's `_policy_effect`).
+    "party_name": (DisclosureAction.REMOVE, DisclosureAction.PSEUDONYMIZE),
+    "representative_name": (DisclosureAction.REMOVE, DisclosureAction.PSEUDONYMIZE),
+    "bank_account": (DisclosureAction.BLOCK_REQUEST,),
+    "contract_value": (
+        DisclosureAction.REMOVE,
+        DisclosureAction.GENERALIZE,
+        DisclosureAction.PRESERVE,
+    ),
+    "penalty_amount": (
+        DisclosureAction.REMOVE,
+        DisclosureAction.GENERALIZE,
+        DisclosureAction.PRESERVE,
+    ),
+    "deadline": (
+        DisclosureAction.REMOVE,
+        DisclosureAction.GENERALIZE,
+        DisclosureAction.PRESERVE,
+    ),
 }
 
 

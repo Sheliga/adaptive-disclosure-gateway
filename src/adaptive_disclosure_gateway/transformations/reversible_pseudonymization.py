@@ -41,6 +41,24 @@ ACTIONS: dict[str, DisclosureAction] = {
     "salary": DisclosureAction.GENERALIZE,
     "department": DisclosureAction.PRESERVE,
     "medical_data": DisclosureAction.BLOCK_REQUEST,
+    # --- Contracts domain (Issue #56), following the same B1->B2 rule as
+    # everything above: the categories B1 could only REMOVE become
+    # PSEUDONYMIZE here, and the GENERALIZE/BLOCK_REQUEST ones are unchanged.
+    #
+    # This is where Contracts relation preservation actually happens, and it
+    # needed no new machinery: the vault issues one stable pseudonym per
+    # original value within a scope, so the same company reads as the same
+    # pseudonym everywhere in the document while the two parties never
+    # collapse into one reference -- and the role word, living in the
+    # detector's label rather than in the detected span (see
+    # detection/rules.py), is never transformed at all. "ACME must pay Beta"
+    # therefore survives as "[party A] must pay [party B]", assignment intact.
+    "party_name": DisclosureAction.PSEUDONYMIZE,
+    "representative_name": DisclosureAction.PSEUDONYMIZE,
+    "bank_account": DisclosureAction.BLOCK_REQUEST,
+    "contract_value": DisclosureAction.GENERALIZE,
+    "penalty_amount": DisclosureAction.GENERALIZE,
+    "deadline": DisclosureAction.GENERALIZE,
 }
 
 
