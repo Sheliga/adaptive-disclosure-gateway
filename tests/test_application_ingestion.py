@@ -18,7 +18,9 @@ import pytest
 from adaptive_disclosure_gateway.application.ingestion import (
     DocumentParser,
     IngestionError,
+    NormalizedBlock,
     NormalizedContent,
+    ParsedDocument,
     normalize_text,
     normalize_text_file,
 )
@@ -75,12 +77,13 @@ def test_normalize_text_file_supports_md():
 class RecordingParser:
     calls: list[tuple[str, bytes]]
     markdown: str = "# Services\n\n| Party | Role |\n| --- | --- |\n| ACME | vendor |\n"
+    blocks: tuple[NormalizedBlock, ...] = ()
     parser_name: str = "fake-docling"
     parser_version: str = "0.0-test"
 
-    def parse_to_markdown(self, *, safe_name: str, data: bytes) -> str:
+    def parse(self, *, safe_name: str, data: bytes) -> ParsedDocument:
         self.calls.append((safe_name, data))
-        return self.markdown
+        return ParsedDocument(text=self.markdown, blocks=self.blocks)
 
 
 def test_normalize_text_file_routes_pdf_docx_xlsx_and_images_through_document_parser():
@@ -108,7 +111,7 @@ def test_normalize_text_file_routes_pdf_docx_xlsx_and_images_through_document_pa
         assert result.byte_count == len(data)
         assert result.parser_name == "fake-docling"
         assert result.parser_version == "0.0-test"
-        assert result.ingestion_version == "docling-markdown-v1"
+        assert result.ingestion_version == "docling-structured-markdown-v1"
 
 
 def test_normalize_text_file_sends_only_a_generated_safe_name_to_the_document_parser():
@@ -118,6 +121,28 @@ def test_normalize_text_file_sends_only_a_generated_safe_name_to_the_document_pa
     normalize_text_file(original_name, b"%PDF pretend", document_parser=parser)
 
     assert parser.calls == [("uploaded.pdf", b"%PDF pretend")]
+
+
+def test_normalize_text_file_preserves_parser_independent_document_blocks():
+    markdown = "# Services\n\n| Party | Role |\n| --- | --- |\n| ACME | vendor |\n"
+    table_start = markdown.index("| Party")
+    blocks = (
+        NormalizedBlock(kind="heading", text="Services", start=2, end=10, level=1),
+        NormalizedBlock(
+            kind="table",
+            text=markdown[table_start:],
+            start=table_start,
+            end=len(markdown),
+        ),
+    )
+    parser = RecordingParser(markdown=markdown, blocks=blocks, calls=[])
+
+    result = normalize_text_file("contract.pdf", b"%PDF pretend", document_parser=parser)
+
+    assert result.text == markdown
+    assert result.blocks == blocks
+    assert result.blocks[0].kind == "heading"
+    assert result.blocks[1].kind == "table"
 
 
 def test_normalize_text_file_rejects_document_parser_output_that_has_no_text():
@@ -137,7 +162,7 @@ def test_document_parser_failure_is_safe_and_breaks_the_exception_chain():
         parser_name = "fake-docling"
         parser_version = "0.0-test"
 
-        def parse_to_markdown(self, *, safe_name: str, data: bytes) -> str:
+        def parse(self, *, safe_name: str, data: bytes) -> ParsedDocument:
             raise RuntimeError("Ana Souza CPF 123.456.789-09 failed")
 
     try:
@@ -148,6 +173,34 @@ def test_document_parser_failure_is_safe_and_breaks_the_exception_chain():
         assert exc.__cause__ is None
         assert exc.__suppress_context__ is True
         rendered = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        assert "Ana Souza" not in rendered
+        assert "123.456.789-09" not in rendered
+        assert "../leaky" not in rendered
+        assert ".pdf" in str(exc)
+    else:
+        pytest.fail("expected IngestionError")
+
+
+def test_document_parser_ingestion_error_is_sanitized_and_breaks_the_exception_chain():
+    class LeakyIngestionErrorParser:
+        parser_name = "fake-docling"
+        parser_version = "0.0-test"
+
+        def parse(self, *, safe_name: str, data: bytes) -> ParsedDocument:
+            raise IngestionError("Ana Souza CPF 123.456.789-09")
+
+    try:
+        normalize_text_file(
+            SENSITIVE_DOCUMENT_NAME,
+            SENSITIVE_DOCUMENT_BYTES,
+            document_parser=LeakyIngestionErrorParser(),
+        )
+    except IngestionError as exc:
+        assert exc.__cause__ is None
+        assert exc.__suppress_context__ is True
+        rendered = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        assert "Ana Souza" not in str(exc)
+        assert "123.456.789-09" not in str(exc)
         assert "Ana Souza" not in rendered
         assert "123.456.789-09" not in rendered
         assert "../leaky" not in rendered
@@ -192,6 +245,60 @@ def test_normalize_text_file_rejects_empty_file():
 def test_normalize_text_file_rejects_whitespace_only_file():
     with pytest.raises(IngestionError):
         normalize_text_file("record.txt", b"   \n\t ")
+
+
+def test_normalize_text_rejects_input_above_byte_limit_without_leaking_content(monkeypatch):
+    monkeypatch.setattr("adaptive_disclosure_gateway.application.ingestion.MAX_INPUT_BYTES", 8)
+
+    with pytest.raises(IngestionError) as excinfo:
+        normalize_text("Ana Souza")
+
+    message = str(excinfo.value)
+    assert "9 bytes" in message
+    assert "8 bytes" in message
+    assert "Ana Souza" not in message
+
+
+def test_normalize_text_file_rejects_txt_md_above_byte_limit_without_leaking_content(monkeypatch):
+    monkeypatch.setattr("adaptive_disclosure_gateway.application.ingestion.MAX_INPUT_BYTES", 4)
+
+    with pytest.raises(IngestionError) as excinfo:
+        normalize_text_file("notes.md", b"Ana Souza")
+
+    message = str(excinfo.value)
+    assert "9 bytes" in message
+    assert "4 bytes" in message
+    assert "Ana Souza" not in message
+
+
+def test_normalize_text_file_rejects_document_above_byte_limit_before_parser(monkeypatch):
+    monkeypatch.setattr("adaptive_disclosure_gateway.application.ingestion.MAX_INPUT_BYTES", 4)
+    parser = RecordingParser(calls=[])
+
+    with pytest.raises(IngestionError) as excinfo:
+        normalize_text_file("contract.pdf", b"%PDF pretend", document_parser=parser)
+
+    message = str(excinfo.value)
+    assert "12 bytes" in message
+    assert "4 bytes" in message
+    assert "%PDF pretend" not in message
+    assert parser.calls == []
+
+
+def test_normalize_text_file_rejects_parser_output_above_normalized_character_limit(monkeypatch):
+    monkeypatch.setattr(
+        "adaptive_disclosure_gateway.application.ingestion.MAX_NORMALIZED_CHARACTERS", 5
+    )
+    parser = RecordingParser(markdown="abcdef", calls=[])
+
+    with pytest.raises(IngestionError) as excinfo:
+        normalize_text_file("contract.pdf", b"%PDF", document_parser=parser)
+
+    message = str(excinfo.value)
+    assert "6 characters" in message
+    assert "5 characters" in message
+    assert "abcdef" not in message
+    assert parser.calls == [("uploaded.pdf", b"%PDF")]
 
 
 # --- No-leak invariant: an undecodable file must never let the raw bytes,
