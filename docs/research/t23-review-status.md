@@ -1,78 +1,56 @@
 # T23 review status
 
-Last updated: 2026-09-11
+Last updated: 2026-09-11 (America/Sao_Paulo)
 
-This document records the **current review state** of T23 / Issue #36 while PR #53 is still open. It is intentionally separate from `post-pilot-protocol-v1.md`: the protocol candidate is not yet authoritative until it is approved/merged.
+This document is retained as a historical review record for T23 / Issue #36. The review is no longer active.
 
-## Current state
+## Final state
 
-- PR: #53 — `research/t23-freeze-protocol` → `develop`
-- PR is open and mergeable.
-- T23 is **in progress / final methodological review**.
-- `post-pilot-v1` must **not** yet be treated as the completed M3 protocol-freeze gate.
-- The previously identified methodological blockers have been corrected in the candidate and
-  are awaiting human verification.
-- No B3/B4, HR corpus, HR policy or M2 artifact tuning is authorized by this review.
+T23 is **complete**.
 
-## Accepted corrections already in PR #53
+- PR #53 (`research/t23-freeze-protocol` → `develop`) was reviewed and merged.
+- Final validated feature head: `b0fe17c4ae7109b2ea1d25d50218fe0957ebddb9`.
+- Merge commit on `develop`: `15696a131d6bc16c19e810fa811767684b15ed51`.
+- Canonical GitHub Actions validation: run #89, successful on the exact final head.
+- Issue #36 was closed as completed.
+- `docs/research/post-pilot-protocol-v1.md` (`protocol_id: post-pilot-v1`) is the frozen methodological baseline for the post-pilot path.
 
-The previous review round was incorporated successfully:
+The older text in this file that described PR #53 as open/awaiting human merge was pre-merge review state and is superseded by this final record.
 
-- primary unnecessary-exposure metric changed from arithmetic mean of ordinal ranks to an ordinal/cumulative family;
-- T12 is explicitly required before the final confirmatory Contracts freeze;
-- T22 remains parallel;
-- B0 is a control/reference baseline and only provides a ceiling of information availability under the FakeProvider information-sufficiency proxy, not guaranteed maximum real-provider task utility;
-- `frozen_date` corrected to 2026-09-11;
-- T21 fourth slice status corrected as integrated through PRs #51/#52 while T21 itself remains open;
-- `post-pilot-v1` remains descriptive-only: any future inferential method must be defined in a later protocol version before the relevant batch results are inspected.
+## Methodological result preserved
 
-## Review corrections now incorporated
+The final T23 freeze established, without tuning B3/B4 or the frozen HR evidence:
 
-### 1. Binary metric vs first cumulative threshold
+- ordinal/cumulative unnecessary-exposure analysis as the primary family;
+- the historical binary unnecessary-disclosure metric preserved unchanged as secondary;
+- explicit handling of scorable, blocked and unscorable `NOT_REQUIRED` spans (`N = S + B + U`);
+- ordinal-safe macro summaries for max/median exposure;
+- the five `hr-v2`/`hr-v3` contextual cells as the primary B3→B4 governance comparison;
+- `hr-v1` pairwise as secondary/historical;
+- FakeProvider limitations and the requirement for a real provider before authoritative utility/token/cost claims;
+- paired descriptive analysis at the current scale;
+- a development-vs-held-out/confirmatory freeze discipline for the next domain.
 
-The candidate now states that the historical binary unnecessary-disclosure metric is **not always mathematically identical** to `P(exposure >= PSEUDONYMIZE)` under the ordinal/cumulative population definition.
+The known `hr_salary_analysis_003/salary` divergence remains visible and was not tuned away.
 
-The historical scorer uses every `NOT_REQUIRED` span as its denominator, including blocked or otherwise unscorable spans. `BLOCK_REQUEST`/unscorable spans do not enter the numerator.
+## Scientific order after T23
 
-The proposed cumulative family currently defines its denominator from scorable `exposure_level` spans only.
+The frozen execution order became:
 
-The protocol preserves both definitions and now formalizes `N = S + B + U`, the common
-numerator `T`, binary `T/N`, threshold `T/S`, their coincidence/divergence conditions,
-coverage `S/N`, explicit `B`/`U` counts and empty-population behavior.
-
-### 2. Macro aggregation of ordinal max/median
-
-Per-case proportions and exceedance probabilities can be macro-averaged across cases.
-
-Per-case ordinal `max`/`median` values are no longer specified as arithmetic means. The
-candidate uses ordinal-safe corpus summaries:
-
-- distribution/counts of cases by maximum level;
-- distribution/counts of cases by median level;
-- an ordinal median across per-case levels where appropriate.
-
-### 3. Historical scorer documentation
-
-`src/adaptive_disclosure_gateway/experiments/scoring/unnecessary_disclosure.py` now labels the
-binary measure as the historical M2 metric preserved as secondary. Its implementation and
-formula remain unchanged. A focused regression also pins the blocked-span denominator behavior.
-
-## Scientific order
-
-The current order remains:
-
-`T23 → T12 → Contracts domain extensions → T24 → next B0–B4 batch`
+```text
+T23 → T12 → Contracts domain extensions → T24 → next B0–B4 batch
+```
 
 T22 / real provider proceeds in parallel.
 
-Preliminary representation-independent Contracts work may occur before T12 is complete, but the **final confirmatory freeze** of Contracts corpus/oracle/offsets/canonical representation must wait until T12 has stabilized the ingestion/normalization path.
+## Subsequent state
 
-## Completion condition
+T12 / Issue #9 has since completed:
 
-T23 can be marked complete only after:
+- PR #55 merged into `develop` as `776e683a49818db35021bb62315dfc1ed7fb00ab`;
+- the exact T12 feature head was validated with real Docling 2.126.0 for PDF, DOCX and XLSX;
+- normalized ingestion is now stable enough to leave the parser off the Contracts critical path.
 
-1. human review confirms the corrected protocol and supporting docs are internally consistent;
-2. applicable gates pass;
-3. PR #53 is approved and merged into `develop`.
+The active scientific task is now Issue #56 — Contracts domain extensions — which must freeze the minimum domain-specific category/policy/generalization support before T24 builds/freezes Contracts v1 and its oracle.
 
-Until then, Issue #36 and the T23 Trello card remain active.
+See `docs/milestone-3-current-plan.md` for the current execution schedule and planning guardrails.
