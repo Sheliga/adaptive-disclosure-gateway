@@ -93,8 +93,16 @@ services:
       # localhost/127.0.0.1 (those would resolve to the web container
       # itself).
       ADG_API_BASE_URL: http://api:8000
+    # Loopback-only: bound to 127.0.0.1 specifically, not every host
+    # interface. Without an explicit host IP, compose publishes on ALL
+    # interfaces including a public one, which would let a caller reach the
+    # web origin directly over plain HTTP and bypass the optional Caddy/TLS
+    # profile entirely. Port 3000 therefore stays reachable from the host
+    # itself (http://localhost:3000/http://127.0.0.1:3000 keep working for
+    # local development) but never from outside it -- a hosted deployment's
+    # only public ports are Caddy's 80/443 below.
     ports:
-      - "${ADG_DEMO_WEB_PORT:-3000}:3000"
+      - "127.0.0.1:${ADG_DEMO_WEB_PORT:-3000}:3000"
     depends_on:
       api:
         condition: service_healthy

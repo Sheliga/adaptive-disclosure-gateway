@@ -20,6 +20,8 @@ fail one of these, not merely disagree with a style preference.
 
 from __future__ import annotations
 
+import dataclasses
+import re
 from pathlib import Path
 
 import pytest
@@ -66,6 +68,69 @@ def _environment_mapping(service: dict) -> dict[str, str]:
         key, _, value = str(item).partition("=")
         mapping[key] = value
     return mapping
+
+
+@dataclasses.dataclass(frozen=True)
+class _PublishedPort:
+    """One published-port entry, normalized regardless of which of compose's
+    two ``ports:`` syntaxes produced it -- short string
+    (``"127.0.0.1:3000:3000"``, or bare ``"3000"``/``"3000:3000"`` with no
+    host IP at all) or long mapping form
+    (``{host_ip: 127.0.0.1, published: 3000, target: 3000}``). ``host_ip`` is
+    ``None`` when the entry does not bind a specific host interface (i.e. it
+    would publish on every interface), which is exactly the shape Finding 1
+    exists to catch.
+    """
+
+    host_ip: str | None
+    published: str | None
+    target: str
+
+
+#: Matches one compose interpolation (``${VAR}``/``${VAR:-default}``/
+#: ``${VAR:?message}``) as a single opaque unit, so its own internal ``:``
+#: (the ``:-``/``:?`` operator) is never mistaken for a host/port separator
+#: by the short-syntax parsing below.
+_INTERPOLATION_RE = re.compile(r"\$\{[^}]*\}")
+
+
+def _parse_port_entry(entry: object) -> _PublishedPort:
+    if isinstance(entry, dict):
+        return _PublishedPort(
+            host_ip=entry.get("host_ip"),
+            published=str(entry["published"]) if entry.get("published") is not None else None,
+            target=str(entry["target"]),
+        )
+    # Short syntax: "[HOST_IP:][HOST_PORT:]CONTAINER_PORT[/PROTOCOL]" per
+    # https://docs.docker.com/reference/compose-file/services/#short-syntax-1.
+    # An IPv6 host_ip would itself contain ':', but nothing in this repo's
+    # compose file uses one, so splitting on the last two ':' cleanly
+    # separates the fixed trailing "[host_port:]container_port" pair from an
+    # arbitrarily-':'-containing leading host_ip -- once any ``${...}``
+    # interpolation is masked out first, so its own colon does not get
+    # mistaken for one of those separators.
+    text = str(entry).split("/", 1)[0]
+    placeholders: list[str] = []
+
+    def _stash(match: re.Match[str]) -> str:
+        placeholders.append(match.group(0))
+        return f"\x00{len(placeholders) - 1}\x00"
+
+    masked = _INTERPOLATION_RE.sub(_stash, text)
+
+    def _unstash(part: str) -> str:
+        for index, value in enumerate(placeholders):
+            part = part.replace(f"\x00{index}\x00", value)
+        return part
+
+    parts = [_unstash(part) for part in masked.rsplit(":", 2)]
+    if len(parts) == 3:
+        host_ip, published, target = parts
+        return _PublishedPort(host_ip=host_ip or None, published=published, target=target)
+    if len(parts) == 2:
+        published, target = parts
+        return _PublishedPort(host_ip=None, published=published, target=target)
+    return _PublishedPort(host_ip=None, published=None, target=parts[0])
 
 
 class TestComposeFileExists:
@@ -166,6 +231,22 @@ class TestWebServiceSecurity:
         assert web.get("ports"), "the web service must publish a host port"
         assert len(web["ports"]) == 1
 
+    def test_web_service_port_binds_loopback_only(self) -> None:
+        """Finding 1: a direct ``http://<public-ip>:3000`` connection must
+        bypass Caddy/TLS entirely unless the published port is bound to
+        ``127.0.0.1`` specifically. Compose's default (no host IP, or
+        ``0.0.0.0``) publishes on every host interface, including a public
+        one -- this is the defect a hosted deployment must not ship with.
+        """
+        web = _service(_load_compose(), "web")
+        ports = web.get("ports") or []
+        assert len(ports) == 1
+        entry = _parse_port_entry(ports[0])
+        assert entry.host_ip == "127.0.0.1", (
+            f"the web service's published port must be bound to 127.0.0.1 only; got "
+            f"host_ip={entry.host_ip!r} (entry: {ports[0]!r})"
+        )
+
     def test_web_depends_on_api_being_healthy(self) -> None:
         web = _service(_load_compose(), "web")
         depends_on = web.get("depends_on")
@@ -187,6 +268,23 @@ class TestWebServiceSecurity:
         assert "localhost" not in value
         assert "127.0.0.1" not in value
         assert "api" in value
+
+
+class TestCaddyServicePorts:
+    """The optional ``tls`` profile's reverse proxy is the only service
+    meant to be reachable from a public interface at all -- and only on the
+    standard TLS-adjacent ports.
+    """
+
+    def test_caddy_service_publishes_exactly_80_and_443(self) -> None:
+        compose = _load_compose()
+        caddy = compose["services"].get("caddy")
+        assert caddy is not None, "compose.demo.yaml must define a caddy service"
+        ports = caddy.get("ports") or []
+        published_targets = {_parse_port_entry(entry).published for entry in ports}
+        assert published_targets == {"80", "443"}, (
+            f"the caddy service must publish exactly ports 80 and 443; got {published_targets!r}"
+        )
 
 
 class TestDockerfiles:

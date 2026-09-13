@@ -396,6 +396,13 @@ either direction, so a plain `docker compose -f compose.demo.yaml up` with nothi
 immediately rather than silently picking a provider. Once both containers report healthy, open
 `http://localhost:3000` (override the host port with `ADG_DEMO_WEB_PORT`).
 
+The web port is published as `127.0.0.1:${ADG_DEMO_WEB_PORT:-3000}:3000` -- bound to loopback
+only, never to every host interface. `http://localhost:3000`/`http://127.0.0.1:3000` keep
+working for local development, but the port is not reachable from any other machine, including a
+VM's public IP. On a hosted VM, the only ports meant to be reachable publicly are Caddy's 80/443
+under the `tls` profile (see "Hosted deployment path" below); open only those two on the host
+firewall, never 3000.
+
 To stop: `docker compose -f compose.demo.yaml down`.
 
 ### Enabling the real Anthropic provider
