@@ -44,6 +44,7 @@ _SECRET_ENV_VAR_NAMES = (
     "ADG_ANTHROPIC_TIMEOUT_SECONDS",
     "ADG_ANTHROPIC_BASE_URL",
     "ADG_ANTHROPIC_API_KEY_ENV_VAR",
+    "ADG_RESTORE_HANDLE_SECRET",
 )
 
 
@@ -198,6 +199,33 @@ class TestApiServiceSecurity:
                 f"value; got {value!r}"
             )
 
+    def test_api_service_carries_optional_restore_handle_variables(self) -> None:
+        """T26 / issue #67. Export/restore are an OPTIONAL feature: an
+        unconfigured ``ADG_RESTORE_HANDLE_SECRET`` must not block startup of
+        the whole demo stack (unlike ``ADG_PROVIDER``'s required
+        interpolation above) -- it only makes ``/documents/export`` and
+        ``/documents/restore`` themselves refuse with 503, per
+        ``RestoreUnavailableError``. A ``:?`` (required) interpolation here
+        would be a regression: it would make the entire api service refuse
+        to start over a feature nobody asked to enable.
+        """
+        api = _service(_load_compose(), "api")
+        env = _environment_mapping(api)
+        for name in ("ADG_RESTORE_HANDLE_SECRET", "ADG_RESTORE_HANDLE_TTL_SECONDS"):
+            assert name in env, f"api service must carry {name}"
+            value = env[name]
+            assert value.startswith("${") and value.endswith("}"), (
+                f"{name} on the api service must be a compose interpolation; got {value!r}"
+            )
+            assert ":-" in value, (
+                f"{name} must use the OPTIONAL interpolation form ('${{{name}:-}}'), "
+                f"not a required ('${{{name}:?...}}') one; got {value!r}"
+            )
+            assert ":?" not in value, (
+                f"{name} must not be a required interpolation (that would block startup of "
+                f"the whole stack for an optional feature); got {value!r}"
+            )
+
     def test_provider_selection_is_a_required_interpolation(self) -> None:
         """``ADG_PROVIDER`` must be explicitly required (``${ADG_PROVIDER:?...}``)
         so the demo stack never silently launches with an unintended
@@ -223,6 +251,17 @@ class TestWebServiceSecurity:
         env = _environment_mapping(web)
         for name in _SECRET_ENV_VAR_NAMES:
             assert name not in env, f"web service must not carry {name}"
+
+    def test_web_service_carries_no_restore_handle_variable(self) -> None:
+        """T26 / issue #67. Export/restore are API/CLI-only in this slice --
+        the web container has no proxy route for either, so it has no
+        legitimate reason to hold either variable, secret or not (the TTL
+        is not itself a secret, but a name it should never see either).
+        """
+        web = _service(_load_compose(), "web")
+        env = _environment_mapping(web)
+        assert "ADG_RESTORE_HANDLE_SECRET" not in env
+        assert "ADG_RESTORE_HANDLE_TTL_SECONDS" not in env
 
     def test_web_service_has_no_next_public_variable(self) -> None:
         """``NEXT_PUBLIC_*`` variables are inlined into the client bundle at
@@ -436,3 +475,59 @@ class TestDockerignore:
         text = _WEB_DOCKERIGNORE_PATH.read_text(encoding="utf-8")
         assert "node_modules" in text
         assert ".next" in text
+
+
+_WEB_ROOT = _REPO_ROOT / "web"
+_WEB_EXCLUDED_DIR_NAMES = {"node_modules", ".next"}
+
+
+def _web_source_files() -> list[Path]:
+    files: list[Path] = []
+    for path in _WEB_ROOT.rglob("*"):
+        if not path.is_file():
+            continue
+        if any(part in _WEB_EXCLUDED_DIR_NAMES for part in path.relative_to(_WEB_ROOT).parts):
+            continue
+        files.append(path)
+    return files
+
+
+class TestWebDoesNotExposeExportRestore:
+    """Pins ADR-0002's decision (`docs/adr/0002-deferred-restore-handles.md`)
+    that export/restore stay API/CLI-only while the public demo has no
+    authentication: the hosted web demo must not proxy either route. This is
+    a static, repository-wide pin rather than a behavioral one specifically
+    so it also reaches code that has not been written yet -- a future UI
+    slice that wants to expose export/restore through the browser must
+    remove this pin deliberately, not trip over it by accident while adding
+    an unrelated proxy route.
+    """
+
+    def test_no_route_handler_for_export_or_restore(self) -> None:
+        api_dir = _WEB_ROOT / "app" / "api"
+        assert api_dir.is_dir(), (
+            f"expected web API route directory at {api_dir}; if the web app has been "
+            "restructured, update this pin rather than let it silently pass"
+        )
+        for route_file in api_dir.rglob("route.ts"):
+            relative = route_file.relative_to(api_dir).as_posix()
+            assert "documents/export" not in relative, (
+                f"web must not proxy POST /documents/export: found {route_file}"
+            )
+            assert "documents/restore" not in relative, (
+                f"web must not proxy POST /documents/restore: found {route_file}"
+            )
+
+    def test_no_file_references_export_or_restore_paths(self) -> None:
+        offenders = []
+        for path in _web_source_files():
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            if "/documents/export" in text or "/documents/restore" in text:
+                offenders.append(path)
+        assert not offenders, (
+            "no file under web/ (excluding node_modules/.next) may reference "
+            f"/documents/export or /documents/restore: {offenders!r}"
+        )

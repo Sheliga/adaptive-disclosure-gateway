@@ -9,6 +9,16 @@ description = "Research prototype for policy-constrained disclosure to external 
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
 dependencies = [
+  # T26 / issue #67 -- AES-256-GCM + HKDF for the sealed restore-handle
+  # envelope (application/restore_handle.py). A base dependency, not an
+  # optional extra: unlike `anthropic`/`docling`, the restore-handle surface
+  # is part of the core application service every adapter (CLI and API)
+  # builds by default. Bounded to the current major series (44 covers this
+  # codebase's minimum supported API shape; 50.0.1 is the latest verified at
+  # pin time) -- cryptography bumps its major version far more often than
+  # semver would suggest, so an upper bound here is a deliberate, reviewable
+  # decision rather than an oversight.
+  "cryptography>=44,<51",
   "opentelemetry-api>=1.27,<2",
   "opentelemetry-exporter-otlp-proto-grpc>=1.27,<2",
   "opentelemetry-sdk>=1.27,<2",

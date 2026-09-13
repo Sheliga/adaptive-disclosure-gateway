@@ -78,6 +78,7 @@ from adaptive_disclosure_gateway.api.limits import RequestBodySizeLimitMiddlewar
 from adaptive_disclosure_gateway.application.contracts import (
     DisclosureApplicationRequest,
     DisclosureStrategy,
+    ExportRefusedError,
     UnsafeControlExecutionError,
 )
 from adaptive_disclosure_gateway.application.examples import ExampleNotFoundError
@@ -90,6 +91,10 @@ from adaptive_disclosure_gateway.application.preview_confirmation import (
     PreviewConfirmationError,
 )
 from adaptive_disclosure_gateway.application.requests import ContentSourceError, MissingTaskError
+from adaptive_disclosure_gateway.application.restore_handle import (
+    RestoreHandleError,
+    RestoreUnavailableError,
+)
 from adaptive_disclosure_gateway.application.service import DisclosureApplicationService
 
 
@@ -243,6 +248,8 @@ def create_app(
     @app.exception_handler(DocumentAnalysisPresetError)
     @app.exception_handler(PreviewConfirmationError)
     @app.exception_handler(UnsafeControlExecutionError)
+    @app.exception_handler(ExportRefusedError)
+    @app.exception_handler(RestoreHandleError)
     async def _handle_bad_request(_request: Request, exc: Exception) -> JSONResponse:
         # Registered once, for every route, rather than repeated as a
         # per-route try/except: this is the single place a caller-input
@@ -265,6 +272,15 @@ def create_app(
     @app.exception_handler(ExampleNotFoundError)
     async def _handle_example_not_found(_request: Request, exc: Exception) -> JSONResponse:
         return _error_response(exc, status_code=404)
+
+    @app.exception_handler(RestoreUnavailableError)
+    async def _handle_restore_unavailable(_request: Request, exc: Exception) -> JSONResponse:
+        # T26 / issue #67, D2: no ADG_RESTORE_HANDLE_SECRET configured. A
+        # configuration/availability problem, not a caller mistake -- 503,
+        # distinct from every 400 above. Every other route (including
+        # /health and document preview/execute) is unaffected; only export
+        # and restore reach this handler.
+        return _error_response(exc, status_code=503)
 
     @app.exception_handler(Exception)
     async def _handle_unexpected_exception(_request: Request, _exc: Exception) -> JSONResponse:
@@ -467,6 +483,49 @@ def create_app(
             application_request, confirmation_token=confirmation_token
         )
         content = schemas.ExecuteResponse.from_domain(execution).model_dump()
+        return JSONResponse(status_code=200, content=content)
+
+    # --- export / deferred restore (T26 / issue #67) --------------------------
+    #
+    # /documents/export: same multipart form shape as /documents/preview
+    # (reusing _document_application_request unchanged), plus a sealed
+    # restore handle for the disclosed representation it returns.
+    # /documents/restore: JSON body, independent of the document surface --
+    # a handle carries everything restore needs, so this route requires
+    # neither a re-upload nor any governance field.
+    #
+    # Neither route ever calls a provider, and neither requires (or checks)
+    # a preview confirmation -- that mechanism binds preview to a provider
+    # call, which export never makes.
+
+    @app.post("/documents/export", response_model=None)
+    def export_document(
+        request: Request,
+        file: Annotated[UploadFile, File()],
+        task: Annotated[str, Form()],
+        document_type: Annotated[str, Form()],
+        analysis_mode: Annotated[str | None, Form()] = None,
+        strategy: Annotated[DisclosureStrategy | None, Form()] = None,
+    ) -> JSONResponse:
+        service = _get_service(request)
+        application_request = _document_application_request(
+            service,
+            upload=file,
+            task=task,
+            document_type=document_type,
+            analysis_mode=analysis_mode,
+            strategy=strategy,
+        )
+
+        export = service.export(application_request)
+        content = schemas.ExportResponse.from_domain(export).model_dump()
+        return JSONResponse(status_code=200, content=content)
+
+    @app.post("/documents/restore", response_model=None)
+    def restore_document(body: schemas.RestoreRequestBody, request: Request) -> JSONResponse:
+        service = _get_service(request)
+        restored = service.restore(text=body.text, restore_handle=body.restore_handle)
+        content = schemas.RestoreResponse.from_domain(restored).model_dump()
         return JSONResponse(status_code=200, content=content)
 
     return app

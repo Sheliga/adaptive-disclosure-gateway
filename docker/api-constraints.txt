@@ -29,6 +29,13 @@
 # (docker/api.Dockerfile's builder stage, before this file existed / before
 # constraints were wired in -- the very first capture necessarily predates
 # its own use).
+#
+# Refreshed 2026-09-13 (T26 / issue #67): `cryptography>=44,<51` became a
+# base dependency (application/restore_handle.py's sealed restore handle).
+# Regenerated with the procedure above, with this file's own prior pins in
+# place as constraints while resolving, so every pre-existing pin held
+# unchanged; the only additions are `cryptography` itself and its own two
+# transitive dependencies, `cffi` and `pycparser`.
 accelerate==1.15.0
 annotated-doc==0.0.5
 annotated-types==0.8.0
@@ -38,9 +45,11 @@ anyio==4.15.1
 attrs==26.1.0
 beautifulsoup4==4.15.0
 certifi==2026.7.22
+cffi==2.1.1
 charset-normalizer==3.5.1
 click==8.5.0
 colorlog==6.12.0
+cryptography==50.0.1
 defusedxml==0.7.1
 dill==0.4.1
 doclang==0.7.3
@@ -101,6 +110,7 @@ polyfactory==3.3.0
 protobuf==7.36.1
 psutil==7.2.2
 pyclipper==1.4.0
+pycparser==3.0
 pydantic==2.13.5
 pydantic-settings==2.15.0
 pydantic_core==2.46.5

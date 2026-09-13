@@ -151,10 +151,13 @@ from adaptive_disclosure_gateway.application.contracts import (
     CANONICAL_COMPARISON_ORDER,
     DisclosureApplicationRequest,
     DisclosureExecution,
+    DisclosureExport,
     DisclosurePreview,
+    DisclosureRestore,
     DisclosureStrategy,
     DocumentDisclosurePreview,
     DocumentRequestDescriptor,
+    ExportRefusedError,
     GovernanceOverrides,
     ProviderMode,
     StrategyComparison,
@@ -190,10 +193,19 @@ from adaptive_disclosure_gateway.application.requests import (
     MissingTaskError,
     apply_example_governance_defaults,
 )
+from adaptive_disclosure_gateway.application.restore_handle import (
+    RestoreHandleSealer,
+    restore_pseudonyms,
+)
 from adaptive_disclosure_gateway.application.summaries import build_disclosure_summary
 from adaptive_disclosure_gateway.corpus.case_input import CorpusCaseInput
 from adaptive_disclosure_gateway.detection import Detector
-from adaptive_disclosure_gateway.domain import DisclosureRequest, GovernanceContext, Treatment
+from adaptive_disclosure_gateway.domain import (
+    DisclosureAction,
+    DisclosureRequest,
+    GovernanceContext,
+    Treatment,
+)
 from adaptive_disclosure_gateway.observability import elapsed_ms_since, get_tracer
 from adaptive_disclosure_gateway.pipeline import (
     DisclosureDecision,
@@ -301,6 +313,7 @@ class DisclosureApplicationService:
         examples_directory: str | Path | None = None,
         document_parser: DocumentParser | None = None,
         preview_confirmation_signer: PreviewConfirmationSigner | None = None,
+        restore_handle_sealer: RestoreHandleSealer | None = None,
     ) -> None:
         self._policy_repository = policy_repository
         self._provider = provider
@@ -330,6 +343,20 @@ class DisclosureApplicationService:
             preview_confirmation_signer
             if preview_confirmation_signer is not None
             else PreviewConfirmationSigner.with_ephemeral_secret()
+        )
+        # T26 / issue #67. Unlike the preview-confirmation signer above,
+        # there is no ephemeral-key fallback here: a restore handle is
+        # meant to outlive this process, so a per-process key would
+        # silently defeat the whole feature (see
+        # ``application/restore_handle.py``'s module docstring). ``None``
+        # here means "no secret configured" -- the sealer itself still
+        # constructs (so a service with no restore-handle secret still
+        # starts and serves every other route), and only fails, closed, the
+        # moment ``export``/``restore`` are actually called.
+        self._restore_handle_sealer = (
+            restore_handle_sealer
+            if restore_handle_sealer is not None
+            else RestoreHandleSealer(secret=None)
         )
 
     def _build_treatment(self, request: DisclosureApplicationRequest):
@@ -509,6 +536,98 @@ class DisclosureApplicationService:
             governance=safe_governance_view(context),
             total_ms=total_ms,
         )
+
+    def export(self, request: DisclosureApplicationRequest) -> DisclosureExport:
+        """Export the disclosed representation of ``request`` together with
+        a sealed restore handle for it (T26 / issue #67).
+
+        Runs the SAME decision phase ``preview`` runs -- exactly once, never
+        calling the provider -- and refuses (``ExportRefusedError``) unless
+        the decision is ``"allowed"``: a ``BLOCK_REQUEST`` outcome has no
+        disclosed representation to export at all.
+
+        The ``(pseudonym -> original)`` entries sealed into the handle come
+        directly from ``decision.result.transformations`` -- the same
+        ``DisclosureResult`` field ``decision_application.reconstruct``
+        already reads for local reconstruction -- filtered to
+        ``DisclosureAction.PSEUDONYMIZE``. This needs no vault call and no
+        new ``Vault`` method: every transformation the decision itself
+        produced already carries both the pseudonym it emitted and the
+        original it stands for, so there is nothing extra to look up.
+        Categories the treatment removed or generalized never appear here,
+        which is what gives B1 -- Static Sanitization (and any REMOVE/
+        GENERALIZE category under any treatment) zero restorable entries.
+        B0 -- Direct never pseudonymizes anything either, so it also always
+        has zero -- with no special-casing needed for either.
+
+        Raises ``RestoreUnavailableError`` (via the sealer) if no restore
+        handle secret is configured -- export fails closed exactly like
+        restore, never silently succeeding with an unusable handle.
+        """
+        tracer = get_tracer()
+        started = time.perf_counter()
+        with tracer.start_as_current_span("application.export") as span:
+            treatment_code, treatment = self._build_treatment(request)
+            disclosure_request, context = self._build_disclosure_request(request)
+
+            decision = decide_disclosure(treatment, disclosure_request, detector=self._detector)
+            span.set_attribute("application.status", decision.result.status)
+            span.set_attribute("application.treatment", treatment_code.value)
+
+            if decision.result.status != "allowed":
+                raise ExportRefusedError(
+                    "export is available only for a disclosure decision that was allowed; "
+                    "this request's decision was blocked"
+                )
+
+            preview = self._preview_of(
+                request, treatment_code=treatment_code, context=context, decision=decision
+            )
+            entries = {
+                transformation.transformed: transformation.original
+                for transformation in decision.result.transformations
+                if transformation.action is DisclosureAction.PSEUDONYMIZE
+                and transformation.transformed is not None
+            }
+            issued = self._restore_handle_sealer.issue(entries)
+
+            span.set_attribute("application.restorable_count", len(entries))
+            span.set_attribute("application.duration_ms", elapsed_ms_since(started))
+
+            return DisclosureExport(
+                external_payload=preview.external_payload,
+                restore_handle=issued.handle,
+                expires_at=issued.expires_at,
+                restorable_count=len(entries),
+                treatment=treatment_code,
+                strategy=request.strategy,
+                governance=preview.governance,
+            )
+
+    def restore(self, *, text: str, restore_handle: str) -> DisclosureRestore:
+        """Replace, in ``text``, only the pseudonyms that ``restore_handle``
+        recognizes (T26 / issue #67).
+
+        Stateless: nothing about this call depends on this service's own
+        vault or on any prior request -- the handle alone carries what is
+        needed, which is what lets a handle survive a restart or land on a
+        different worker. Pseudonym-shaped tokens in ``text`` that the
+        handle does NOT recognize (a different document's export, or a
+        tampered/foreign token) are left untouched and counted only, never
+        echoed. Raises ``RestoreUnavailableError`` if no secret is
+        configured, or one of ``RestoreHandleError``'s subclasses if the
+        handle itself is invalid or expired -- both fail closed, nothing
+        reconstructed.
+        """
+        tracer = get_tracer()
+        with tracer.start_as_current_span("application.restore"):
+            mapping = self._restore_handle_sealer.open(restore_handle)
+            restored_text, restored_count, unresolved_count = restore_pseudonyms(text, mapping)
+            return DisclosureRestore(
+                restored_text=restored_text,
+                restored_count=restored_count,
+                unresolved_count=unresolved_count,
+            )
 
     def compare_strategies(self, request: DisclosureApplicationRequest) -> StrategyComparison:
         """Run ``request`` through every B0-B4 strategy via ``preview`` --

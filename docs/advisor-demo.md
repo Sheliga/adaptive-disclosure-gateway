@@ -542,9 +542,10 @@ documented, not only its version.
 `tests/test_docker_reproducibility.py` enforces this stays true: every `pyproject.toml` runtime
 dependency (base `dependencies` plus the `api`/`documents`/`anthropic` extras) must have a pin in
 the constraints file, so adding a dependency without refreshing the lock fails the local test
-suite rather than silently shipping unpinned. **Note for whichever of this PR (T25) and PR #68
-(T26, which adds `cryptography` as a base dependency) merges second**: that merge must regenerate
-`docker/api-constraints.txt` before it lands, or this test fails.
+suite rather than silently shipping unpinned. T26 / issue #67 added `cryptography>=44,<51` as a
+base dependency (the sealed restore handle) after this file (T25) merged first; reconciling T26
+with `develop` regenerated `docker/api-constraints.txt` accordingly -- only `cryptography` and its
+own transitive `cffi`/`pycparser` were added, every pre-existing pin held unchanged.
 
 Regenerate after any dependency change:
 
@@ -596,6 +597,45 @@ stack, not a production host -- re-measure before committing to a specific hoste
   the environment this deployment work was implemented in. T25/the Demo Track (#41) is not
   complete until a hosted URL is published and a live Anthropic smoke test has run against it
   with a synthetic contract.
+
+## Export and deferred restore (T26 / Issue #67)
+
+The API and CLI (not the web UI, and not the hosted demo URL yet) offer a
+way to take a document's disclosed representation outside the gateway and
+later restore its pseudonyms locally: `POST /documents/export` /
+`POST /documents/restore` and `adg export` / `adg restore`. Export returns
+the same disclosed text `preview` already shows, plus a sealed, stateless
+restore handle (see `docs/adr/0002-deferred-restore-handles.md`); restore
+takes arbitrary text plus that handle and replaces only the pseudonyms the
+handle recognizes. Nothing is retained server-side between the two calls —
+the handle alone carries what restore needs, so it works across a restart
+or a different worker.
+
+This is **API/CLI-only for now and not exposed on the hosted demo URL**.
+T25 keeps the API internal-only behind the web proxy, and there is
+deliberately no proxy route or UI action for export/restore in this slice —
+adding one is a later UI slice's job, not a security gap: the mechanism
+itself is scope-bound and fails closed exactly as `/documents/preview`/
+`/documents/execute` do, it simply has no button yet. The reason is explicit,
+not incidental: the public hosted demo has no authentication, so a reachable
+restore endpoint would be a re-identification oracle for anyone who could
+reach it -- restore must stay behind something that authenticates the
+caller, which the hosted web demo does not do. Until then, export/restore
+remain API/CLI-only and the `api` service itself stays internal-only in
+`compose.demo.yaml` (no `ports:`, see "Security stance" above).
+
+Configuration: `ADG_RESTORE_HANDLE_SECRET` and `ADG_RESTORE_HANDLE_TTL_SECONDS`
+on the `api` service only (never `web`), both optional. Unset
+`ADG_RESTORE_HANDLE_SECRET` does not block startup and does not affect any
+other route -- `POST /documents/export` and `POST /documents/restore` return
+503 until a secret is configured, exactly as described in `.env.example`.
+`GET /ready` never consults the restore-handle secret either, so leaving it
+unset never makes the deployment report not-ready -- only the export/restore
+routes themselves refuse. `tests/test_demo_deployment_config.py`'s
+`TestWebDoesNotExposeExportRestore` pins the absence of a web proxy route
+statically (by scanning `web/app/api` and every non-excluded file under
+`web/`), so a future restructure trips a test rather than silently
+regressing this boundary.
 
 ## Security stance
 
