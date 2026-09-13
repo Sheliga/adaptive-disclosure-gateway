@@ -14,6 +14,12 @@ from .base import (
     invoke_provider,
 )
 from .fake import FakeProvider
+from .readiness import (
+    REASON_PROVIDER_CREDENTIAL_MISSING,
+    REASON_PROVIDER_SDK_UNAVAILABLE,
+    REASON_PROVIDER_UNRECOGNIZED,
+    provider_readiness,
+)
 from .settings import (
     ANTHROPIC_PROVIDER_NAME,
     DEFAULT_PROVIDER_NAME,
@@ -34,6 +40,9 @@ __all__ = [
     "DEFAULT_TIMEOUT_SECONDS",
     "MODEL_SNAPSHOT_UNAVAILABLE",
     "PROMPT_SCAFFOLDING_VERSION",
+    "REASON_PROVIDER_CREDENTIAL_MISSING",
+    "REASON_PROVIDER_SDK_UNAVAILABLE",
+    "REASON_PROVIDER_UNRECOGNIZED",
     "SUPPORTED_ANTHROPIC_MODEL_IDS",
     "AnthropicProvider",
     "AnthropicProviderConfig",
@@ -52,6 +61,7 @@ __all__ = [
     "count_transmitted_bytes",
     "invoke_provider",
     "provider_name",
+    "provider_readiness",
     "real_provider_enabled",
     "sdk_version",
 ]

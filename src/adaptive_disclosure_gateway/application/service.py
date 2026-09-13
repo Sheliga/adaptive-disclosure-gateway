@@ -183,6 +183,7 @@ from adaptive_disclosure_gateway.application.presets import (
     resolve_governance_preset,
 )
 from adaptive_disclosure_gateway.application.preview_confirmation import (
+    REASON_CONFIRMATION_SECRET_NOT_DURABLE,
     PreviewConfirmationError,
     PreviewConfirmationSigner,
     PreviewConfirmationState,
@@ -216,6 +217,7 @@ from adaptive_disclosure_gateway.pipeline import (
 )
 from adaptive_disclosure_gateway.policies import PolicyRepository
 from adaptive_disclosure_gateway.providers import DEFAULT_PROVIDER_NAME, FakeProvider, Provider
+from adaptive_disclosure_gateway.providers.readiness import provider_readiness
 from adaptive_disclosure_gateway.task_analysis import TaskAnalyzer
 from adaptive_disclosure_gateway.treatment_factory import build_treatment
 from adaptive_disclosure_gateway.vault import InMemoryVault, Vault
@@ -272,6 +274,24 @@ class ServiceHealth:
     model_snapshot: str | None
     deterministic_demo_mode: bool
     treatments_available: tuple[Treatment, ...]
+
+
+@dataclass(frozen=True)
+class ServiceReadiness:
+    """Purely local readiness for ``GET /ready`` (T25 review finding 2):
+    built with no network access, no provider ``generate()`` call and no SDK
+    client construction -- see ``describe_readiness``'s own docstring and
+    ``providers.readiness.provider_readiness``'s for what "purely local"
+    excludes.
+
+    ``reason`` is populated only when ``ready`` is ``False`` and is always
+    one of the closed-vocabulary codes ``application.wire.ReadinessReason``
+    validates against -- never free text, a credential, an environment
+    variable's value or any other config detail.
+    """
+
+    ready: bool
+    reason: str | None = None
 
 
 class DisclosureApplicationService:
@@ -676,6 +696,37 @@ class DisclosureApplicationService:
             deterministic_demo_mode=isinstance(self._provider, FakeProvider),
             treatments_available=tuple(Treatment),
         )
+
+    def describe_readiness(self) -> ServiceReadiness:
+        """Purely local readiness for ``GET /ready`` (T25 review finding 2):
+        no network call, no provider ``generate()``, no SDK client
+        construction -- a stricter contract than ``describe_health`` above,
+        which is also call-free but exists for richer introspection instead
+        of gating a container healthcheck.
+
+        Delegates the provider-shaped half of the check to
+        ``providers.readiness.provider_readiness`` (obeying
+        ``tests/test_provider_isolation.py``'s one-way import wall -- this
+        service calls into ``providers/``, never the reverse) and adds the
+        one check that belongs at this layer: a service wired to a provider
+        outside the trust boundary (``FakeProvider`` excepted) needs a
+        *durable* preview-confirmation signer. This mirrors the same
+        distinction ``application.settings.build_preview_confirmation_signer``
+        already fails closed on at startup -- an ephemeral, per-process
+        signer surviving to runtime here would mean a load-balanced or
+        restarted deployment could report ``/ready`` while a document
+        preview issued by one worker/process could never be confirmed by
+        another.
+        """
+        ready, reason = provider_readiness(self._provider)
+        if not ready:
+            return ServiceReadiness(ready=False, reason=reason)
+        if (
+            self._provider.provider_class != DEFAULT_PROVIDER_NAME
+            and not self._preview_confirmation_signer.is_durable
+        ):
+            return ServiceReadiness(ready=False, reason=REASON_CONFIRMATION_SECRET_NOT_DURABLE)
+        return ServiceReadiness(ready=True)
 
     def list_strategies(self) -> tuple[StrategyOption, ...]:
         """Convenience passthrough to ``contracts.list_strategy_options`` for

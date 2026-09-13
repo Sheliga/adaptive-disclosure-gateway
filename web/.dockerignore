@@ -1,0 +1,17 @@
+# Docker build context excludes for the web image (web/Dockerfile). The
+# build context for that image is the `web/` directory itself.
+
+.env
+.env.*
+!.env.example
+
+.git
+
+node_modules
+.next
+coverage
+
+.vscode
+.idea
+.DS_Store
+Thumbs.db

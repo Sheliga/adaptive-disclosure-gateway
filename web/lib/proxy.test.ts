@@ -35,6 +35,27 @@ describe("proxyGet", () => {
     expect(await response.text()).toBe(upstreamBody);
   });
 
+  it("forwards GET /ready and mirrors a 503 not-ready body unchanged", async () => {
+    const upstreamBody = JSON.stringify({
+      status: "not_ready",
+      reason: "provider_credential_missing",
+    });
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(upstreamBody, {
+        status: 503,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await proxyGet("/ready");
+
+    expect(fetchMock.mock.calls[0][0]).toBe("http://upstream.test/ready");
+    expect(fetchMock.mock.calls[0][1]?.method).toBe("GET");
+    expect(response.status).toBe(503);
+    expect(await response.text()).toBe(upstreamBody);
+  });
+
   it("mirrors a non-2xx upstream status and body unchanged (400)", async () => {
     const upstreamBody = JSON.stringify({ detail: "bad request text", kind: "IngestionError" });
     vi.stubGlobal(
