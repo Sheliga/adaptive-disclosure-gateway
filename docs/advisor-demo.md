@@ -374,6 +374,26 @@ T25 owns:
 - documented hosted deployment path;
 - application/core version provenance.
 
+## Export and deferred restore (T26 / Issue #67)
+
+The API and CLI (not the web UI, and not the hosted demo URL yet) offer a
+way to take a document's disclosed representation outside the gateway and
+later restore its pseudonyms locally: `POST /documents/export` /
+`POST /documents/restore` and `adg export` / `adg restore`. Export returns
+the same disclosed text `preview` already shows, plus a sealed, stateless
+restore handle (see `docs/adr/0002-deferred-restore-handles.md`); restore
+takes arbitrary text plus that handle and replaces only the pseudonyms the
+handle recognizes. Nothing is retained server-side between the two calls —
+the handle alone carries what restore needs, so it works across a restart
+or a different worker.
+
+This is **API/CLI-only for now and not exposed on the hosted demo URL**.
+T25 keeps the API internal-only behind the web proxy, and there is
+deliberately no proxy route or UI action for export/restore in this slice —
+adding one is a later UI slice's job, not a security gap: the mechanism
+itself is scope-bound and fails closed exactly as `/documents/preview`/
+`/documents/execute` do, it simply has no button yet.
+
 ## Security stance
 
 - provider credentials never reach the browser;

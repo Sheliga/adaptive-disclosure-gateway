@@ -591,6 +591,18 @@ Required demo infrastructure includes:
 
 The target is a small research-demo deployment, not desktop distribution, installers, multi-tenant SaaS or production-scale orchestration.
 
+### T26 / Issue #67 — export the disclosed representation with sealed restore handles
+
+Status: **in validation** (open PR to `develop`; not demo-critical, not on the scientific critical path).
+
+Lets a caller take a disclosed representation of a document (the same `external_payload` `POST /documents/preview` already returns) outside the gateway and, later, restore its pseudonyms locally through an explicit, sealed restore handle. Design decisions in `docs/adr/0002-deferred-restore-handles.md`.
+
+- `application/restore_handle.py`: stateless AES-256-GCM (via `cryptography`) sealed envelope, key derived with HKDF-SHA256 from `ADG_RESTORE_HANDLE_SECRET`, domain-separated from the preview-confirmation secret. No server-side retention — a handle carries only the `(pseudonym -> original)` entries present in one export, `v`/`iat`/`exp`, padded to a fixed bucket so its length does not reveal exact original lengths.
+- `DisclosureApplicationService.export`/`.restore`: `export` runs the same decision phase `preview` runs (never the provider) and refuses a `BLOCK_REQUEST` outcome; `restore` replaces only the pseudonyms a handle recognizes in arbitrary submitted text, reporting `restored_count`/`unresolved_count`, never the mapping.
+- No ephemeral-key mode (unlike preview confirmation): an unset `ADG_RESTORE_HANDLE_SECRET` still starts the service and leaves every other route working, but export/restore themselves fail closed (`RestoreUnavailableError`, HTTP 503, non-zero CLI exit).
+- HTTP: `POST /documents/export` (multipart, same fields as `/documents/preview`), `POST /documents/restore` (JSON `{text, restore_handle}`). CLI: `adg export`, `adg restore` (handle/text read from a file or stdin, never a plain argv value).
+- Not in this PR: any web proxy route or UI (T25 keeps the API internal-only behind the web proxy; export/restore are API/CLI-only until a later UI slice), PDF/DOCX re-rendering, any change to B2 — Reversible Pseudonymization / B3 — Task-aware / B4 — Policy-governed semantics.
+
 ### Demo completion criterion
 
 The first demo track is complete when a prospective advisor can receive a URL and execute at least the controlled HR B0–B4 concept through the actual Python core without local setup.
@@ -646,6 +658,7 @@ This ordering is internal to the demo track and does not reorder the scientific 
 - Contracts v1 corpus schema: `corpus/contracts/v1/SCHEMA.md`
 - HR policy matrix: `docs/hr-policy-matrix.md`
 - ADR 0001: `docs/adr/0001-milestone-1-architecture.md`
+- ADR 0002: `docs/adr/0002-deferred-restore-handles.md`
 - M2 tracker: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/32
 - T23 methodology freeze: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/36
 - T22 real provider: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/30
@@ -657,3 +670,4 @@ This ordering is internal to the demo track and does not reorder the scientific 
 - T20 CLI/API/MCP: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/28
 - T21 Next.js UI: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/29
 - T25 demo containers/deploy: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/42
+- T26 deferred restore handles: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/67
