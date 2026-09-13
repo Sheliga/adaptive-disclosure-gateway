@@ -67,6 +67,17 @@ services:
       # falls back to the sealer's own default); only a non-blank,
       # out-of-range or non-integer value fails closed at startup.
       ADG_RESTORE_HANDLE_TTL_SECONDS: ${ADG_RESTORE_HANDLE_TTL_SECONDS:-}
+      # T27/T28 / issues #69-#70. Server-side opt-in for the demo
+      # transparency surfaces (the T27 preview inspector's data now; a later
+      # web export/restore proxy reads this at request time to gate itself,
+      # per T28). Not a secret -- it carries no key material and reveals no
+      # credential -- but it widens what a preview response exposes, so it
+      # defaults OFF (deliberately OPTIONAL, `:-`, not `:?`: leaving it unset
+      # blocks nothing else and simply keeps every response's `inspection`
+      # field `null`, exactly today's behavior). Enable only in a controlled
+      # environment for advisor evaluation -- never on a public,
+      # unauthenticated hosted URL.
+      ADG_ENABLE_DEMO_TRANSPARENCY: ${ADG_ENABLE_DEMO_TRANSPARENCY:-}
       # Engineering limits/CORS. Safe repository defaults apply when unset;
       # CORS can stay empty because the browser only ever calls the web
       # origin (docs/advisor-demo.md's architectural boundary).
@@ -114,6 +125,16 @@ services:
       # localhost/127.0.0.1 (those would resolve to the web container
       # itself).
       ADG_API_BASE_URL: http://api:8000
+      # T27/T28 / issues #69-#70. Mirrors the api service's own variable
+      # above -- read at request time (not baked in at build time, exactly
+      # like ADG_API_BASE_URL) by the web app's own export/restore proxy
+      # routes (web/lib/demoTransparency.ts) to decide whether to forward to
+      # the upstream api service at all. Same optional, off-by-default
+      # posture as on api: unset here (the default) keeps both proxy routes
+      # returning a fixed 404 without ever calling the api service -- see
+      # TestWebExportRestoreIsGated in tests/test_demo_deployment_config.py,
+      # which pins that the gate is checked before any proxy call.
+      ADG_ENABLE_DEMO_TRANSPARENCY: ${ADG_ENABLE_DEMO_TRANSPARENCY:-}
     # Loopback-only: bound to 127.0.0.1 specifically, not every host
     # interface. Without an explicit host IP, compose publishes on ALL
     # interfaces including a public one, which would let a caller reach the

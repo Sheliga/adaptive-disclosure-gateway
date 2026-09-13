@@ -226,6 +226,31 @@ class TestApiServiceSecurity:
                 f"the whole stack for an optional feature); got {value!r}"
             )
 
+    def test_api_service_carries_the_optional_demo_transparency_variable(self) -> None:
+        """T27/T28 / issues #69-#70. Like the restore-handle variables above,
+        this must be OPTIONAL (``:-``): the demo transparency surfaces are an
+        opt-in layered on top of the demo, not a precondition for it -- an
+        unconfigured value must not block startup of the whole stack, it
+        must simply keep every response's ``inspection`` field ``null``
+        (the historical, pre-T27 behavior).
+        """
+        api = _service(_load_compose(), "api")
+        env = _environment_mapping(api)
+        name = "ADG_ENABLE_DEMO_TRANSPARENCY"
+        assert name in env, f"api service must carry {name}"
+        value = env[name]
+        assert value.startswith("${") and value.endswith("}"), (
+            f"{name} on the api service must be a compose interpolation; got {value!r}"
+        )
+        assert ":-" in value, (
+            f"{name} must use the OPTIONAL interpolation form ('${{{name}:-}}'), "
+            f"not a required ('${{{name}:?...}}') one; got {value!r}"
+        )
+        assert ":?" not in value, (
+            f"{name} must not be a required interpolation (that would block startup of "
+            f"the whole stack for an optional feature); got {value!r}"
+        )
+
     def test_provider_selection_is_a_required_interpolation(self) -> None:
         """``ADG_PROVIDER`` must be explicitly required (``${ADG_PROVIDER:?...}``)
         so the demo stack never silently launches with an unintended
@@ -262,6 +287,26 @@ class TestWebServiceSecurity:
         env = _environment_mapping(web)
         assert "ADG_RESTORE_HANDLE_SECRET" not in env
         assert "ADG_RESTORE_HANDLE_TTL_SECONDS" not in env
+
+    def test_web_service_carries_the_optional_demo_transparency_variable(self) -> None:
+        """T27/T28 / issues #69-#70. Mirrors the api service's own pin: the
+        web service carries the SAME variable (a later slice's export/
+        restore proxy reads it at request time), as an OPTIONAL
+        interpolation, never a NEXT_PUBLIC_* build-time name (that would
+        bake it into the client bundle -- see the NEXT_PUBLIC_* pin below).
+        """
+        web = _service(_load_compose(), "web")
+        env = _environment_mapping(web)
+        name = "ADG_ENABLE_DEMO_TRANSPARENCY"
+        assert name in env, f"web service must carry {name}"
+        value = env[name]
+        assert value.startswith("${") and value.endswith("}"), (
+            f"{name} on the web service must be a compose interpolation; got {value!r}"
+        )
+        assert ":-" in value and ":?" not in value, (
+            f"{name} must use the OPTIONAL interpolation form; got {value!r}"
+        )
+        assert not name.startswith("NEXT_PUBLIC_")
 
     def test_web_service_has_no_next_public_variable(self) -> None:
         """``NEXT_PUBLIC_*`` variables are inlined into the client bundle at
@@ -381,6 +426,23 @@ class TestDockerfiles:
                     f"api.Dockerfile must not declare {name} via ENV/ARG: {stripped!r}"
                 )
 
+    def test_api_dockerfile_does_not_bake_demo_transparency_at_build_time(self) -> None:
+        """T27/T28 / issues #69-#70. Like ``ADG_API_BASE_URL`` on web, this
+        must be read at container RUNTIME (via compose interpolation), never
+        fixed as a build-time ``ENV``/``ARG`` -- a build-time default would
+        freeze the flag into the image regardless of what a deployer
+        configures in their environment/.env file.
+        """
+        text = _API_DOCKERFILE_PATH.read_text(encoding="utf-8")
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith(
+                ("ENV ADG_ENABLE_DEMO_TRANSPARENCY", "ARG ADG_ENABLE_DEMO_TRANSPARENCY")
+            ):
+                pytest.fail(
+                    f"ADG_ENABLE_DEMO_TRANSPARENCY must not be a build-time ENV/ARG: {stripped!r}"
+                )
+
     def test_api_dockerfile_healthcheck_targets_ready_not_health(self) -> None:
         """T25 review finding 2: the image's own ``HEALTHCHECK`` -- used
         whenever the image runs outside ``compose.demo.yaml`` too -- must
@@ -437,6 +499,17 @@ class TestDockerfiles:
             for name in _SECRET_ENV_VAR_NAMES:
                 assert name not in stripped
 
+    def test_web_dockerfile_does_not_bake_demo_transparency_at_build_time(self) -> None:
+        text = _WEB_DOCKERFILE_PATH.read_text(encoding="utf-8")
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith(
+                ("ENV ADG_ENABLE_DEMO_TRANSPARENCY", "ARG ADG_ENABLE_DEMO_TRANSPARENCY")
+            ):
+                pytest.fail(
+                    f"ADG_ENABLE_DEMO_TRANSPARENCY must not be a build-time ENV/ARG: {stripped!r}"
+                )
+
     def test_web_dockerfile_does_not_bake_api_base_url_at_build_time(self) -> None:
         """``ADG_API_BASE_URL`` must be read at container runtime (Next.js
         route handlers read ``process.env`` when the request is handled),
@@ -488,39 +561,82 @@ def _web_source_files() -> list[Path]:
             continue
         if any(part in _WEB_EXCLUDED_DIR_NAMES for part in path.relative_to(_WEB_ROOT).parts):
             continue
+        if path.suffix == ".tsbuildinfo":
+            # A generated TypeScript incremental-build cache, not source: it
+            # embeds absolute file paths (e.g. this very route file's own
+            # path) as JSON strings, which would otherwise read as a false
+            # positive "reference" to an upstream path below.
+            continue
         files.append(path)
     return files
 
 
-class TestWebDoesNotExposeExportRestore:
-    """Pins ADR-0002's decision (`docs/adr/0002-deferred-restore-handles.md`)
-    that export/restore stay API/CLI-only while the public demo has no
-    authentication: the hosted web demo must not proxy either route. This is
-    a static, repository-wide pin rather than a behavioral one specifically
-    so it also reaches code that has not been written yet -- a future UI
-    slice that wants to expose export/restore through the browser must
-    remove this pin deliberately, not trip over it by accident while adding
-    an unrelated proxy route.
+class TestWebExportRestoreIsGated:
+    """T27/T28 (issues #69-#70) supersede ADR-0002's original decision
+    (`docs/adr/0002-deferred-restore-handles.md`) that export/restore stay
+    API/CLI-only: this is the deliberate removal that class's own docstring
+    called for -- a UI slice now proxies both routes, but ONLY behind the
+    server-side `ADG_ENABLE_DEMO_TRANSPARENCY` gate
+    (`web/lib/demoTransparency.ts`), which defaults to disabled. This is a
+    static, repository-wide pin rather than a behavioral one specifically so
+    it also reaches code that has not been written yet: a future change that
+    adds another export/restore-referencing file, or reorders a route
+    handler so the gate check no longer runs first, trips this without
+    needing a matching behavioral test to also be written correctly.
     """
 
-    def test_no_route_handler_for_export_or_restore(self) -> None:
+    def test_web_app_api_directory_exists(self) -> None:
         api_dir = _WEB_ROOT / "app" / "api"
         assert api_dir.is_dir(), (
             f"expected web API route directory at {api_dir}; if the web app has been "
             "restructured, update this pin rather than let it silently pass"
         )
-        for route_file in api_dir.rglob("route.ts"):
-            relative = route_file.relative_to(api_dir).as_posix()
-            assert "documents/export" not in relative, (
-                f"web must not proxy POST /documents/export: found {route_file}"
+
+    def test_export_and_restore_routes_check_the_gate_before_any_proxy_call(self) -> None:
+        api_dir = _WEB_ROOT / "app" / "api"
+        gated_routes = [
+            route_file
+            for route_file in api_dir.rglob("route.ts")
+            if "documents/export" in route_file.relative_to(api_dir).as_posix()
+            or "documents/restore" in route_file.relative_to(api_dir).as_posix()
+        ]
+        assert len(gated_routes) == 2, (
+            "expected exactly one route.ts for documents/export and one for "
+            f"documents/restore; found {gated_routes!r}"
+        )
+
+        for route_file in gated_routes:
+            text = route_file.read_text(encoding="utf-8")
+            assert "@/lib/demoTransparency" in text, (
+                f"{route_file} must import the gate from @/lib/demoTransparency"
             )
-            assert "documents/restore" not in relative, (
-                f"web must not proxy POST /documents/restore: found {route_file}"
+            gate_call_index = text.find("isDemoTransparencyEnabled(")
+            assert gate_call_index != -1, f"{route_file} must call isDemoTransparencyEnabled(...)"
+
+            proxy_call_indices = [
+                index
+                for marker in ("proxyMultipartPost(", "proxyJsonPost(", "proxyGet(")
+                if (index := text.find(marker)) != -1
+            ]
+            assert proxy_call_indices, f"{route_file} must forward to a proxy* call when enabled"
+            assert gate_call_index < min(proxy_call_indices), (
+                f"{route_file} must check isDemoTransparencyEnabled(...) BEFORE calling any "
+                "proxy* function -- a disabled gate must make zero upstream calls"
             )
 
-    def test_no_file_references_export_or_restore_paths(self) -> None:
+    def test_only_the_two_gated_routes_and_the_client_reference_the_paths(self) -> None:
+        api_dir = _WEB_ROOT / "app" / "api"
+        allowed = {
+            (api_dir / "documents" / "export" / "route.ts").resolve(),
+            (api_dir / "documents" / "restore" / "route.ts").resolve(),
+            (_WEB_ROOT / "lib" / "api.ts").resolve(),
+        }
         offenders = []
         for path in _web_source_files():
+            if path.name.endswith((".test.ts", ".test.tsx")):
+                continue
+            if path.resolve() in allowed:
+                continue
             try:
                 text = path.read_text(encoding="utf-8")
             except (UnicodeDecodeError, OSError):
@@ -528,6 +644,31 @@ class TestWebDoesNotExposeExportRestore:
             if "/documents/export" in text or "/documents/restore" in text:
                 offenders.append(path)
         assert not offenders, (
-            "no file under web/ (excluding node_modules/.next) may reference "
-            f"/documents/export or /documents/restore: {offenders!r}"
+            "only the export/restore route handlers and lib/api.ts may reference "
+            f"/documents/export or /documents/restore outside tests: {offenders!r}"
+        )
+
+    def test_no_file_references_next_public_demo_transparency_or_other_secrets(self) -> None:
+        forbidden = (
+            "NEXT_PUBLIC_ADG_ENABLE_DEMO_TRANSPARENCY",
+            "ADG_RESTORE_HANDLE_SECRET",
+            "ADG_PREVIEW_CONFIRMATION_SECRET",
+        )
+        offenders = []
+        for path in _web_source_files():
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            if any(name in text for name in forbidden):
+                offenders.append(path)
+        assert not offenders, f"no file under web/ may reference {forbidden!r}: {offenders!r}"
+
+    def test_demo_features_route_declares_force_dynamic(self) -> None:
+        features_route = _WEB_ROOT / "app" / "api" / "demo" / "features" / "route.ts"
+        assert features_route.is_file(), f"expected {features_route} to exist"
+        text = features_route.read_text(encoding="utf-8")
+        assert re.search(r'export const dynamic = ["\']force-dynamic["\'];', text), (
+            f'{features_route} must declare `export const dynamic = "force-dynamic";` -- '
+            "otherwise next build may prerender it and bake the build-time env into the image"
         )

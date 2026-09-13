@@ -40,6 +40,7 @@ import {
   compareStrategies,
   executeDocument,
   executeDisclosure,
+  getDemoFeatures,
   getDocumentTypes,
   getExamples,
   getHealth,
@@ -87,6 +88,25 @@ function GuidedFlowShell() {
   const [documentTypes, setDocumentTypes] = useState<DocumentType[] | null>(null);
   const [documentTypesError, setDocumentTypesError] = useState<DisplayError | null>(null);
   const [health, setHealth] = useState<ProviderModeState>({ status: "loading" });
+  // T28 / issue #70. A UX convenience only, never a security decision --
+  // see ReviewScreen's docstring and lib/demoTransparency.ts's own gate,
+  // which is what actually decides whether export/restore requests are
+  // ever forwarded upstream. Any failure or invalid body from
+  // getDemoFeatures is treated as disabled, same posture as `health`.
+  const [demoTransparencyEnabled, setDemoTransparencyEnabled] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    getDemoFeatures().then((result) => {
+      if (cancelled) {
+        return;
+      }
+      setDemoTransparencyEnabled(result.ok && result.data.demo_transparency_enabled);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -306,6 +326,8 @@ function GuidedFlowShell() {
             executeError={state.executeError}
             onConfirm={() => handleConfirmReview(state)}
             onCancel={() => dispatch({ type: "CANCEL_REVIEW" })}
+            compose={state.compose}
+            demoTransparencyEnabled={demoTransparencyEnabled}
           />
         )}
 

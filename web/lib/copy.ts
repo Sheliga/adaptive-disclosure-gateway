@@ -437,6 +437,117 @@ const ptBR = {
     tryAgain: "Tentar novamente",
   },
 
+  /**
+   * T27 / issue #69: per-action descriptors for the transformation inspector
+   * (`lib/inspectionActions.ts`). Keyed by the FROZEN `DisclosureAction`
+   * codes (`preserve`, `pseudonymize`, `generalize`, `remove`) -- same split
+   * as `outcomes` above: the key is verbatim API vocabulary, never
+   * translated, only the value is presentation prose. Deliberately a
+   * SEPARATE table from `outcomes` even though the underlying concepts are
+   * closely related (an outcome is what a category ended up as; an
+   * inspector action is what happened to one specific segment of text) --
+   * this table's copy is written for the segment-level, click-to-inspect
+   * context, `outcomes`'s for the category-summary context, and the two are
+   * free to diverge in wording without either module having to know about
+   * the other's copy.
+   */
+  inspectionActions: {
+    preserve: {
+      label: "Mantido",
+      explanation: "Este trecho foi mantido sem alteração nesta divulgação.",
+    },
+    pseudonymize: {
+      label: "Pseudonimizado",
+      explanation: "Este trecho foi substituído por um pseudônimo local.",
+    },
+    generalize: {
+      label: "Generalizado",
+      explanation: "Este trecho foi substituído por uma versão menos específica antes do envio.",
+    },
+    remove: {
+      label: "Removido",
+      explanation: "Este trecho foi removido e não está presente na versão divulgada.",
+    },
+    untouched: {
+      label: "Sem alteração",
+      explanation: "Este trecho não foi identificado como sensível e permanece igual.",
+    },
+    unknown: {
+      label: "Ação não reconhecida",
+      explanation:
+        "O sistema retornou uma ação que esta versão da interface não reconhece. Por segurança, ela não é tratada como nenhuma das ações conhecidas.",
+    },
+    removedMarker: "[trecho removido]",
+  },
+
+  /**
+   * T27 / issue #69: the transformation inspector itself
+   * (`components/DisclosureInspector/`), rendered inside `ReviewScreen` only
+   * when `preview.inspection !== null`.
+   */
+  disclosureInspector: {
+    toggleLabel: "Ver comparação lado a lado (original x divulgado)",
+    heading: "Comparação: original x divulgado",
+    originalColumnHeading: "Original",
+    disclosedColumnHeading: "Divulgado",
+    legendHeading: "Legenda das ações",
+    disclaimer:
+      "Esta visão de transparência existe para fins de avaliação e pesquisa. Um produto final restringiria significativamente este recurso. Não existe um explorador de cofre: esta visão mostra apenas as transformações deste documento.",
+    unavailableBlockedHeading: "Comparação não disponível",
+    unavailableBlockedExplanation:
+      "A solicitação foi bloqueada pela política de divulgação, então não há uma versão divulgada para comparar.",
+    unavailableAlignmentFailedHeading: "Comparação não disponível para esta decisão",
+    unavailableAlignmentFailedExplanation:
+      "Não foi possível verificar com segurança o alinhamento entre o texto original e o divulgado para esta decisão. O payload exato continua disponível acima.",
+    detailPanelHeading: "Detalhe do trecho selecionado",
+    detailActionLabel: "Ação:",
+    detailCategoryLabel: "Categoria:",
+    detailTreatmentLabel: "Tratamento:",
+    detailStrategyLabel: "Estratégia:",
+    detailReasonLabel: "Motivo:",
+    detailReasonUnavailable: "Motivo não disponível para esta categoria.",
+    detailOriginalLabel: "Original:",
+    detailDisclosedLabel: "Divulgado:",
+    detailPositionLabel: "Item {n} de {total}",
+    noSelectionHint: "Selecione um trecho destacado para ver os detalhes.",
+  },
+
+  /**
+   * T28 / issue #70: the export/restore demonstration panel
+   * (`components/ExportRestorePanel/`), rendered inside `ReviewScreen` only
+   * when the demo transparency feature flag is enabled AND the preview is
+   * allowed.
+   */
+  exportRestorePanel: {
+    heading: "Exportar e restaurar (demonstração)",
+    disclaimer:
+      "Este recurso existe para demonstrar o ciclo completo de exportação e restauração para fins de avaliação. Um produto final restringiria ou removeria esta superfície.",
+    uploadOnlyNote:
+      "A exportação HTTP está disponível apenas para o fluxo de envio de arquivo nesta demonstração.",
+    exportButton: "Exportar",
+    exportedPayloadHeading: "Representação divulgada exportada",
+    restorableCountLabel: "itens restauráveis",
+    expiresAtLabel: "Expira em:",
+    treatmentLabel: "Tratamento:",
+    strategyLabel: "Estratégia:",
+    handleHeading: "Identificador de restauração",
+    handleHiddenNotice: "O identificador é mantido apenas nesta tela, nunca salvo automaticamente.",
+    copyHandleButton: "Copiar identificador",
+    copyHandleSuccess: "Identificador copiado.",
+    downloadHandleButton: "Baixar identificador (.txt)",
+    importHandleLabel: "Importar identificador de um arquivo",
+    simulateResponseHeading: "Simular resposta externa",
+    simulateResponseHint:
+      "Edite o texto abaixo como se fosse uma resposta recebida de fora do gateway, mantendo os pseudônimos que deseja restaurar.",
+    restoreButton: "Restaurar localmente",
+    restoredResultHeading: "Resultado da restauração",
+    restoredCountLabel: "pseudônimos restaurados",
+    unresolvedCountLabel: "tokens não reconhecidos por este identificador",
+    unresolvedExplanation:
+      "Tokens não reconhecidos têm formato de pseudônimo, mas não pertencem ao escopo deste identificador de restauração; eles permanecem inalterados no texto restaurado.",
+    clearButton: "Limpar",
+  },
+
   errors: {
     generic: "Não foi possível concluir a operação. Tente novamente.",
     upstreamUnreachable: "Não foi possível falar com o serviço no momento. Tente novamente em instantes.",
@@ -446,6 +557,11 @@ const ptBR = {
     invalidAnalysisMode: "Esse tipo de análise não é aceito para o documento selecionado.",
     previewExpired: "Esta revisão não é mais válida. Faça uma nova revisão antes de enviar.",
     comparisonUnavailableForUpload: "A comparação ainda não está disponível para documentos estruturados.",
+    demoTransparencyDisabled: "Este recurso de demonstração não está habilitado nesta implantação.",
+    exportRefused: "Não foi possível gerar a exportação para este conteúdo.",
+    restoreUnavailable: "A restauração local não está disponível nesta implantação no momento.",
+    restoreHandleInvalid: "Este identificador de restauração não é válido.",
+    restoreHandleExpired: "Este identificador de restauração expirou. Gere uma nova exportação.",
   },
 
   sectionHeadings: {

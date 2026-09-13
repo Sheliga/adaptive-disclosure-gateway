@@ -76,6 +76,8 @@ import {
   DISCLOSURE_SUMMARY_STATUSES,
   type CategoryDisclosureSummary,
   type CompareResponse,
+  type DemoFeaturesResponse,
+  type DisclosureInspection,
   type DocumentPreviewResponse,
   type DocumentType,
   type DocumentTypesResponse,
@@ -84,12 +86,15 @@ import {
   type ExampleSummary,
   type ExamplesResponse,
   type ExecuteResponse,
+  type ExportResponse,
   type HealthResponse,
+  type InspectionSegment,
   type PreviewResponse,
   type ProviderHealth,
   type ProviderMode,
   type ProviderStage,
   type ReconstructionStage,
+  type RestoreResponse,
   type SafeGovernanceView,
   type StrategyComparisonEntry,
 } from "./contracts";
@@ -254,6 +259,67 @@ function isProviderMode(value: unknown): value is ProviderMode {
   return isRecord(value) && isString(value.provider_class);
 }
 
+// --- T27 / issue #69: DisclosureInspection ----------------------------------
+
+/**
+ * `action`/`category` must be null together or non-null together -- an
+ * untouched segment carries neither, a transformed one carries both. Never
+ * checked against `KNOWN_INSPECTION_ACTIONS`: an action this UI does not
+ * recognize is a legitimate response from a newer API, and
+ * `lib/inspectionActions.ts` already handles it fail-closed (same posture as
+ * `outcome` in `isCategoryDisclosureSummary` above).
+ */
+function isInspectionSegment(value: unknown): value is InspectionSegment {
+  return (
+    isRecord(value) &&
+    isStringOrNull(value.action) &&
+    isStringOrNull(value.category) &&
+    isString(value.original) &&
+    isString(value.disclosed) &&
+    (value.action === null) === (value.category === null)
+  );
+}
+
+/**
+ * Validates the WHOLE `inspection` field of a `PreviewResponse`, including
+ * the cross-field invariants a per-interface guard could not express on its
+ * own: `segments` is empty whenever `available` is `false`;
+ * `unavailable_reason` is a string exactly when `available` is `false` and
+ * `null` exactly when it is `true`; and -- the single most important line in
+ * this function -- when available, the segments' `disclosed` values
+ * concatenate back to EXACTLY `external_payload`. That last check is what
+ * makes the inspector trustworthy: without it, a body could claim
+ * `available: true` while `segments` describes a different disclosed text
+ * than the one the rest of this same response says was actually sent, and
+ * every downstream reader (the review screen, this app's own rendering)
+ * would have no way to tell. Rejecting the WHOLE response on any of these
+ * failing is the same fail-closed posture this module documents at its top:
+ * a partially-trustworthy inspection is not rendered as a trustworthy one.
+ */
+function isDisclosureInspectionField(
+  value: unknown,
+  externalPayload: string,
+): value is DisclosureInspection | null {
+  if (value === null) {
+    return true;
+  }
+  if (!isRecord(value) || !isBoolean(value.available)) {
+    return false;
+  }
+  const segments = value.segments;
+  if (!arrayOf(isInspectionSegment)(segments)) {
+    return false;
+  }
+  if (!value.available) {
+    return segments.length === 0 && isString(value.unavailable_reason);
+  }
+  if (value.unavailable_reason !== null) {
+    return false;
+  }
+  const reconstructedDisclosed = segments.map((segment) => segment.disclosed).join("");
+  return reconstructedDisclosed === externalPayload;
+}
+
 // --- POST /disclosure/preview ----------------------------------------------------
 
 export const isPreviewResponse: ResponseGuard<PreviewResponse> = (
@@ -267,7 +333,8 @@ export const isPreviewResponse: ResponseGuard<PreviewResponse> = (
   isString(value.treatment) &&
   isString(value.strategy) &&
   isSafeGovernanceView(value.governance) &&
-  isProviderMode(value.provider_mode);
+  isProviderMode(value.provider_mode) &&
+  isDisclosureInspectionField(value.inspection, value.external_payload);
 
 export const isDocumentPreviewResponse: ResponseGuard<DocumentPreviewResponse> = (
   value: unknown,
@@ -371,3 +438,39 @@ export const isCompareResponse: ResponseGuard<CompareResponse> = (
   isCanonicalComparisonEntries(value.entries) &&
   isSafeGovernanceView(value.governance) &&
   isProviderMode(value.provider_mode);
+
+// --- export / restore (T26/#67, gated for the web UI behind ----------------
+// ADG_ENABLE_DEMO_TRANSPARENCY -- T28/#70) -----------------------------------
+
+export const isExportResponse: ResponseGuard<ExportResponse> = (
+  value: unknown,
+): value is ExportResponse =>
+  isRecord(value) &&
+  declaresKnownContractVersion(value) &&
+  isString(value.external_payload) &&
+  isString(value.restore_handle) &&
+  isNumber(value.expires_at) &&
+  isNumber(value.restorable_count) &&
+  isString(value.treatment) &&
+  isString(value.strategy) &&
+  isSafeGovernanceView(value.governance);
+
+export const isRestoreResponse: ResponseGuard<RestoreResponse> = (
+  value: unknown,
+): value is RestoreResponse =>
+  isRecord(value) &&
+  declaresKnownContractVersion(value) &&
+  isString(value.restored_text) &&
+  isNumber(value.restored_count) &&
+  isNumber(value.unresolved_count);
+
+// --- GET /api/demo/features (web-only) ---------------------------------------
+//
+// No `declaresKnownContractVersion` here -- this response has no
+// `contract_version` at all (see `contracts.ts`'s `DemoFeaturesResponse`
+// docstring), so it is deliberately absent from `TOP_LEVEL_RESPONSE_GUARDS`
+// in `responseGuards.test.ts` too.
+
+export const isDemoFeaturesResponse: ResponseGuard<DemoFeaturesResponse> = (
+  value: unknown,
+): value is DemoFeaturesResponse => isRecord(value) && isBoolean(value.demo_transparency_enabled);

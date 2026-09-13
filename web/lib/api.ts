@@ -38,24 +38,30 @@
 
 import type {
   CompareResponse,
+  DemoFeaturesResponse,
   DisclosureRequestBody,
   DocumentPreviewResponse,
   DocumentTypesResponse,
   ExamplesResponse,
   ExecuteResponse,
+  ExportResponse,
   HealthResponse,
   PreviewResponse,
+  RestoreResponse,
 } from "./contracts";
 import type { AppCopy } from "./copy";
 import { copy as defaultCopy } from "./copy";
 import {
   isCompareResponse,
+  isDemoFeaturesResponse,
   isDocumentPreviewResponse,
   isDocumentTypesResponse,
   isExamplesResponse,
   isExecuteResponse,
+  isExportResponse,
   isHealthResponse,
   isPreviewResponse,
+  isRestoreResponse,
   type ResponseGuard,
 } from "./responseGuards";
 
@@ -138,6 +144,18 @@ async function toDisplayError(response: Response, appCopy: AppCopy): Promise<Dis
       DocumentAnalysisPresetError: appCopy.errors.invalidAnalysisMode,
       PreviewConfirmationError: appCopy.errors.previewExpired,
       UpstreamUnreachable: appCopy.errors.upstreamUnreachable,
+      // T27/T28 (issues #69-#70): the demo transparency gate and T26's
+      // export/restore refusal kinds. Every one of these carries a fixed,
+      // safe `detail` from the Python side already (CLAUDE.md's no-leak
+      // invariant), but this app still prefers its own copy over the raw
+      // upstream string for the same reason every other kind above does --
+      // consistent phrasing/locale, and one fewer place a future upstream
+      // wording change could surface unreviewed prose to the user.
+      DemoTransparencyDisabled: appCopy.errors.demoTransparencyDisabled,
+      ExportRefusedError: appCopy.errors.exportRefused,
+      RestoreUnavailableError: appCopy.errors.restoreUnavailable,
+      RestoreHandleInvalidError: appCopy.errors.restoreHandleInvalid,
+      RestoreHandleExpiredError: appCopy.errors.restoreHandleExpired,
     };
     return { message: known[parsed.kind] ?? parsed.detail, kind: parsed.kind, fields: null };
   }
@@ -279,6 +297,64 @@ export function compareStrategies(
   return requestJson(
     "/api/disclosure/compare",
     isCompareResponse,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    appCopy,
+  );
+}
+
+/**
+ * T27/T28 (issues #69-#70). Whether the export/restore UI should render at
+ * all -- a UX convenience only, never a security decision: the route
+ * handlers this app calls for the actual export/restore requests
+ * (`exportDocument`/`restoreText` below) re-check the same server-side gate
+ * independently, per request, regardless of what this call last reported.
+ * A failure here (including an invalid body) is therefore always safe to
+ * treat as "disabled" -- see `GuidedFlow`, which does exactly that.
+ */
+export function getDemoFeatures(
+  appCopy: AppCopy = defaultCopy,
+): Promise<ApiResult<DemoFeaturesResponse>> {
+  return requestJson("/api/demo/features", isDemoFeaturesResponse, undefined, appCopy);
+}
+
+/**
+ * T28 / issue #70. Upload-only, mirroring T26's HTTP export route itself
+ * (`POST /documents/export` takes the same multipart document shape as
+ * `/documents/preview` -- no plain-text/example variant, and no
+ * confirmation token). `lib/flow.ts`'s `buildDocumentFormData` builds the
+ * exact same `FormData` this call needs, reused unchanged.
+ */
+export function exportDocument(
+  form: FormData,
+  appCopy: AppCopy = defaultCopy,
+): Promise<ApiResult<ExportResponse>> {
+  return requestJson(
+    "/api/documents/export",
+    isExportResponse,
+    { method: "POST", body: form },
+    appCopy,
+  );
+}
+
+/**
+ * T28 / issue #70. `body.restore_handle` is the opaque handle
+ * `exportDocument` returned; `body.text` is whatever the caller pasted or
+ * imported (e.g. a simulated external response containing pseudonym-shaped
+ * tokens). Neither this function nor anything it calls ever inspects,
+ * decodes, or logs the handle -- it is forwarded to the proxy route
+ * byte-identical, exactly like every other request body in this module.
+ */
+export function restoreText(
+  body: { text: string; restore_handle: string },
+  appCopy: AppCopy = defaultCopy,
+): Promise<ApiResult<RestoreResponse>> {
+  return requestJson(
+    "/api/documents/restore",
+    isRestoreResponse,
     {
       method: "POST",
       headers: { "content-type": "application/json" },
