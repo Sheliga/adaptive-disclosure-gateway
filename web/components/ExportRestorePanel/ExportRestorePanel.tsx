@@ -5,12 +5,12 @@
  * `ReviewScreen` only when the demo transparency feature flag is enabled
  * AND the preview is `allowed` (both checked by the caller, not here).
  *
- * Export is upload-only, mirroring T26's HTTP export route itself
- * (`POST /documents/export` takes the same multipart document shape as
- * `/documents/preview` -- no plain-text/example variant exists). In any
- * other compose mode this renders an explanatory note instead of the export
- * button; restore stays fully available regardless of mode, since it only
- * needs a handle and some text, neither tied to the current compose state.
+ * Export is upload-only, mirroring T26's HTTP export route itself (its
+ * upstream request takes the same multipart document shape as the preview
+ * route -- no plain-text/example variant exists). In any other compose mode
+ * this renders an explanatory note instead of the export button; restore
+ * stays fully available regardless of mode, since it only needs a handle
+ * and some text, neither tied to the current compose state.
  *
  * Every piece of state this component touches -- the export result, the
  * restore handle, the "simulated external response" text, the restore
