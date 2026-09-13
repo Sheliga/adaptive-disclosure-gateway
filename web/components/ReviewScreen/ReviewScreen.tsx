@@ -18,6 +18,17 @@
  * A `blocked` summary renders no confirm action at all: there is no path
  * from this screen to `onConfirm` when `preview.summary.status ===
  * "blocked"`.
+ *
+ * T28 / issue #70: `ExportRestorePanel` renders only when BOTH
+ * `demoTransparencyEnabled` is true (fetched once, up front, by
+ * `GuidedFlow` via `getDemoFeatures` -- any failure or invalid body there
+ * is already treated as disabled before it ever reaches this prop) AND
+ * `preview.summary.status === "allowed"` -- exporting a blocked disclosure
+ * makes no sense, and T26's export route independently refuses it anyway
+ * (`ExportRefusedError`). This screen never re-fetches or re-checks the
+ * feature flag itself; the server-side route gate
+ * (`lib/demoTransparency.ts`) remains the actual security boundary
+ * regardless of what this prop says.
  */
 
 import { useState } from "react";
@@ -25,9 +36,11 @@ import { useState } from "react";
 import { useCopy } from "@/i18n/useLocale";
 import type { DisplayError } from "@/lib/api";
 import type { PreviewResponse } from "@/lib/contracts";
+import { initialComposeState, type ComposeState } from "@/lib/flow";
 
 import { CategoryOutcomeRow } from "../CategoryOutcomeRow/CategoryOutcomeRow";
 import { DisclosureInspector } from "../DisclosureInspector/DisclosureInspector";
+import { ExportRestorePanel } from "../ExportRestorePanel/ExportRestorePanel";
 import styles from "./ReviewScreen.module.css";
 
 export interface ReviewScreenProps {
@@ -35,9 +48,25 @@ export interface ReviewScreenProps {
   executeError: DisplayError | null;
   onConfirm: () => void;
   onCancel: () => void;
+  /**
+   * The compose state this preview was built from -- threaded through only
+   * for `ExportRestorePanel`. Optional, defaulting to the initial (example
+   * mode) compose state, so existing callers/tests that never render the
+   * panel (`demoTransparencyEnabled` false, the default) are unaffected.
+   */
+  compose?: ComposeState;
+  /** T28 / issue #70. See this module's docstring. Defaults to `false` (disabled) so existing callers/tests are unaffected. */
+  demoTransparencyEnabled?: boolean;
 }
 
-export function ReviewScreen({ preview, executeError, onConfirm, onCancel }: ReviewScreenProps) {
+export function ReviewScreen({
+  preview,
+  executeError,
+  onConfirm,
+  onCancel,
+  compose = initialComposeState,
+  demoTransparencyEnabled = false,
+}: ReviewScreenProps) {
   const copy = useCopy();
   const [payloadOpen, setPayloadOpen] = useState(false);
 
@@ -116,6 +145,8 @@ export function ReviewScreen({ preview, executeError, onConfirm, onCancel }: Rev
           strategy={preview.strategy}
         />
       )}
+
+      {demoTransparencyEnabled && !isBlocked && <ExportRestorePanel compose={compose} />}
 
       {executeError && (
         <p role="alert" className={styles.error}>

@@ -378,3 +378,61 @@ describe("ReviewScreen -- disclosure inspector (T27)", () => {
     expect(screen.getByText(copy.disclosureInspector.unavailableBlockedHeading)).toBeInTheDocument();
   });
 });
+
+/**
+ * T28 / issue #70: `ExportRestorePanel` renders only when the caller passes
+ * `demoTransparencyEnabled` AND the preview is allowed. `demoTransparencyEnabled`
+ * defaults to `false`, so every existing render call in this file (which
+ * never passes it) already proves the "disabled" half of this pin.
+ */
+describe("ReviewScreen -- export/restore panel (T28)", () => {
+  it("does not render the panel when demoTransparencyEnabled is not passed (defaults to disabled)", () => {
+    render(
+      <ReviewScreen preview={preview([category({})])} executeError={null} onConfirm={vi.fn()} onCancel={vi.fn()} />,
+    );
+
+    expect(screen.queryByText(copy.exportRestorePanel.heading)).not.toBeInTheDocument();
+  });
+
+  it("does not render the panel when explicitly disabled", () => {
+    render(
+      <ReviewScreen
+        preview={preview([category({})])}
+        executeError={null}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+        demoTransparencyEnabled={false}
+      />,
+    );
+
+    expect(screen.queryByText(copy.exportRestorePanel.heading)).not.toBeInTheDocument();
+  });
+
+  it("renders the panel when enabled and the preview is allowed", () => {
+    render(
+      <ReviewScreen
+        preview={preview([category({})], "allowed")}
+        executeError={null}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+        demoTransparencyEnabled={true}
+      />,
+    );
+
+    expect(screen.getByText(copy.exportRestorePanel.heading)).toBeInTheDocument();
+  });
+
+  it("does not render the panel when enabled but the preview is blocked", () => {
+    render(
+      <ReviewScreen
+        preview={preview([category({ outcome: "blocked" })], "blocked")}
+        executeError={null}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+        demoTransparencyEnabled={true}
+      />,
+    );
+
+    expect(screen.queryByText(copy.exportRestorePanel.heading)).not.toBeInTheDocument();
+  });
+});

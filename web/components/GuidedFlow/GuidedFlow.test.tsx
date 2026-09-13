@@ -8,6 +8,7 @@ import {
   compareStrategies,
   executeDocument,
   executeDisclosure,
+  getDemoFeatures,
   getDocumentTypes,
   getExamples,
   getHealth,
@@ -24,6 +25,7 @@ vi.mock("@/lib/api", () => ({
   getHealth: vi.fn(),
   getExamples: vi.fn(),
   getDocumentTypes: vi.fn(),
+  getDemoFeatures: vi.fn(),
   previewDisclosure: vi.fn(),
   executeDisclosure: vi.fn(),
   previewDocument: vi.fn(),
@@ -34,6 +36,7 @@ vi.mock("@/lib/api", () => ({
 const mockedGetHealth = vi.mocked(getHealth);
 const mockedGetExamples = vi.mocked(getExamples);
 const mockedGetDocumentTypes = vi.mocked(getDocumentTypes);
+const mockedGetDemoFeatures = vi.mocked(getDemoFeatures);
 const mockedPreviewDisclosure = vi.mocked(previewDisclosure);
 const mockedExecuteDisclosure = vi.mocked(executeDisclosure);
 const mockedPreviewDocument = vi.mocked(previewDocument);
@@ -229,6 +232,10 @@ beforeEach(() => {
       ],
     },
   });
+  // Disabled by default -- every existing test in this file that never
+  // overrides this mock is exactly the "features disabled" regression test
+  // for T28's gating.
+  mockedGetDemoFeatures.mockResolvedValue({ ok: true, data: { demo_transparency_enabled: false } });
 });
 
 describe("GuidedFlow -- confirmed structured contract flow", () => {
@@ -795,5 +802,58 @@ describe("GuidedFlow -- no sensitive information reaches the DOM because of the 
     await switchToEnglish();
 
     expect(screen.queryByText(/SESSION_SECRET_MARKER/)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * T28 / issue #70: `getDemoFeatures` is fetched once, up front, and its
+ * result (or absence of a successful one) gates whether the export/restore
+ * panel renders on Revisão at all. Every OTHER test in this file relies on
+ * the `beforeEach` default (`{ demo_transparency_enabled: false }`) and is
+ * therefore itself a "disabled" regression test; these are the explicit
+ * ones plus the "request fails" and "enabled" cases.
+ */
+describe("GuidedFlow -- demo transparency feature flag (T28)", () => {
+  it("renders no export/restore panel on Revisão when the flag is disabled (default)", async () => {
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+
+    await goToReview();
+
+    expect(screen.queryByText(copy.exportRestorePanel.heading)).not.toBeInTheDocument();
+  });
+
+  it("renders no export/restore panel when the features request itself fails", async () => {
+    mockedGetDemoFeatures.mockResolvedValue({
+      ok: false,
+      status: 500,
+      error: { message: copy.errors.generic, kind: null, fields: null },
+    });
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+
+    await goToReview();
+
+    expect(screen.queryByText(copy.exportRestorePanel.heading)).not.toBeInTheDocument();
+  });
+
+  it("renders the export/restore panel on Revisão when the flag is enabled and the preview is allowed", async () => {
+    mockedGetDemoFeatures.mockResolvedValue({ ok: true, data: { demo_transparency_enabled: true } });
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+
+    await goToReview();
+
+    expect(await screen.findByText(copy.exportRestorePanel.heading)).toBeInTheDocument();
+  });
+
+  it("does not call getDemoFeatures more than once across a full run", async () => {
+    mockedGetDemoFeatures.mockResolvedValue({ ok: true, data: { demo_transparency_enabled: true } });
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+    mockedExecuteDisclosure.mockResolvedValue({ ok: true, data: executeResponse() });
+
+    await goToReview();
+    await screen.findByText(copy.exportRestorePanel.heading);
+    await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+    await screen.findByRole("heading", { name: copy.result.heading });
+
+    expect(mockedGetDemoFeatures).toHaveBeenCalledTimes(1);
   });
 });
