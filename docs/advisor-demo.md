@@ -600,29 +600,22 @@ stack, not a production host -- re-measure before committing to a specific hoste
 
 ## Export and deferred restore (T26 / Issue #67)
 
-The API and CLI (not the web UI, and not the hosted demo URL yet) offer a
-way to take a document's disclosed representation outside the gateway and
-later restore its pseudonyms locally: `POST /documents/export` /
-`POST /documents/restore` and `adg export` / `adg restore`. Export returns
-the same disclosed text `preview` already shows, plus a sealed, stateless
-restore handle (see `docs/adr/0002-deferred-restore-handles.md`); restore
-takes arbitrary text plus that handle and replaces only the pseudonyms the
-handle recognizes. Nothing is retained server-side between the two calls —
-the handle alone carries what restore needs, so it works across a restart
-or a different worker.
+The API and CLI offer a way to take a document's disclosed representation
+outside the gateway and later restore its pseudonyms locally:
+`POST /documents/export` / `POST /documents/restore` and `adg export` /
+`adg restore`. Export returns the same disclosed text `preview` already
+shows, plus a sealed, stateless restore handle (see
+`docs/adr/0002-deferred-restore-handles.md`); restore takes arbitrary text
+plus that handle and replaces only the pseudonyms the handle recognizes.
+Nothing is retained server-side between the two calls — the handle alone
+carries what restore needs, so it works across a restart or a different
+worker.
 
-This is **API/CLI-only for now and not exposed on the hosted demo URL**.
-T25 keeps the API internal-only behind the web proxy, and there is
-deliberately no proxy route or UI action for export/restore in this slice —
-adding one is a later UI slice's job, not a security gap: the mechanism
-itself is scope-bound and fails closed exactly as `/documents/preview`/
-`/documents/execute` do, it simply has no button yet. The reason is explicit,
-not incidental: the public hosted demo has no authentication, so a reachable
-restore endpoint would be a re-identification oracle for anyone who could
-reach it -- restore must stay behind something that authenticates the
-caller, which the hosted web demo does not do. Until then, export/restore
-remain API/CLI-only and the `api` service itself stays internal-only in
-`compose.demo.yaml` (no `ports:`, see "Security stance" above).
+The API/CLI path described above is unconditionally available (subject only
+to `ADG_RESTORE_HANDLE_SECRET` being configured, below). A **gated** web
+proxy route and UI action for this same mechanism now exist too, behind
+`ADG_ENABLE_DEMO_TRANSPARENCY` -- see the "Demonstration surfaces (T27/T28)"
+section below for the web-facing walkthrough and why it defaults off.
 
 Configuration: `ADG_RESTORE_HANDLE_SECRET` and `ADG_RESTORE_HANDLE_TTL_SECONDS`
 on the `api` service only (never `web`), both optional. Unset
@@ -631,11 +624,139 @@ other route -- `POST /documents/export` and `POST /documents/restore` return
 503 until a secret is configured, exactly as described in `.env.example`.
 `GET /ready` never consults the restore-handle secret either, so leaving it
 unset never makes the deployment report not-ready -- only the export/restore
-routes themselves refuse. `tests/test_demo_deployment_config.py`'s
-`TestWebDoesNotExposeExportRestore` pins the absence of a web proxy route
-statically (by scanning `web/app/api` and every non-excluded file under
-`web/`), so a future restructure trips a test rather than silently
-regressing this boundary.
+routes themselves refuse.
+
+## Demonstration surfaces (T27 / Issue #69, T28 / Issue #70)
+
+Two additive, opt-in surfaces for advisor evaluation, both gated by the same
+`ADG_ENABLE_DEMO_TRANSPARENCY` flag (see `.env.example`) and both **off by
+default**. They are demonstration/pedagogical features, not part of the
+core gateway mechanism, and a final product would remove or significantly
+restrict them (see "Demo vs final product" below).
+
+### T27 — Transformation inspector
+
+When enabled, `POST /documents/preview`'s response carries a populated
+`inspection` field (`null` when the flag is off, on every response, always)
+and the web Review screen renders a collapsed-by-default panel showing the
+original text and the disclosed `external_payload` side by side, segment by
+segment, each segment labeled with its action (`preserve`, `remove`,
+`generalize`, `pseudonymize`) and category where available.
+
+This is built from the pipeline's own structured output, never a string
+diff: `application/inspection.py::build_inspection` walks
+`resolve_overlaps(decision.spans)` zipped 1:1 against
+`decision.result.transformations` -- the same per-span records every
+transforming treatment (B1 — Static Sanitization through B4 —
+Policy-governed) already produces to build `external_payload` itself -- and
+verifies that concatenating the segments' `original` values reproduces the
+source text exactly and concatenating their `disclosed` values reproduces
+`external_payload` exactly. A string diff cannot make either guarantee (it
+cannot tell two equal occurrences of the same value apart, and it cannot
+attribute a segment to the category/action that produced it).
+
+The projection fails closed rather than guessing: `available: false` with
+`unavailable_reason: "blocked"` for a blocked decision (there is no
+disclosed representation to show), or `"alignment_failed"` for any other
+case where the decision's structured metadata does not line up with the
+source text closely enough to project safely. B0 — Direct is a deliberate
+special case (its one `Transformation` is a synthetic whole-text audit
+entry, not a real span) and falls back to one untouched segment covering
+the whole text, which is exactly what B0 discloses.
+
+The inspector opens no OTel span of its own, never imports `vault`, and
+never returns offsets on the wire -- only reconstructed text segments.
+
+### T28 — Gated export/restore UI
+
+When enabled (and not blocked), the Review screen also renders an
+export/restore panel demonstrating T26's full cycle end to end in the
+browser:
+
+1. **Export** -- upload a document (export is upload-only in this panel;
+   T26's HTTP export endpoint itself is document-only, there is no
+   paste-text export path to proxy); the panel calls the gated
+   `POST /api/documents/export` web route, which proxies to the api
+   service's `/documents/export` exactly as `/documents/preview` does.
+2. The response's restore handle is held **only in React state** (never
+   `localStorage`/`sessionStorage`, never a URL parameter, never written to
+   any log) and shown masked, with copy/download-to-clipboard actions so an
+   advisor can move it out of the browser tab deliberately.
+3. **Simulate external use** -- the panel does not call a real external
+   service; it lets you copy the disclosed text out, edit it (standing in
+   for "this text went through some other tool/process"), and paste the
+   result back in.
+4. **Restore** -- the panel calls the gated `POST /api/documents/restore`
+   web route with the pasted text and the held handle; the response shows
+   the restored text plus `restored_count`/`unresolved_count`, never the
+   pseudonym → original mapping itself.
+
+Both web routes check the flag **before** doing anything else, including
+before inspecting the incoming request -- a disabled flag makes zero
+upstream calls to the api service. A third route, `GET /api/demo/features`
+(declared `dynamic = "force-dynamic"` so a container's runtime flag value is
+never baked in at `next build` time), lets the web UI decide whether to
+render the panel at all without exposing any other configuration.
+
+### How to enable it locally
+
+```
+ADG_ENABLE_DEMO_TRANSPARENCY=1 \
+ADG_RESTORE_HANDLE_SECRET=$(python -c "import secrets; print(secrets.token_urlsafe(32))") \
+ADG_PROVIDER=fake docker compose -f compose.demo.yaml up --build
+```
+
+(`ADG_RESTORE_HANDLE_SECRET` is needed only for the T28 export/restore half;
+the T27 inspector works with `ADG_ENABLE_DEMO_TRANSPARENCY=1` alone.)
+
+To obtain a synthetic document to upload, generate one with the same
+fixture builder the test suite uses (values invented at generation time,
+never real corpus content):
+
+```
+python -c "
+import sys; sys.path.insert(0, 'tests')
+from document_fixtures import minimal_pdf_bytes
+open('demo.pdf', 'wb').write(minimal_pdf_bytes(['Contact John Smith at john.smith@example.com']))
+"
+```
+
+### Why this defaults off
+
+The hosted demo has no authentication (see "Security stance" below). A
+reachable restore endpoint is a re-identification oracle: anyone who can
+reach it can submit text containing a guessed or observed pseudonym and get
+the original back. Gating both the inspector and the export/restore UI
+behind one explicit, server-side, non-secret flag means the hosted URL keeps
+its default no-authentication posture safely, while a controlled
+advisor-evaluation environment can turn the same mechanism on deliberately.
+
+### Demo vs final product
+
+Both surfaces exist to make the gateway's own mechanism visible and
+inspectable for pedagogical/scientific evaluation. A final product would
+put this behind real authentication/authorization scoped to the document's
+own owner, or remove the web-facing inspector/export/restore surfaces
+entirely and keep only the API/CLI paths T26 already scopes to a caller who
+holds the handle.
+
+### Why there is no Vault Explorer
+
+Neither surface lists, browses or dumps the pseudonym → original mapping.
+The inspector shows only the current request's own transformations (derived
+from that one decision, not from the vault). No endpoint returns the global
+mapping. Restore is scoped to one sealed handle and resolves only the
+pseudonyms that handle's own export produced -- it cannot be used to browse
+or enumerate anything outside that scope.
+
+### What must never appear in UI/logs
+
+The full pseudonym → original mapping; the restore-handle secret
+(`ADG_RESTORE_HANDLE_SECRET`) or the preview-confirmation secret; the
+decoded contents of a restore handle; any original or pseudonym value in a
+log line (api access logs, uvicorn logs, Next.js server logs) or an OTel
+span attribute; the restore handle itself in a URL or in browser storage
+(it lives only in React state for the lifetime of the tab).
 
 ## Security stance
 

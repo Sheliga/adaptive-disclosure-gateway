@@ -601,8 +601,66 @@ Lets a caller take a disclosed representation of a document (the same `external_
 - `DisclosureApplicationService.export`/`.restore`: `export` runs the same decision phase `preview` runs (never the provider) and refuses a `BLOCK_REQUEST` outcome; `restore` replaces only the pseudonyms a handle recognizes in arbitrary submitted text, reporting `restored_count`/`unresolved_count`, never the mapping.
 - No ephemeral-key mode (unlike preview confirmation): an unset `ADG_RESTORE_HANDLE_SECRET` still starts the service and leaves every other route working, but export/restore themselves fail closed (`RestoreUnavailableError`, HTTP 503, non-zero CLI exit).
 - HTTP: `POST /documents/export` (multipart, same fields as `/documents/preview`), `POST /documents/restore` (JSON `{text, restore_handle}`). CLI: `adg export`, `adg restore` (handle/text read from a file or stdin, never a plain argv value).
-- Not in this PR: any web proxy route or UI (T25 keeps the API internal-only behind the web proxy; export/restore are API/CLI-only until a later UI slice), PDF/DOCX re-rendering, any change to B2 — Reversible Pseudonymization / B3 — Task-aware / B4 — Policy-governed semantics.
+- Not in this PR: any web proxy route or UI (T25 keeps the API internal-only behind the web proxy; export/restore are API/CLI-only until a later UI slice -- see T28 / Issue #70 below, which adds a gated web route and UI action for this same mechanism), PDF/DOCX re-rendering, any change to B2 — Reversible Pseudonymization / B3 — Task-aware / B4 — Policy-governed semantics.
 - Reconciled with T25's merged `compose.demo.yaml`: `ADG_RESTORE_HANDLE_SECRET` and `ADG_RESTORE_HANDLE_TTL_SECONDS` reach the `api` service only, both as OPTIONAL interpolations (unset = export/restore disabled with 503, no effect on any other route); `web` carries neither, and a static test pins that the hosted demo has no proxy route or reference to either path (ADR-0002). `docker/api-constraints.txt` was regenerated for `cryptography` as part of this reconciliation. `GET /ready`'s readiness check (T25) does not consult the restore-handle secret, pinned by regression tests added during reconciliation.
+
+### T27 / Issue #69 — transformation inspector for the demo
+
+Status: **in validation (open PR to `develop`, feat/t27-t28-demo-transparency)**.
+
+Adds a gated, additive `inspection` field to `DisclosurePreview` (and the HTTP/CLI preview
+contracts) showing a side-by-side original/disclosed view built from the pipeline's own
+structured output, plus a collapsed-by-default `DisclosureInspector` panel on the web Review
+screen.
+
+- Gated by `ADG_ENABLE_DEMO_TRANSPARENCY` (`application/settings.py`; unset/blank/anything but
+  exactly `"1"` after stripping is disabled). `inspection` is `null` on every response when the
+  flag is off, matching today's contract exactly; `CONTRACT_VERSION` (`t20-application-api-v1`)
+  is unchanged, since the field is additive and nullable.
+- `application/inspection.py::build_inspection` derives `segments` from
+  `resolve_overlaps(decision.spans)` zipped 1:1 against `decision.result.transformations` --
+  never a string diff -- and verifies the segments' concatenated `original`/`disclosed` values
+  reproduce the source text / `external_payload` exactly; fails closed
+  (`unavailable_reason: "blocked"` or `"alignment_failed"`) rather than emitting a partial or
+  best-effort projection. B0 — Direct falls back to one whole-text segment. No offsets on the
+  wire, only reconstructed text segments.
+- No-leak: `inspection.py` never imports `vault`, opens no OTel span of its own
+  (`tests/test_inspection_isolation.py`); the projection itself is the only place a preview
+  response widens under this flag.
+- Not in this PR: any change to detection/transformation/B0–B4 semantics, any persistence of
+  the inspection projection, any endpoint that returns more than one request's own
+  transformations.
+
+### T28 / Issue #70 — gated export/restore UI for the demo
+
+Status: **in validation (open PR to `develop`, feat/t27-t28-demo-transparency)**.
+
+Adds a web-facing, gated proxy for T26's export/restore mechanism plus an `ExportRestorePanel`
+on the Review screen, so an advisor can run the full export → simulated external use → restore
+cycle from the browser instead of the CLI.
+
+- Same `ADG_ENABLE_DEMO_TRANSPARENCY` gate as T27, checked in `web/app/api/documents/export`
+  and `.../restore` route handlers *before* anything else -- a disabled flag makes zero
+  upstream calls to the api service, and both return a fixed 404
+  (`{"detail": "not found", "kind": "DemoTransparencyDisabled"}`) when off. A third route,
+  `GET /api/demo/features` (`dynamic = "force-dynamic"`, so a container's runtime value of the
+  flag is never baked in at `next build` time), tells the web UI whether to render the panel at
+  all.
+- `web/lib/demoTransparency.ts` mirrors `application/settings.py`'s parsing rule
+  byte-identically; the flag is read server-side at request time and is deliberately never a
+  `NEXT_PUBLIC_*` build-time variable.
+- `tests/test_demo_deployment_config.py::TestWebExportRestoreIsGated` replaces T26's
+  `TestWebDoesNotExposeExportRestore` pin -- the web now has export/restore routes, so the
+  invariant worth pinning changed from "the routes do not exist" to "the routes exist but are
+  gated and check the flag first."
+- Export is upload-only in this panel (T26's HTTP export endpoint is document-only; there is no
+  paste-text export path to proxy). The restore handle lives only in React state for the
+  lifetime of the tab -- never `localStorage`/`sessionStorage`, never a URL parameter, never
+  logged.
+- Not in this PR: a Vault Explorer or any endpoint listing/dumping the pseudonym → original
+  mapping; persistence of exported/restored content; any change to T26's API/CLI behavior or
+  to B2 — Reversible Pseudonymization semantics; enabling this on a public unauthenticated URL
+  (the flag exists precisely so the hosted demo can keep it off).
 
 ### Demo completion criterion
 
