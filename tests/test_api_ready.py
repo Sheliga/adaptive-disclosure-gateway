@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 
+from adaptive_disclosure_gateway.application.presets import CONTRACT_DOCUMENT_TYPE
 from adaptive_disclosure_gateway.application.preview_confirmation import PreviewConfirmationSigner
 from adaptive_disclosure_gateway.application.service import DisclosureApplicationService
 from adaptive_disclosure_gateway.domain import GovernanceContext
@@ -19,6 +20,9 @@ from adaptive_disclosure_gateway.providers import (
     FakeProvider,
 )
 from tests.api_support import build_client, policy_repository
+from tests.contracts_fixture import CONTRACTS_FIXTURE
+from tests.test_api_documents_export_restore import CONTRACT_TASK
+from tests.test_application_document_presets import StubContractParser
 from tests.test_application_service_readiness import _UnrecognizedProvider
 
 DURABLE_SECRET = "b" * 32
@@ -102,6 +106,45 @@ def test_ready_reports_503_for_ephemeral_signer_with_external_provider(monkeypat
     body = response.json()
     assert body["status"] == "not_ready"
     assert body["reason"] == "confirmation_secret_not_durable"
+
+
+def test_ready_and_health_ok_while_export_and_restore_refuse_in_the_same_app():
+    """T26 / issue #67 reconciliation. A single app instance, no
+    ``ADG_RESTORE_HANDLE_SECRET`` configured (the default -- the service
+    below never receives a ``restore_handle_sealer``, so
+    ``DisclosureApplicationService`` falls back to
+    ``RestoreHandleSealer(secret=None)``): ``/ready`` and ``/health`` must
+    both report healthy while ``/documents/export`` and
+    ``/documents/restore`` -- on that exact same app -- both refuse with
+    503. Proves the two facts live in the same running service without
+    coupling: a defect that made ``describe_readiness`` consult the restore
+    sealer would flip ``/ready`` to 503 here even though nothing about the
+    provider or preview-confirmation signer changed.
+    """
+    service = DisclosureApplicationService(
+        policy_repository=policy_repository(),
+        provider=FakeProvider(),
+        default_context=_context("fake"),
+        document_parser=StubContractParser(),
+    )
+    client = build_client(service)
+
+    ready_response = client.get("/ready")
+    health_response = client.get("/health")
+    export_response = client.post(
+        "/documents/export",
+        files={"file": ("contract.pdf", CONTRACTS_FIXTURE.encode("utf-8"), "application/pdf")},
+        data={"task": CONTRACT_TASK, "document_type": CONTRACT_DOCUMENT_TYPE},
+    )
+    restore_response = client.post(
+        "/documents/restore", json={"text": "irrelevant", "restore_handle": "irrelevant"}
+    )
+
+    assert ready_response.status_code == 200
+    assert ready_response.json() == {"status": "ready"}
+    assert health_response.status_code == 200
+    assert export_response.status_code == 503
+    assert restore_response.status_code == 503
 
 
 def test_ready_reports_503_for_unrecognized_provider(monkeypatch):

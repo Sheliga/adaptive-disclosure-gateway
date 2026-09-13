@@ -18,6 +18,7 @@ from adaptive_disclosure_gateway.application.preview_confirmation import (
     REASON_CONFIRMATION_SECRET_NOT_DURABLE,
     PreviewConfirmationSigner,
 )
+from adaptive_disclosure_gateway.application.restore_handle import RestoreHandleSealer
 from adaptive_disclosure_gateway.application.service import DisclosureApplicationService
 from adaptive_disclosure_gateway.domain import GovernanceContext
 from adaptive_disclosure_gateway.policies import PolicyRepository
@@ -54,12 +55,13 @@ def _context(provider_class: str) -> GovernanceContext:
     )
 
 
-def _service(provider, *, signer=None) -> DisclosureApplicationService:
+def _service(provider, *, signer=None, restore_handle_sealer=None) -> DisclosureApplicationService:
     return DisclosureApplicationService(
         policy_repository=PolicyRepository.from_directory(POLICY_DIR),
         provider=provider,
         default_context=_context(provider.provider_class),
         preview_confirmation_signer=signer,
+        restore_handle_sealer=restore_handle_sealer,
     )
 
 
@@ -158,3 +160,50 @@ def test_credential_never_appears_in_the_readiness_result(monkeypatch, credentia
     readiness = service.describe_readiness()
 
     assert credential not in repr(readiness)
+
+
+# --- T26 / issue #67 reconciliation: readiness must not depend on the -----------
+# restore-handle secret. export/restore fail closed on their OWN routes
+# (RestoreUnavailableError, HTTP 503) when no ADG_RESTORE_HANDLE_SECRET is
+# configured; that must never make describe_readiness report the whole
+# service not-ready. These are regression pins: describe_readiness today
+# never even looks at the restore-handle sealer, so both pass immediately --
+# they exist to fail the moment a future change wires a restore-availability
+# check into readiness (deliberately without adding a new ReadinessReason
+# member for it).
+
+
+def test_fake_provider_ready_regardless_of_restore_handle_secret_being_unset():
+    service = _service(FakeProvider(), restore_handle_sealer=RestoreHandleSealer(secret=None))
+
+    readiness = service.describe_readiness()
+
+    assert readiness.ready is True
+    assert readiness.reason is None
+
+
+def test_fake_provider_ready_regardless_of_restore_handle_secret_being_configured():
+    service = _service(
+        FakeProvider(), restore_handle_sealer=RestoreHandleSealer(secret="a" * 32)
+    )
+
+    readiness = service.describe_readiness()
+
+    assert readiness.ready is True
+    assert readiness.reason is None
+
+
+def test_anthropic_provider_ready_with_credential_and_durable_signer_and_no_restore_secret(
+    monkeypatch,
+):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", MARKER_API_KEY)
+    service = _service(
+        AnthropicProvider(AnthropicProviderConfig()),
+        signer=PreviewConfirmationSigner(secret=DURABLE_SECRET),
+        restore_handle_sealer=RestoreHandleSealer(secret=None),
+    )
+
+    readiness = service.describe_readiness()
+
+    assert readiness.ready is True
+    assert readiness.reason is None

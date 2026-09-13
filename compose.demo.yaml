@@ -52,6 +52,21 @@ services:
       # practice once ADG_PROVIDER=anthropic -- the app itself refuses to
       # start without it (application/settings.build_preview_confirmation_signer).
       ADG_PREVIEW_CONFIRMATION_SECRET: ${ADG_PREVIEW_CONFIRMATION_SECRET:-}
+      # Server-side only; never forwarded to the web service (T26 / issue
+      # #67). Deliberately OPTIONAL (`:-`, not `:?`): export/restore are an
+      # opt-in feature layered on top of the demo, not a precondition for
+      # it -- leaving this unset does not block startup of the api service
+      # or affect any other route, it only makes POST /documents/export and
+      # POST /documents/restore themselves return 503
+      # (RestoreUnavailableError) until a secret is configured. Rotate it to
+      # invalidate every previously issued restore handle at once.
+      ADG_RESTORE_HANDLE_SECRET: ${ADG_RESTORE_HANDLE_SECRET:-}
+      # How long an issued restore handle stays valid, in seconds (default
+      # 86400, max 604800). Also optional -- a blank value is treated the
+      # same as unset (application.settings._restore_handle_ttl_seconds
+      # falls back to the sealer's own default); only a non-blank,
+      # out-of-range or non-integer value fails closed at startup.
+      ADG_RESTORE_HANDLE_TTL_SECONDS: ${ADG_RESTORE_HANDLE_TTL_SECONDS:-}
       # Engineering limits/CORS. Safe repository defaults apply when unset;
       # CORS can stay empty because the browser only ever calls the web
       # origin (docs/advisor-demo.md's architectural boundary).
