@@ -84,6 +84,50 @@ noticing — exactly the silent substitution protocol §9.4 forbids. `ADG_PROVID
 autocorrected and never mapped to another provider on its own judgment; an unrecognized value
 is a configuration error, full stop.
 
+### What reads `ADG_PROVIDER`
+
+`application/settings.build_default_service` — the default service both `api/app.create_app()`
+and `cli.main()` build when no service is injected — constructs its provider through
+`providers.build_provider_from_env`, and derives the default `GovernanceContext.provider_class`
+from whatever that returns. So a deployment enables the real provider by setting
+`ADG_PROVIDER=anthropic` and nothing else; no custom service has to be injected, and there is
+no environment variable that can make the governance context disagree with the wired provider.
+
+That agreement is load-bearing rather than cosmetic: `invoke_provider` compares
+`context.provider_class` against the provider's own and refuses the call on a mismatch, and
+policy itself reads `provider_class` (see `docs/hr-policy-matrix.md`, where `employee_name` is
+treated more restrictively for `external_llm`). A context left at `fake` over a real adapter
+would block every request in the deployed demo; a context claiming `external_llm` over
+`FakeProvider` would apply the external rules to a call that never leaves the process.
+
+Selecting the real adapter builds no SDK client and reads no credential at construction time —
+the client is created lazily at the first call — so an API with `ADG_PROVIDER=anthropic` and no
+key still starts and still serves `/health`, and fails closed only when a call is attempted.
+
+### A real provider also requires `ADG_PREVIEW_CONFIRMATION_SECRET`
+
+Selecting a provider outside the trust boundary makes one further variable mandatory:
+`ADG_PREVIEW_CONFIRMATION_SECRET`, the key material signing the confirmation that binds a
+`POST /documents/execute` to the `POST /documents/preview` a reviewer approved (see
+[`advisor-demo.md`](advisor-demo.md) and `application/preview_confirmation.py`).
+
+`build_default_service` refuses to construct a service that pairs an external provider with no
+configured secret. The refusal is deliberate and is the same fail-closed shape as an
+unrecognized `ADG_PROVIDER`: a deployment that can send an advisor's document to an external
+model must be able to prove which reviewed preview authorised each call, and per-process key
+material cannot do that across workers or across a restart. Starting anyway — with confirmation
+silently disabled, or with a key that dies with the worker — is exactly the silent degradation
+this codebase refuses elsewhere.
+
+With `FakeProvider` the variable is optional: per-process key material is generated instead.
+That is not confirmation disabled — every token is still issued and verified — it only gives up
+durability, which a local development run does not need.
+
+The secret is server-side only. It never reaches the browser, never appears in a response, a
+health record, a `configuration_record()`, a repr or a log line, and no confirmation token
+carries a representation of it. Generate one with
+`python -c "import secrets; print(secrets.token_urlsafe(32))"`; at least 32 bytes are required.
+
 ### Behaviour with no credential
 
 Fail-closed, never silent substitution. With `ADG_PROVIDER=anthropic` and no credential, the

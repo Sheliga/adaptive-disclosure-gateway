@@ -2,9 +2,13 @@
 
 ## Status and purpose
 
-This document defines the **parallel demonstration/application track** for the Adaptive Disclosure Gateway.
+This document defines the **demonstration/application track** for the Adaptive Disclosure Gateway.
 
-It does **not** change Milestone 3 scientific ordering, gates or closure criteria.
+The Demo Track is **priority 1**. The sequence is T20 → T21 → T25 → a hosted advisor URL, and
+M3 resumes at its next unresolved methodological gate after that URL exists. M3 stands at 5/8
+and is **operationally paused**: the pause is scheduling only and changes no frozen scientific
+definition, ordering, gate or closure criterion. No post-pilot scorer or date-aware utility
+gate is the next active gate.
 
 The current Python implementation is the **reference application/core** used by the demo. The web application exposes this implementation; it must not recreate simplified B0–B4 logic in Next.js.
 
@@ -166,10 +170,114 @@ Upload is central to the advisor demo, not a deferred convenience.
 
 ### Supported path
 
-- direct text remains supported;
+Implemented by T20's demo-integration slice:
+
+```text
+browser -> multipart/form-data POST /documents/preview
+        -> DisclosureApplicationService.build_document_request
+        -> T12 ingestion adapter -> NormalizedContent -> existing core
+```
+
+- direct text remains supported through `POST /disclosure/*`;
 - `.txt` / `.md` may be normalized without Docling through the same application boundary;
-- PDF/DOCX/XLSX/image-oriented content uses the normalized ingestion boundary from T12 / Issue #9 when available;
-- Next.js must not depend directly on Docling-specific output structures.
+- PDF/DOCX (and XLSX, which rides the same path) go through the normalized ingestion boundary from T12 / Issue #9; image/OCR is deliberately deferred while PDF/DOCX work;
+- Next.js must not depend directly on Docling-specific output structures — it never sees one: the API returns the same `PreviewResponse`/`ExecuteResponse` schemas the text routes return.
+
+### Upload contract
+
+`POST /documents/preview` and `POST /documents/execute` take `multipart/form-data`:
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `file` | yes | the document bytes; the filename extension is the authoritative format key |
+| `task` | yes | the reviewer's natural-language question |
+| `document_type` | yes | `contract` or `hr_record`, from `GET /documents/types` |
+| `analysis_mode` | no | one of the document type's allowlisted modes; defaults to the first |
+| `strategy` | no | defaults to `recommended` (B4 — Policy-governed) |
+| `confirmation_token` | **execute only, required** | the token the matching preview issued; see *Preview confirmation* below |
+
+`GET /documents/types` returns the vocabulary so the UI hardcodes none of it. It deliberately does **not** return the domain, policy version or requester role each type resolves to: those are the server's decision, and shipping them to the browser would invite a client to send them back as its own.
+
+There is no single route that uploads and answers in one call. Upload + preview is one request, the confirmed execute is another, and the reviewer's confirmation happens between them. The cost is that a confirmed run uploads the file twice; the alternative — retaining the uploaded document server-side between the two calls — is exactly what the no-persistence rule below forbids.
+
+### Preview confirmation
+
+Two separate requests are not, on their own, a review step. Nothing stopped a client previewing
+under `recommended`/B4 — Policy-governed with `analysis_mode=contract_summary`, showing the
+reviewer that result, and then executing the same upload under `strategy=b0` (B0 — Direct: the
+raw document) with `analysis_mode=financial_audit`. **What reached the provider need not have
+been what the reviewer approved** — which is the demo's entire guarantee.
+
+`POST /documents/preview` therefore returns a `confirmation_token` alongside the review, and
+`POST /documents/execute` requires it. On execute the server re-normalizes the re-uploaded file,
+re-resolves the governance and the treatment, computes the disclosure decision for it **once**,
+and checks the token against the state that one decision produces. Nothing is read out of the
+token and trusted.
+
+That single decision is also the one that is executed: it is handed directly to
+`pipeline.execute_disclosure_decision`, the only code that invokes a provider on a disclosure
+payload. The payload the token authenticates and the payload the provider receives are one
+object, not two objects expected to agree — an assumption that would have rested on the wired
+`Detector`/`TaskAnalyzer` happening to be deterministic, and both are replaceable injections.
+
+The token binds, as keyed digests or canonical values and never as raw text: the normalized
+document, the task, the document type, the resolved analysis mode, the resolved governance
+(domain, policy version, purpose, requester role, pseudonym scope), the strategy and treatment,
+the provider class, and the external payload itself. Binding the payload matters — a preview
+produced under one detector, treatment implementation, policy resolution or transformation stops
+authorising an execute the moment any of those changes, even when every caller-facing parameter
+still matches.
+
+| Property | How |
+| --- | --- |
+| server-authenticated | HMAC-SHA256 over a canonical, key-sorted JSON document, keyed by `ADG_PREVIEW_CONFIRMATION_SECRET`. A client-supplied file hash would prove nothing — a client that changes the strategy can recompute one. |
+| stateless | the token carries the proof; the server stores no document, no session and no token. No database, cache or file is introduced. |
+| discloses nothing | the token is the semantics version, a `{issued_at, expires_at}` claims object and the MAC. Content is bound as *keyed* digests, never public ones: a public digest of low-entropy content is dictionary-reversible. |
+| versioned | every token names `document-preview-confirmation-v1`, so a token issued under one fingerprint rule can never be reinterpreted under a later one. |
+| time-boxed | 15 minutes by default. An approval is a review window, not a standing grant. |
+| fail-closed | any divergence, tampering, expiry or unknown version is refused with one fixed message, and the provider is never called. |
+
+Known limitation: re-executing the *same* approved state inside the window is accepted.
+Preventing that needs a record of spent tokens — storage — which this design deliberately does
+not have. The guaranteed property is the one the demo needs: an execute can only ever run a
+state a reviewer approved, never a different one.
+
+`ADG_PREVIEW_CONFIRMATION_SECRET` is server-side only and never reaches the browser. A
+deployment wired to a provider outside the trust boundary refuses to start without it; with
+`FakeProvider`, per-process key material is generated instead, which still enforces confirmation
+in full. See [`provider-configuration.md`](provider-configuration.md).
+
+### B0 — Direct on the document surface
+
+B0 — Direct remains fully visible in preview and in the B0–B4 comparison: seeing what an
+unprotected disclosure would have looked like is the comparison's whole pedagogical content.
+
+It is **not executable against a provider outside the trust boundary** through
+`POST /documents/execute`. That execute fails closed before the provider call, even carrying a
+valid B0 confirmation. Against the deterministic `FakeProvider` it still runs, because nothing
+leaves the process.
+
+This is a product/demo-surface rule, not an experimental one. B0's experimental semantics are
+unchanged, it stays an unsafe control in every comparison, and the T10 experiment runner builds
+its own treatments and never passes through this surface. It is the same stance
+`compare_strategies` already takes when it refuses to execute any comparison entry, applied to
+the one route that can execute an uploaded document.
+
+### Contracts governance
+
+An uploaded contract is never analysed under the server's HR defaults. `document_type=contract` resolves server-side to `domain=contracts`, `policy_version=contracts-v1`, `requester_role=contract_analyst` and one of three allowlisted purposes:
+
+| `analysis_mode` | Effect under `contracts-v1` |
+| --- | --- |
+| `contract_summary` (default) | least disclosing: `contract_value` and `penalty_amount` keep the `(remove, generalize)` action space |
+| `financial_audit` | unlocks `preserve` on `contract_value` only |
+| `compliance_review` | unlocks `preserve` on `penalty_amount` only |
+
+The frontend cannot invent policy semantics: it sends two opaque tokens, and anything outside the allowlist is refused rather than defaulted.
+
+### Request size
+
+`ADG_MAX_UPLOAD_BYTES` (default 8 MiB) bounds every request body at the HTTP accepting boundary, before any route or body parser runs — on the declared `Content-Length` and on the streamed byte count, so a client omitting the header cannot stream an unbounded body. It sits below the ingestion boundary's own 10 MiB ceiling so an oversized upload is refused before any parsing work begins. The rejection is a fixed 413 that echoes no part of the content.
 
 ### Upload UX
 
@@ -204,6 +312,8 @@ The primary flow should not require a reviewer to select provider/model.
 - T22 real-provider mode is preferred before broadly sharing the demo URL;
 - provider credentials never reach the browser.
 
+The deployed service selects its provider from `ADG_PROVIDER` (see [`provider-configuration.md`](provider-configuration.md)). `ADG_PROVIDER=anthropic` yields `provider_class = external_llm` on both the provider and the default `GovernanceContext`, so no custom service has to be injected; `FakeProvider` remains the default and an unrecognized value fails to start rather than falling back.
+
 ## Final application direction
 
 The final application retains the same guided test flow as the main entry point.
@@ -232,15 +342,16 @@ It must not regress into a console that requires internal project knowledge for 
 
 ## Demo work sequence
 
-The parallel demo track remains:
+The demo track is priority 1 and runs in this order:
 
-1. **T20 / Issue #28 — application boundary + HTTP API**;
+1. **T20 / Issue #28 — application boundary + HTTP API** (demo-integration slice in validation);
 2. **T21 / Issue #29 — guided Next.js UI**;
 3. **T25 / Issue #42 — containerized demo/deploy infrastructure**;
-4. consume **T22 / Issue #30** real-provider mode when available;
-5. consume **T12 / Issue #9** structured ingestion for richer file formats.
+4. a hosted advisor URL;
+5. then M3 resumes at its next unresolved methodological gate.
 
-This sequence remains parallel to M3.
+**T12 / Issue #9** structured ingestion and **T22 / Issue #30** real-provider mode are complete
+and are consumed by T20 rather than sequenced after it.
 
 ## Container/deployment objective
 

@@ -71,6 +71,7 @@ from adaptive_disclosure_gateway.application.contracts import (
     DisclosureExecution,
     DisclosurePreview,
     DisclosureSummary,
+    DocumentDisclosurePreview,
     SafeGovernanceView,
     StrategyComparison,
     StrategyComparisonEntry,
@@ -303,6 +304,36 @@ class PreviewResponse(BaseModel):
             governance=SafeGovernanceViewModel.from_domain(preview.governance),
             provider_mode=ProviderModeModel(provider_class=preview.provider_mode.provider_class),
         )
+
+
+# --- POST /documents/preview -----------------------------------------------------
+
+
+class DocumentPreviewResponse(PreviewResponse):
+    """``PreviewResponse`` plus the confirmation the structured-document
+    flow requires back on execute.
+
+    A subclass rather than a new field on ``PreviewResponse`` so the
+    historical ``/disclosure/preview`` contract is untouched: that surface
+    has no confirmation step, and giving every one of its callers a
+    permanently-null ``confirmation_token`` would describe a mechanism that
+    does not apply to them.
+
+    ``confirmation_token`` is opaque to the client. It is not a session, not
+    an identifier of anything stored server-side, and carries no
+    representation of the document, the task or the payload -- see
+    ``application/preview_confirmation.py``. A client's only correct use of
+    it is to send it back unchanged, alongside the identical upload.
+    """
+
+    confirmation_token: str
+
+    @classmethod
+    def from_document_preview(
+        cls, document_preview: DocumentDisclosurePreview
+    ) -> DocumentPreviewResponse:
+        base = PreviewResponse.from_domain(document_preview.preview)
+        return cls(**base.model_dump(), confirmation_token=document_preview.confirmation_token)
 
 
 # --- POST /disclosure/execute ---------------------------------------------------

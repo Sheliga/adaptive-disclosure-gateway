@@ -194,13 +194,40 @@ class GovernanceOverrides:
 
 
 @dataclass(frozen=True)
+class DocumentRequestDescriptor:
+    """The caller-facing selection an uploaded document was analysed under.
+
+    Carried on the request so the preview-confirmation fingerprint can bind
+    what the *caller asked for* (``document_type``/``analysis_mode``) and not
+    only what the server resolved it to. The two are not interchangeable: a
+    future preset could map two document types onto one governance
+    configuration, and an approval of one must not authorise the other.
+
+    ``analysis_mode`` is always the resolved mode -- never ``None`` -- so a
+    preview that accepted the preset's default and an execute that named
+    that same mode explicitly describe one state rather than two.
+    """
+
+    document_type: str
+    analysis_mode: str
+
+
+@dataclass(frozen=True)
 class DisclosureApplicationRequest:
-    """The single input shape both ``preview`` and ``execute`` accept."""
+    """The single input shape both ``preview`` and ``execute`` accept.
+
+    ``document`` is set only by ``build_document_request`` (the structured
+    upload path) and stays ``None`` for pasted text, ``.txt``/``.md`` files
+    and prepared examples. It is what distinguishes a request that must
+    carry a preview confirmation from one on the historical ``/disclosure/*``
+    surface, which is unchanged by that mechanism.
+    """
 
     content: NormalizedContent
     task: str
     strategy: DisclosureStrategy = DisclosureStrategy.RECOMMENDED
     governance: GovernanceOverrides = field(default_factory=GovernanceOverrides)
+    document: DocumentRequestDescriptor | None = None
 
 
 class DisclosureOutcome(StrEnum):
@@ -306,6 +333,40 @@ class DisclosurePreview:
     strategy: DisclosureStrategy
     governance: SafeGovernanceView
     provider_mode: ProviderMode
+
+
+@dataclass(frozen=True)
+class DocumentDisclosurePreview:
+    """A structured-document preview plus the server-signed proof of what
+    was reviewed.
+
+    A separate type rather than an optional field on ``DisclosurePreview``:
+    the historical ``/disclosure/preview`` surface does not have (or need) a
+    confirmation, and giving it a permanently-null ``confirmation_token``
+    would change its contract for every existing caller to describe a
+    mechanism that does not apply to it. See
+    ``application/preview_confirmation.py``.
+    """
+
+    preview: DisclosurePreview
+    confirmation_token: str
+
+
+class UnsafeControlExecutionError(Exception):
+    """Raised when an unsafe-control treatment (B0 -- Direct) is asked to
+    execute an uploaded document against a provider outside the trust
+    boundary.
+
+    A product/demo-surface rule, not an experimental one. B0's experimental
+    semantics are untouched and it stays fully visible in preview and in the
+    B0-B4 comparison; what it must not do is send an advisor's untransformed
+    document across the organizational boundary. This is the same stance
+    ``compare_strategies`` already takes when it refuses to execute any
+    comparison entry.
+
+    Its message names the treatment class and the surface only -- never the
+    document, the task or the payload.
+    """
 
 
 @dataclass(frozen=True)

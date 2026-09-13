@@ -3,10 +3,12 @@
 issue #28, slice 1).
 
 ``DisclosureApplicationService`` calls the real core -- ``pipeline.decide_disclosure``
-for ``preview``, ``pipeline.run_disclosure_case`` for ``execute`` -- and
-never reimplements detection, treatment decisions, policy resolution, task
-analysis, pseudonymization, generalization, reconstruction or the
-fail-closed task check.
+for ``preview``, ``pipeline.run_disclosure_case`` for ``execute``, and
+``pipeline.decide_disclosure`` + ``pipeline.execute_disclosure_decision`` for
+the confirmed document flow -- and never reimplements detection, treatment
+decisions, policy resolution, task analysis, pseudonymization,
+generalization, reconstruction, provider invocation, audit construction or
+the fail-closed task check.
 
 Design decision -- where ``build_treatment`` lives: this service needs to
 construct a treatment object from a resolved ``Treatment``, exactly like
@@ -53,6 +55,17 @@ decision phase therefore runs exactly once per ``execute()`` call, pinned by
 ``tests/test_application_service.py::test_execute_runs_the_decision_phase_exactly_once``.
 ``preview`` calls ``decide_disclosure`` directly for the same reason in
 reverse: it must run that phase and nothing after it.
+
+``execute_document`` states the same property in its strongest form, because
+the structured-document surface's whole guarantee depends on it: it computes
+the decision **exactly once**, verifies the preview confirmation against that
+exact decision, and hands that same ``DisclosureDecision`` to
+``pipeline.execute_disclosure_decision``. The payload the token authenticates
+and the payload the provider receives are therefore one object rather than
+two objects expected to agree -- an expectation that would have rested on
+``Detector``/``TaskAnalyzer``, both replaceable injections, happening to be
+deterministic. See that method's own docstring and
+``tests/test_application_document_presets.py``'s stateful-component tests.
 
 ``build_application_request``/``describe_health``/``list_strategies`` (T20 /
 issue #28, slice 2): three small additions for the forthcoming HTTP adapter
@@ -140,11 +153,14 @@ from adaptive_disclosure_gateway.application.contracts import (
     DisclosureExecution,
     DisclosurePreview,
     DisclosureStrategy,
+    DocumentDisclosurePreview,
+    DocumentRequestDescriptor,
     GovernanceOverrides,
     ProviderMode,
     StrategyComparison,
     StrategyComparisonEntry,
     StrategyOption,
+    UnsafeControlExecutionError,
     list_strategy_options,
     resolve_treatment,
     safe_governance_view,
@@ -154,7 +170,20 @@ from adaptive_disclosure_gateway.application.examples import (
     list_examples,
     load_example,
 )
-from adaptive_disclosure_gateway.application.ingestion import normalize_text, normalize_text_file
+from adaptive_disclosure_gateway.application.ingestion import (
+    DocumentParser,
+    normalize_text,
+    normalize_text_file,
+)
+from adaptive_disclosure_gateway.application.presets import (
+    resolve_analysis_mode,
+    resolve_governance_preset,
+)
+from adaptive_disclosure_gateway.application.preview_confirmation import (
+    PreviewConfirmationError,
+    PreviewConfirmationSigner,
+    PreviewConfirmationState,
+)
 from adaptive_disclosure_gateway.application.requests import (
     ContentSourceError,
     MissingTaskError,
@@ -167,12 +196,14 @@ from adaptive_disclosure_gateway.domain import DisclosureRequest, GovernanceCont
 from adaptive_disclosure_gateway.observability import elapsed_ms_since, get_tracer
 from adaptive_disclosure_gateway.pipeline import (
     DisclosureDecision,
+    ExecutionResult,
     UnsafeControlTreatment,
     decide_disclosure,
+    execute_disclosure_decision,
     run_disclosure_case,
 )
 from adaptive_disclosure_gateway.policies import PolicyRepository
-from adaptive_disclosure_gateway.providers import FakeProvider, Provider
+from adaptive_disclosure_gateway.providers import DEFAULT_PROVIDER_NAME, FakeProvider, Provider
 from adaptive_disclosure_gateway.task_analysis import TaskAnalyzer
 from adaptive_disclosure_gateway.treatment_factory import build_treatment
 from adaptive_disclosure_gateway.vault import InMemoryVault, Vault
@@ -248,6 +279,8 @@ class DisclosureApplicationService:
         detector: Detector | None = None,
         default_context: GovernanceContext,
         examples_directory: str | Path | None = None,
+        document_parser: DocumentParser | None = None,
+        preview_confirmation_signer: PreviewConfirmationSigner | None = None,
     ) -> None:
         self._policy_repository = policy_repository
         self._provider = provider
@@ -258,6 +291,26 @@ class DisclosureApplicationService:
         self._detector = detector
         self._default_context = default_context
         self._examples_directory = examples_directory
+        # The T12 ingestion parser adapter, injectable so the boundary stays
+        # replaceable (issue #9) and so the offline test suite can exercise
+        # the whole upload path without Docling's cached model artifacts.
+        # ``None`` means "let ingestion load its default Docling adapter
+        # lazily, only if a document format actually needs it".
+        self._document_parser = document_parser
+        # Held for this service's lifetime and never exposed, exactly like
+        # the vault above. ``None`` does NOT mean "no confirmation": it
+        # means per-process key material (see
+        # ``PreviewConfirmationSigner.with_ephemeral_secret``), so a service
+        # constructed without configuration still refuses an execute that
+        # no preview authorised. There is deliberately no way to build this
+        # service with confirmation disabled -- a deployment that must have
+        # a *durable* secret is refused at construction in
+        # ``application/settings.build_default_service``, not here.
+        self._preview_confirmation_signer = (
+            preview_confirmation_signer
+            if preview_confirmation_signer is not None
+            else PreviewConfirmationSigner.with_ephemeral_secret()
+        )
 
     def _build_treatment(self, request: DisclosureApplicationRequest):
         treatment_code = resolve_treatment(request.strategy)
@@ -290,7 +343,9 @@ class DisclosureApplicationService:
             disclosure_request, context = self._build_disclosure_request(request)
 
             decision = decide_disclosure(treatment, disclosure_request, detector=self._detector)
-            summary = build_disclosure_summary(decision)
+            preview = self._preview_of(
+                request, treatment_code=treatment_code, context=context, decision=decision
+            )
 
             # Metadata only -- status, treatment code, counts, category
             # names (safe, non-sensitive -- already used the same way by
@@ -298,18 +353,38 @@ class DisclosureApplicationService:
             span.set_attribute("application.status", decision.result.status)
             span.set_attribute("application.treatment", treatment_code.value)
             span.set_attribute("application.detected_span_count", len(decision.spans))
-            span.set_attribute("application.detected_categories", list(summary.detected_categories))
+            span.set_attribute(
+                "application.detected_categories", list(preview.summary.detected_categories)
+            )
             span.set_attribute("application.duration_ms", elapsed_ms_since(started))
 
-            return DisclosurePreview(
-                summary=summary,
-                external_payload=decision.result.external_payload,
-                payload_byte_count=len(decision.result.external_payload.encode("utf-8")),
-                treatment=treatment_code,
-                strategy=request.strategy,
-                governance=safe_governance_view(context),
-                provider_mode=ProviderMode(provider_class=self._provider.provider_class),
-            )
+            return preview
+
+    def _preview_of(
+        self,
+        request: DisclosureApplicationRequest,
+        *,
+        treatment_code: Treatment,
+        context: GovernanceContext,
+        decision: DisclosureDecision,
+    ) -> DisclosurePreview:
+        """The "review before sending" view of one ``DisclosureDecision``.
+
+        Pure projection of a decision that was already made -- it runs no
+        part of the decision phase itself. That is what lets
+        ``execute_document`` build the state a confirmation authenticates
+        from the very decision it is about to execute, instead of computing
+        a second one (see that method's docstring).
+        """
+        return DisclosurePreview(
+            summary=build_disclosure_summary(decision),
+            external_payload=decision.result.external_payload,
+            payload_byte_count=len(decision.result.external_payload.encode("utf-8")),
+            treatment=treatment_code,
+            strategy=request.strategy,
+            governance=safe_governance_view(context),
+            provider_mode=ProviderMode(provider_class=self._provider.provider_class),
+        )
 
     def execute(self, request: DisclosureApplicationRequest) -> DisclosureExecution:
         """Run the request all the way through the real, unchanged
@@ -319,7 +394,23 @@ class DisclosureApplicationService:
         See the module docstring for why the summary is built from a
         standalone ``decide_disclosure`` call rather than from
         ``run_disclosure_case``'s own internal one.
+
+        A request from the structured-document surface is refused here. That
+        surface's whole guarantee is that what reaches the provider is what
+        a reviewer approved, and this method has no confirmation to check
+        against -- so the guard is structural rather than a convention the
+        HTTP layer is trusted to follow: ``execute_document`` is the only
+        way to execute an uploaded document, and a future adapter cannot
+        reach the provider with one by calling the more obvious method.
         """
+        if request.document is not None:
+            raise PreviewConfirmationError(
+                "a request from the structured-document surface is executed only through "
+                "execute_document, which verifies the confirmation issued by its preview"
+            )
+        return self._execute(request)
+
+    def _execute(self, request: DisclosureApplicationRequest) -> DisclosureExecution:
         tracer = get_tracer()
         started = time.perf_counter()
         with tracer.start_as_current_span("application.execute") as span:
@@ -329,50 +420,75 @@ class DisclosureApplicationService:
             execution_result = run_disclosure_case(
                 treatment, disclosure_request, self._provider, detector=self._detector
             )
-            # The decision this very execution made -- never a second,
-            # standalone decide_disclosure call. See the module docstring.
-            decision = DisclosureDecision(
-                spans=execution_result.spans, result=execution_result.disclosure_result
+            return self._execution_of(
+                request,
+                treatment_code=treatment_code,
+                context=context,
+                execution_result=execution_result,
+                span=span,
+                started=started,
             )
-            summary = build_disclosure_summary(decision)
 
-            provider_response = execution_result.provider_response
-            final_answer: str | None = None
-            if provider_response is not None:
-                final_answer = (
-                    execution_result.reconstructed_text
-                    if execution_result.reconstructed_text is not None
-                    else provider_response.text
-                )
+    def _execution_of(
+        self,
+        request: DisclosureApplicationRequest,
+        *,
+        treatment_code: Treatment,
+        context: GovernanceContext,
+        execution_result: ExecutionResult,
+        span,
+        started: float,
+    ) -> DisclosureExecution:
+        """The client-facing view of one ``pipeline.ExecutionResult``, plus
+        the ``application.execute`` span's metadata.
 
-            total_ms = elapsed_ms_since(started)
+        Every field is read off the ``ExecutionResult`` of the run that
+        actually contacted the provider -- summary, final answer, provider
+        record and reconstruction record all describe that one run, never a
+        parallel recomputation merely expected to have agreed with it. Both
+        execute paths (``execute`` and ``execute_document``) share this, so
+        there is one definition of what a ``DisclosureExecution`` reports.
+        """
+        # The decision the execution stage was handed -- never a second,
+        # standalone decide_disclosure call. See the module docstring.
+        decision = DisclosureDecision(
+            spans=execution_result.spans, result=execution_result.disclosure_result
+        )
+        summary = build_disclosure_summary(decision)
 
-            span.set_attribute("application.status", execution_result.disclosure_result.status)
-            span.set_attribute("application.treatment", treatment_code.value)
-            span.set_attribute("application.detected_span_count", len(decision.spans))
-            span.set_attribute("application.detected_categories", list(summary.detected_categories))
-            span.set_attribute(
-                "application.provider_called", execution_result.audit.provider.called
+        provider_response = execution_result.provider_response
+        final_answer: str | None = None
+        if provider_response is not None:
+            final_answer = (
+                execution_result.reconstructed_text
+                if execution_result.reconstructed_text is not None
+                else provider_response.text
             )
-            span.set_attribute(
-                "application.provider_failed", execution_result.audit.provider.failed
-            )
-            span.set_attribute(
-                "application.reconstruction_attempted",
-                execution_result.audit.reconstruction.attempted,
-            )
-            span.set_attribute("application.duration_ms", total_ms)
 
-            return DisclosureExecution(
-                summary=summary,
-                final_answer=final_answer,
-                provider=execution_result.audit.provider,
-                reconstruction=execution_result.audit.reconstruction,
-                treatment=treatment_code,
-                strategy=request.strategy,
-                governance=safe_governance_view(context),
-                total_ms=total_ms,
-            )
+        total_ms = elapsed_ms_since(started)
+
+        span.set_attribute("application.status", execution_result.disclosure_result.status)
+        span.set_attribute("application.treatment", treatment_code.value)
+        span.set_attribute("application.detected_span_count", len(decision.spans))
+        span.set_attribute("application.detected_categories", list(summary.detected_categories))
+        span.set_attribute("application.provider_called", execution_result.audit.provider.called)
+        span.set_attribute("application.provider_failed", execution_result.audit.provider.failed)
+        span.set_attribute(
+            "application.reconstruction_attempted",
+            execution_result.audit.reconstruction.attempted,
+        )
+        span.set_attribute("application.duration_ms", total_ms)
+
+        return DisclosureExecution(
+            summary=summary,
+            final_answer=final_answer,
+            provider=execution_result.audit.provider,
+            reconstruction=execution_result.audit.reconstruction,
+            treatment=treatment_code,
+            strategy=request.strategy,
+            governance=safe_governance_view(context),
+            total_ms=total_ms,
+        )
 
     def compare_strategies(self, request: DisclosureApplicationRequest) -> StrategyComparison:
         """Run ``request`` through every B0-B4 strategy via ``preview`` --
@@ -511,7 +627,9 @@ class DisclosureApplicationService:
                 raise ContentSourceError(
                     "the file content source requires both filename and file_bytes"
                 )
-            content = normalize_text_file(filename, file_bytes)
+            content = normalize_text_file(
+                filename, file_bytes, document_parser=self._document_parser
+            )
             if task is None:
                 raise MissingTaskError("no task supplied for a file content source")
             return DisclosureApplicationRequest(
@@ -526,3 +644,230 @@ class DisclosureApplicationService:
         return DisclosureApplicationRequest(
             content=content, task=resolved_task, strategy=strategy, governance=resolved_overrides
         )
+
+    def build_document_request(
+        self,
+        *,
+        filename: str,
+        file_bytes: bytes,
+        task: str,
+        document_type: str,
+        analysis_mode: str | None = None,
+        strategy: DisclosureStrategy = DisclosureStrategy.RECOMMENDED,
+    ) -> DisclosureApplicationRequest:
+        """Build a request for an uploaded structured document under an
+        explicit, server-validated governance preset (T20 / issue #28's
+        demo-integration slice; issue #41 gate A).
+
+        This is the only entry point an upload adapter uses. It differs from
+        ``build_application_request`` in exactly one way, and that difference
+        is the point: governance is not a set of caller-supplied strings, it
+        is resolved from ``(document_type, analysis_mode)`` by
+        ``application/presets.py``'s server-owned allowlist. There is no
+        ``governance`` parameter here on purpose -- an upload adapter must
+        not be able to pass a ``domain``/``policy_version``/``purpose`` of
+        its own choosing, and ``document_type`` is required, so an uploaded
+        contract can never fall through to the deployer's HR default
+        (issue #41's blocker 4).
+
+        Normalization is delegated unchanged to ``build_application_request``
+        -> ``ingestion.normalize_text_file`` -> the T12 parser adapter. No
+        parsing, format detection or document logic is duplicated here, and
+        the caller's declared media type is deliberately NOT accepted: the
+        filename extension is the single authoritative dispatch key at the
+        T12 boundary (``ingestion._extension``), and letting a client-declared
+        MIME type influence parser selection would hand the client a
+        dispatch decision. An extension the boundary does not support fails
+        closed there with ``IngestionError``.
+        """
+        overrides = resolve_governance_preset(document_type, analysis_mode=analysis_mode)
+        request = self.build_application_request(
+            filename=filename,
+            file_bytes=file_bytes,
+            task=task,
+            strategy=strategy,
+            governance=overrides,
+        )
+        # Records that this request came from the structured-document
+        # surface, and under which caller-facing selection. That is what
+        # makes ``preview_document``/``execute_document`` applicable to it,
+        # and what the preview-confirmation fingerprint binds.
+        return dataclasses.replace(
+            request,
+            document=DocumentRequestDescriptor(
+                document_type=document_type,
+                analysis_mode=resolve_analysis_mode(document_type, analysis_mode=analysis_mode),
+            ),
+        )
+
+    # --- the confirmed structured-document flow ------------------------------
+    #
+    # ``preview_document`` -> the reviewer reads the disclosure review ->
+    # ``execute_document`` with that preview's own token.
+    #
+    # These wrap ``preview``/``execute`` rather than reimplementing either:
+    # what they add is the binding between the two calls. See
+    # ``application/preview_confirmation.py`` for the mechanism and for the
+    # defect it closes.
+
+    def _confirmation_state(
+        self, request: DisclosureApplicationRequest, preview: DisclosurePreview
+    ) -> PreviewConfirmationState:
+        """The exact state an approval is an approval of.
+
+        Every field is read from the request being handled and from the
+        preview just computed for it -- never from a token. That is what
+        makes ``execute_document`` a re-computation rather than a decoding:
+        a client cannot assert its own state, only present a proof that the
+        server once computed the identical one.
+        """
+        document = request.document
+        if document is None:
+            # Not reachable through ``build_document_request``; a guard so a
+            # future caller cannot obtain a confirmation for a request that
+            # carries no document selection to bind.
+            raise PreviewConfirmationError(
+                "preview confirmation applies to the structured-document surface only"
+            )
+        governance = preview.governance
+        return PreviewConfirmationState(
+            normalized_document=request.content.text,
+            task=request.task,
+            document_type=document.document_type,
+            analysis_mode=document.analysis_mode,
+            domain=governance.domain,
+            policy_version=governance.policy_version,
+            purpose=governance.purpose,
+            requester_role=governance.requester_role,
+            requested_pseudonym_scope=governance.requested_pseudonym_scope.value,
+            # Both provider classes are bound: the one the governance
+            # context *declares* (which policy itself reads) and the one the
+            # wired provider actually *is*. They can legitimately differ,
+            # and a change to either changes where the payload would go.
+            governance_provider_class=governance.provider_class,
+            provider_class=preview.provider_mode.provider_class,
+            strategy=preview.strategy.value,
+            treatment=preview.treatment.value,
+            external_payload=preview.external_payload,
+        )
+
+    def preview_document(self, request: DisclosureApplicationRequest) -> DocumentDisclosurePreview:
+        """``preview``, plus the server-signed proof of what was shown.
+
+        Nothing about the review itself changes -- this still never reaches
+        the provider. The token is what lets a later ``execute_document``
+        establish that it is executing this very state and not another.
+        """
+        preview = self.preview(request)
+        return DocumentDisclosurePreview(
+            preview=preview,
+            confirmation_token=self._preview_confirmation_signer.issue(
+                self._confirmation_state(request, preview)
+            ),
+        )
+
+    def execute_document(
+        self, request: DisclosureApplicationRequest, *, confirmation_token: str
+    ) -> DisclosureExecution:
+        """Execute an uploaded document only if this exact request is the
+        preview a reviewer approved -- and execute *that* decision.
+
+        The decision phase over the document runs **exactly once** here. The
+        one ``DisclosureDecision`` it produces is projected into the approved
+        state, the confirmation is verified against that state, and the very
+        same object is then handed to
+        ``pipeline.execute_disclosure_decision``. So the payload the token
+        authenticates and the payload the provider receives are one object,
+        not two objects expected to agree.
+
+        That distinction is the whole point of this method, and it was the
+        second review finding on this slice. Verifying one decision and then
+        asking ``run_disclosure_case`` to compute another left the demo's
+        central guarantee resting on ``Detector``/``TaskAnalyzer`` happening
+        to be deterministic -- both are replaceable injections, so a
+        stateful, non-deterministic or simply buggy one would have made the
+        reviewer approve one payload while the provider received a different
+        one (pinned by
+        ``tests/test_application_document_presets.py::test_execute_document_sends_the_exact_decision_authenticated_by_the_preview_confirmation``).
+
+        Order matters. The confirmation is verified first, so the
+        unsafe-control refusal below cannot be reached by an execute that no
+        preview authorised, and so that refusal is provably a rule of its
+        own rather than the confirmation check under another name.
+
+        Span topology note: this path decides *outside* any
+        ``pipeline.run_disclosure_case`` span -- it has none, because it
+        never calls ``run_disclosure_case`` -- so ``detection.detect`` /
+        ``<treatment>.sanitize`` / ``<treatment>.reconstruct`` are children
+        of this method's ``application.execute`` span instead. The T10
+        scientific runner is untouched by that: it calls
+        ``run_disclosure_case`` directly and keeps the exact topology
+        ``experiments/stage_timing.py`` reads.
+        """
+        tracer = get_tracer()
+        started = time.perf_counter()
+        with tracer.start_as_current_span("application.execute") as span:
+            treatment_code, treatment = self._build_treatment(request)
+            disclosure_request, context = self._build_disclosure_request(request)
+
+            decision = decide_disclosure(treatment, disclosure_request, detector=self._detector)
+            approved = self._preview_of(
+                request, treatment_code=treatment_code, context=context, decision=decision
+            )
+
+            self._preview_confirmation_signer.verify(
+                confirmation_token, self._confirmation_state(request, approved)
+            )
+            self._refuse_unsafe_control_outside_the_trust_boundary(treatment)
+
+            execution_result = execute_disclosure_decision(
+                treatment, disclosure_request, self._provider, decision=decision
+            )
+            return self._execution_of(
+                request,
+                treatment_code=treatment_code,
+                context=context,
+                execution_result=execution_result,
+                span=span,
+                started=started,
+            )
+
+    def _refuse_unsafe_control_outside_the_trust_boundary(self, treatment) -> None:
+        """B0 -- Direct discloses the document unchanged. On the advisor
+        demo's document surface it may be previewed and compared, never
+        executed against a provider outside the trust boundary.
+
+        Read from the existing ``pipeline.UnsafeControlTreatment`` capability
+        marker -- exactly how ``run_disclosure_case`` and
+        ``compare_strategies`` already check it -- rather than a hardcoded
+        ``Treatment.DIRECT`` comparison, so a future treatment carrying the
+        same marker inherits the rule.
+
+        "Outside the trust boundary" is read from the provider's own
+        declared ``provider_class`` -- the same field policy itself reads,
+        and the same one ``invoke_provider`` checks against the governance
+        context -- rather than from its concrete Python class. Only the
+        deterministic in-process class (``providers.DEFAULT_PROVIDER_NAME``)
+        is exempt, because nothing leaves the process for it and the
+        confirmation flow still applies to it in full. Anything else,
+        including a class this codebase does not recognize, is refused: the
+        check fails closed on an unknown provider class rather than
+        enumerating the ones known to be external.
+
+        This changes no experimental semantics -- B0 itself is unchanged, it
+        stays available in preview and comparison, and the T10 runner builds
+        its own treatments and never goes through this service.
+
+        Takes the treatment object the caller already built, rather than
+        rebuilding one from the request: the rule must be applied to the
+        very treatment that is about to be executed.
+        """
+        if (
+            isinstance(treatment, UnsafeControlTreatment)
+            and self._provider.provider_class != DEFAULT_PROVIDER_NAME
+        ):
+            raise UnsafeControlExecutionError(
+                "the direct/unsafe-control treatment is available for preview and strategy "
+                "comparison only; it is never executed against a provider outside the trust "
+                "boundary through the document surface"
+            )

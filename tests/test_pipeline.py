@@ -21,14 +21,17 @@ from pathlib import Path
 
 import pytest
 
+from adaptive_disclosure_gateway.detection import Detector
 from adaptive_disclosure_gateway.domain import (
     DisclosureRequest,
+    DisclosureResult,
     GovernanceContext,
     Treatment,
 )
 from adaptive_disclosure_gateway.pipeline import (
     DisclosureDecision,
     decide_disclosure,
+    execute_disclosure_decision,
     run_disclosure_case,
 )
 from adaptive_disclosure_gateway.policies import PolicyRepository
@@ -621,4 +624,121 @@ def test_decide_disclosure_opens_no_span_of_its_own(recorded_spans):
         assert span.parent is None, (
             f"span {span.name!r} unexpectedly has a parent -- decide_disclosure must not "
             "open a span of its own around detect/sanitize"
+        )
+
+
+# --- T20 / issue #28, review round 2: the decision that is verified is the
+# decision that is executed --------------------------------------------------
+#
+# ``decide_disclosure`` extracted the decision phase; this pair extracts the
+# stage *after* it, so a caller that must authenticate a decision before the
+# provider is contacted (the advisor demo's confirmed document flow) executes
+# that very object instead of recomputing a second one and assuming the two
+# agree. ``Detector``/``TaskAnalyzer`` are replaceable injections: a stateful
+# or simply buggy one makes "assumed to agree" false.
+
+
+@dataclass
+class DecidesDifferentlyTheSecondTime:
+    """A detector that reports nothing the second time it is asked about the
+    same text -- so a second decision over one document discloses it raw.
+
+    Delegates to the real ``Detector`` for every other input, so the
+    pipeline's fail-closed pass over ``request.task`` still runs for real
+    and is never conflated with a decision about ``request.text``.
+    """
+
+    text: str
+    wrapped: Detector = field(default_factory=Detector)
+    text_detection_calls: int = 0
+    task_detection_calls: int = 0
+
+    def detect(self, text: str):
+        if text != self.text:
+            self.task_detection_calls += 1
+            return self.wrapped.detect(text)
+        self.text_detection_calls += 1
+        if self.text_detection_calls > 1:
+            return []
+        return self.wrapped.detect(text)
+
+
+def test_run_disclosure_case_executes_the_decision_it_computed_itself():
+    """The provider must receive the payload of the decision this very call
+    made. Pinned with a detector that decides differently on a second pass
+    over the same text: any stage after the decision that re-ran it would
+    send the raw record instead of the sanitized payload.
+    """
+    request = _request(HR_FIXTURE_NO_MEDICAL)
+    detector = DecidesDifferentlyTheSecondTime(HR_FIXTURE_NO_MEDICAL)
+    provider = RecordingProvider()
+
+    execution = run_disclosure_case(StaticSanitizer(), request, provider, detector=detector)
+
+    assert detector.text_detection_calls == 1
+    assert len(provider.received) == 1
+    assert provider.received[0].payload == execution.disclosure_result.external_payload
+    assert "123.456.789-09" not in provider.received[0].payload
+
+
+def test_execute_disclosure_decision_sends_the_prepared_decision_to_the_provider():
+    """The execution stage runs a decision it is *given*. Handed one whose
+    payload no treatment would ever produce from this request's text, the
+    provider must receive exactly that payload -- proof that nothing here
+    re-detects, re-sanitizes or otherwise derives a payload of its own.
+    """
+    request = _request(HR_FIXTURE_NO_MEDICAL)
+    prepared = DisclosureDecision(
+        spans=[],
+        result=DisclosureResult(
+            external_payload="ALREADY-DECIDED-PAYLOAD",
+            decisions=[],
+            transformations=[],
+            status="allowed",
+        ),
+    )
+    provider = RecordingProvider()
+
+    execution = execute_disclosure_decision(StaticSanitizer(), request, provider, decision=prepared)
+
+    assert [received.payload for received in provider.received] == ["ALREADY-DECIDED-PAYLOAD"]
+    assert execution.disclosure_result is prepared.result
+    assert execution.spans is prepared.spans
+    assert execution.audit.detection.span_count == 0
+
+
+def test_execute_disclosure_decision_never_reaches_a_provider_for_a_blocked_decision():
+    request = _request(HR_FIXTURE_WITH_MEDICAL)
+    provider = RecordingProvider()
+    decision = decide_disclosure(StaticSanitizer(), request)
+
+    execution = execute_disclosure_decision(StaticSanitizer(), request, provider, decision=decision)
+
+    assert decision.result.status == "blocked"
+    assert provider.received == []
+    assert execution.provider_response is None
+    assert execution.audit.provider.called is False
+
+
+def test_execute_disclosure_decision_opens_no_span_of_its_own(recorded_spans):
+    """The same CRITICAL constraint ``decide_disclosure`` carries, for the
+    other half: ``experiments/stage_timing.py`` reads ``<treatment>.reconstruct``
+    as a *direct child* of ``pipeline.run_disclosure_case``. A span opened
+    here would re-parent it and silently break the runner's stage timings.
+    """
+    request = _request(HR_FIXTURE_NO_MEDICAL)
+    treatment = _b2()
+    decision = decide_disclosure(treatment, request)
+    recorded_spans.clear()
+
+    execute_disclosure_decision(treatment, request, EchoingRecordingProvider(), decision=decision)
+
+    finished = recorded_spans.get_finished_spans()
+    names = {span.name for span in finished}
+    assert "reversible_pseudonymization.reconstruct" in names
+    assert "pipeline.run_disclosure_case" not in names
+    for span in finished:
+        assert span.parent is None, (
+            f"span {span.name!r} unexpectedly has a parent -- execute_disclosure_decision "
+            "must not open a span of its own around the execution stage"
         )

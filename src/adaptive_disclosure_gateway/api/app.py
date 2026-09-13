@@ -12,17 +12,33 @@ reasoning, no summary building, no payload manipulation. See
 ``application/`` or the core imports ``fastapi``/``starlette`` -- the
 dependency arrow points one way only, ``api`` -> ``application`` -> core.
 
+Two input surfaces, one application boundary:
+
+- ``POST /disclosure/{preview,execute,compare}`` take JSON. ``file_content``
+  on ``DisclosureRequestBody`` is the file's *text* content, already decoded
+  client-side by the UI; it exercises the ``.txt``/``.md`` normalization path
+  and cannot carry a PDF or DOCX.
+- ``POST /documents/{preview,execute}`` take ``multipart/form-data`` and are
+  the real structured-upload path (issue #41 gate A): the binary reaches the
+  T12 ingestion boundary intact, and governance is selected by a
+  server-validated preset rather than by caller-supplied policy strings.
+  ``/documents/execute`` additionally requires the confirmation token its
+  preview issued -- the two calls are bound to each other rather than merely
+  adjacent. See their own comment block below and
+  ``application/preview_confirmation.py``.
+
+Both map onto the same ``DisclosureApplicationService`` and return the same
+response schemas; they differ in how the content and the governance arrive,
+and in nothing else.
+
 Deliberate follow-ups NOT in this slice:
 
-- multipart/binary file upload. ``file_content`` on
-  ``DisclosureRequestBody`` is the file's *text* content, already decoded
-  client-side by the UI -- this route encodes it back to UTF-8 bytes and
-  hands it to ``build_application_request`` purely so the real
-  ``.txt``/``.md`` normalization/validation path in ``application/ingestion.py``
-  is genuinely exercised, not to support a general file-upload contract.
-  A real multipart endpoint is future work, most naturally once T12/Docling
-  (issue #9) adds non-text formats.
 - API authentication/authorization and rate limiting.
+- image/OCR ingestion (issue #41 defers it explicitly while PDF/DOCX work).
+
+Request-body size is bounded by ``api/limits.RequestBodySizeLimitMiddleware``
+before any route or body parser runs -- see that module for why
+``application/ingestion.py``'s own ``MAX_INPUT_BYTES`` cannot cover this.
 
 No-leak boundary (CLAUDE.md) -- three things below exist specifically for
 this:
@@ -49,20 +65,30 @@ this:
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Annotated
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from adaptive_disclosure_gateway.api import schemas
 from adaptive_disclosure_gateway.api import settings as api_settings
+from adaptive_disclosure_gateway.api.limits import RequestBodySizeLimitMiddleware
 from adaptive_disclosure_gateway.application.contracts import (
     DisclosureApplicationRequest,
     DisclosureStrategy,
+    UnsafeControlExecutionError,
 )
 from adaptive_disclosure_gateway.application.examples import ExampleNotFoundError
 from adaptive_disclosure_gateway.application.ingestion import IngestionError
+from adaptive_disclosure_gateway.application.presets import (
+    DocumentAnalysisPresetError,
+    list_document_presets,
+)
+from adaptive_disclosure_gateway.application.preview_confirmation import (
+    PreviewConfirmationError,
+)
 from adaptive_disclosure_gateway.application.requests import ContentSourceError, MissingTaskError
 from adaptive_disclosure_gateway.application.service import DisclosureApplicationService
 
@@ -109,10 +135,44 @@ def _error_response(exc: Exception, *, status_code: int) -> JSONResponse:
     return JSONResponse(status_code=status_code, content=body.model_dump())
 
 
+def _document_application_request(
+    service: DisclosureApplicationService,
+    *,
+    upload: UploadFile,
+    task: str,
+    document_type: str,
+    analysis_mode: str | None,
+    strategy: DisclosureStrategy | None,
+) -> DisclosureApplicationRequest:
+    """Map one multipart upload onto the application contract.
+
+    Reads the bytes and the client-supplied filename and hands both to
+    ``service.build_document_request``; decides nothing. In particular it
+    does NOT forward ``upload.content_type``: the filename extension is the
+    single authoritative dispatch key at the T12 boundary, and a
+    client-declared MIME type must not be able to select a parser (see
+    ``service.build_document_request``'s docstring).
+
+    The bytes are read into memory and never written to disk -- the upload
+    is ephemeral by default (issue #28/#41), and the only bound on how much
+    can arrive here is ``RequestBodySizeLimitMiddleware``, which has already
+    run by this point.
+    """
+    return service.build_document_request(
+        filename=upload.filename or "",
+        file_bytes=upload.file.read(),
+        task=task,
+        document_type=document_type,
+        analysis_mode=analysis_mode,
+        strategy=strategy or DisclosureStrategy.RECOMMENDED,
+    )
+
+
 def create_app(
     service: DisclosureApplicationService | None = None,
     *,
     allowed_origins: Sequence[str] = (),
+    max_upload_bytes: int | None = None,
 ) -> FastAPI:
     """Build the FastAPI app.
 
@@ -134,6 +194,22 @@ def create_app(
     resolved_origins = tuple(allowed_origins)
     if not resolved_origins and service is None:
         resolved_origins = api_settings.allowed_origins()
+
+    resolved_max_upload_bytes = max_upload_bytes
+    if resolved_max_upload_bytes is None:
+        resolved_max_upload_bytes = (
+            api_settings.max_upload_bytes()
+            if service is None
+            else api_settings.DEFAULT_MAX_UPLOAD_BYTES
+        )
+
+    # Added BEFORE the CORS middleware on purpose. Starlette applies the
+    # most recently added middleware outermost, so this ordering puts CORS
+    # outside the size limit -- which means the 413 a browser gets still
+    # carries the CORS headers it needs to read the status at all. The size
+    # limit still runs before the router and therefore before any body is
+    # parsed.
+    app.add_middleware(RequestBodySizeLimitMiddleware, max_bytes=resolved_max_upload_bytes)
 
     app.add_middleware(
         CORSMiddleware,
@@ -164,12 +240,26 @@ def create_app(
     @app.exception_handler(IngestionError)
     @app.exception_handler(ContentSourceError)
     @app.exception_handler(MissingTaskError)
+    @app.exception_handler(DocumentAnalysisPresetError)
+    @app.exception_handler(PreviewConfirmationError)
+    @app.exception_handler(UnsafeControlExecutionError)
     async def _handle_bad_request(_request: Request, exc: Exception) -> JSONResponse:
         # Registered once, for every route, rather than repeated as a
         # per-route try/except: this is the single place a caller-input
         # error becomes an HTTP body, so the no-leak guarantee about which
         # exception messages may be surfaced (module docstring, point 2)
         # is enforced in exactly one place instead of once per endpoint.
+        # ``DocumentAnalysisPresetError`` joins this set for the same
+        # reason: its message names only the server's own supported document
+        # types/analysis modes, never the token the caller sent.
+        # ``PreviewConfirmationError`` carries one fixed constant message
+        # for every failure mode -- never the confirmation token, the
+        # recomputed state, the document, the task or the payload -- and
+        # ``UnsafeControlExecutionError`` names only the treatment class and
+        # the surface. Both are 400 rather than 200-with-an-outcome because
+        # nothing was executed at all: unlike a blocked disclosure or a
+        # failed provider call, these are refusals to run the request, not
+        # results of running it.
         return _error_response(exc, status_code=400)
 
     @app.exception_handler(ExampleNotFoundError)
@@ -243,6 +333,125 @@ def create_app(
         # (summary.status / provider.failed+failure_kind). This route
         # returns 200 either way.
         execution = service.execute(application_request)
+        content = schemas.ExecuteResponse.from_domain(execution).model_dump()
+        return JSONResponse(status_code=200, content=content)
+
+    # --- structured document upload ------------------------------------------
+    #
+    # The binary entry point for the advisor contract demo (issue #41 gate
+    # A). Three routes, matching the existing /disclosure ones exactly in
+    # shape and response schema:
+    #
+    #   multipart HTTP -> service.build_document_request -> T12 ingestion
+    #     -> NormalizedContent -> the same preview/execute the JSON routes use
+    #
+    # Nothing about preview/execute/comparison/governance is reimplemented
+    # here; these routes differ from /disclosure/* in their *input* only.
+    # ``document_type`` is a required form field, so an uploaded contract can
+    # never fall through to the deployer's default (HR) governance.
+    #
+    # There is deliberately no single "upload and answer" route. Upload +
+    # preview is one request, the confirmed execute is another, and the
+    # reviewer's confirmation happens between them -- that separation is the
+    # product, not an implementation detail. The cost is that the file is
+    # uploaded twice for a confirmed run; the alternative is server-side
+    # retention of the uploaded document between the two calls, which is
+    # exactly what "no persistent storage of uploaded source documents by
+    # default" forbids.
+    #
+    # Two separate requests are not by themselves a review step, though.
+    # Until the preview confirmation existed, a client could preview under
+    # `recommended`/B4 and execute the same upload under `strategy=b0`: the
+    # separation was there and the guarantee was not. `/documents/preview`
+    # therefore issues a server-signed token over what it showed, and
+    # `/documents/execute` requires it and re-computes that state from its
+    # own request before the provider is reachable. The binding lives in the
+    # application layer (`application/preview_confirmation.py` and
+    # `DisclosureApplicationService.{preview,execute}_document`); these
+    # routes only carry the token, exactly as this adapter carries
+    # everything else.
+
+    @app.get("/documents/types", response_model=None)
+    def list_document_types(_request: Request) -> dict[str, object]:
+        """The caller-facing upload vocabulary, so a UI never hardcodes it.
+
+        Pure data from ``application/presets.py``; exposes no policy
+        version, domain or role -- see ``schemas.DocumentTypeModel``.
+        """
+        return schemas.DocumentTypesResponse.from_domain(list_document_presets()).model_dump()
+
+    @app.post("/documents/preview", response_model=None)
+    def preview_document(
+        request: Request,
+        file: Annotated[UploadFile, File()],
+        task: Annotated[str, Form()],
+        document_type: Annotated[str, Form()],
+        analysis_mode: Annotated[str | None, Form()] = None,
+        strategy: Annotated[DisclosureStrategy | None, Form()] = None,
+    ) -> JSONResponse:
+        """The review half of preview -> confirm -> execute.
+
+        Returns the same review the JSON routes return, plus the
+        ``confirmation_token`` the matching ``/documents/execute`` requires.
+        The token is what makes the two stateless calls one flow -- see
+        ``application/preview_confirmation.py``.
+        """
+        service = _get_service(request)
+        application_request = _document_application_request(
+            service,
+            upload=file,
+            task=task,
+            document_type=document_type,
+            analysis_mode=analysis_mode,
+            strategy=strategy,
+        )
+
+        document_preview = service.preview_document(application_request)
+        content = schemas.DocumentPreviewResponse.from_document_preview(
+            document_preview
+        ).model_dump()
+        return JSONResponse(status_code=200, content=content)
+
+    @app.post("/documents/execute", response_model=None)
+    def execute_document(
+        request: Request,
+        file: Annotated[UploadFile, File()],
+        task: Annotated[str, Form()],
+        document_type: Annotated[str, Form()],
+        confirmation_token: Annotated[str, Form()],
+        analysis_mode: Annotated[str | None, Form()] = None,
+        strategy: Annotated[DisclosureStrategy | None, Form()] = None,
+    ) -> JSONResponse:
+        """The confirmed half of preview -> confirm -> execute.
+
+        ``confirmation_token`` is REQUIRED, and is the whole reason this
+        route is not simply "preview, but also call the provider". The
+        service re-normalizes the re-uploaded file, re-resolves the
+        governance and the treatment, recomputes the state that would be
+        disclosed, and only then checks the token against it. Any divergence
+        from the approved review -- a different document, task, analysis
+        mode, strategy, resolved policy or provider class -- is refused
+        before the provider is contacted.
+
+        Like ``POST /disclosure/execute``, a blocked request or a failed
+        provider call is a legitimate outcome recorded on the result, not an
+        HTTP error: this returns 200 in those cases. A failed confirmation
+        is different in kind -- nothing was executed at all -- and is a 400
+        through ``PreviewConfirmationError``.
+        """
+        service = _get_service(request)
+        application_request = _document_application_request(
+            service,
+            upload=file,
+            task=task,
+            document_type=document_type,
+            analysis_mode=analysis_mode,
+            strategy=strategy,
+        )
+
+        execution = service.execute_document(
+            application_request, confirmation_token=confirmation_token
+        )
         content = schemas.ExecuteResponse.from_domain(execution).model_dump()
         return JSONResponse(status_code=200, content=content)
 

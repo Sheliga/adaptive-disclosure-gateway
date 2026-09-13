@@ -255,6 +255,135 @@ def decide_disclosure(
     return DisclosureDecision(spans=spans, result=result)
 
 
+def execute_disclosure_decision(
+    treatment: DisclosureTreatment,
+    request: DisclosureRequest,
+    provider: Provider,
+    *,
+    decision: DisclosureDecision,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    capture_raw_values_for_controlled_experiment: bool = False,
+) -> ExecutionResult:
+    """Execute an **already-computed** ``decision``: everything that happens
+    after the decision phase and nothing that belongs to it.
+
+    This is the only place in the codebase that invokes a provider on a
+    disclosure payload, checks the provider class against the governance
+    context, handles a provider error, reconstructs a response, or builds
+    the ``AuditRecord``/``ExecutionResult`` for a case. ``run_disclosure_case``
+    below is ``decide_disclosure`` followed by this function, so the
+    historical flow still decides once and executes exactly that decision.
+
+    Extracted (T20 / issue #28, review round 2) for the caller that must
+    *authenticate* a decision before the provider is contacted -- the
+    advisor demo's confirmed document flow. Before this split, that caller
+    could only verify one decision and then ask ``run_disclosure_case`` to
+    compute a second one; the payload it authenticated and the payload it
+    transmitted were then two objects expected to agree rather than one
+    object. ``Detector`` and ``TaskAnalyzer`` are replaceable injections, so
+    that expectation was a property of whichever components happened to be
+    wired in, never of the architecture. Handing the decision itself across
+    the boundary makes "what was approved is what is sent" structurally
+    true. Pinned by
+    ``tests/test_pipeline.py::test_execute_disclosure_decision_sends_the_prepared_decision_to_the_provider``.
+
+    Nothing here re-derives any part of ``decision``: the payload sent is
+    ``decision.result.external_payload``, reconstruction reads
+    ``decision.result`` (so B2's pseudonym mapping is the one actually
+    transmitted), and the audit is built from ``decision.spans`` /
+    ``decision.result``. There is deliberately no ``detector`` parameter --
+    a detector is an input to the decision phase, and this function has no
+    decision phase to feed.
+
+    ``expected_provider_class`` for ``invoke_provider`` comes from
+    ``request.context.provider_class`` -- the value policy already
+    evaluates against (see ``providers.invoke_provider``'s docstring) --
+    never from the treatment or the provider itself. ``request`` is read for
+    that context and for ``request.task``; see the module docstring for the
+    pseudonym-scope identifier contract, which this function honours by
+    passing ``request.context`` through unchanged and inventing nothing.
+
+    CRITICAL, exactly as for :func:`decide_disclosure`: this function must
+    never open an OpenTelemetry span of its own. ``experiments/stage_timing.py``
+    reads ``<treatment>.reconstruct`` as a *direct child* of the
+    ``pipeline.run_disclosure_case`` span; a span opened here would re-parent
+    it and silently break the runner's stage timings. The four
+    ``pipeline.*`` span attributes therefore stay with
+    ``run_disclosure_case``, which owns that span -- see
+    ``tests/test_pipeline.py::test_execute_disclosure_decision_opens_no_span_of_its_own``.
+    """
+    spans = decision.spans
+    result = decision.result
+
+    provider_response: ProviderResponse | None = None
+    reconstructed_text: str | None = None
+    provider_class_used: str | None = None
+    provider_attempted = False
+    provider_failure_kind: str | None = None
+
+    if result.status == "allowed":
+        provider_request = ProviderRequest(payload=result.external_payload, task=request.task)
+        provider_class_used = provider.provider_class
+        try:
+            provider_response = invoke_provider(
+                provider,
+                provider_request,
+                expected_provider_class=request.context.provider_class,
+                timeout=timeout,
+            )
+        except ProviderError as exc:
+            # Fail closed, observably: a provider error or timeout must
+            # not crash this call with no audit record at all. Record
+            # that the provider failed, by failure *kind* only (the
+            # exception's class name) -- never its message, which a
+            # third-party provider client could have populated with
+            # request content (invoke_provider's own docstring already
+            # breaks that chain with `from None`; this call site must
+            # not resurface it either). No fallback to B0 -- Direct:
+            # provider_response/reconstructed_text simply stay
+            # None/unset.
+            #
+            # Whether the audit should say the provider was "called" is
+            # read from the exception itself (``provider_invoked``) --
+            # the one fact only ``invoke_provider`` knows for certain,
+            # since it is the only code that knows whether
+            # ``provider.generate`` was actually submitted before this
+            # failure happened. This deliberately does not special-case
+            # ``ProviderClassMismatchError`` by isinstance: any future
+            # pre-flight check invoke_provider grows before the
+            # ``generate`` call carries the same attribute automatically,
+            # without this call site needing to change.
+            provider_attempted = exc.provider_invoked
+            provider_failure_kind = type(exc).__name__
+        else:
+            provider_attempted = True
+            if isinstance(treatment, ReconstructingTreatment):
+                reconstructed_text = treatment.reconstruct(
+                    provider_response.text, result, request.context
+                )
+
+    audit = build_audit_record(
+        request=request,
+        spans=spans,
+        result=result,
+        treatment=treatment.treatment,
+        provider_response=provider_response,
+        provider_class=provider_class_used,
+        reconstructed_text=reconstructed_text,
+        provider_attempted=provider_attempted,
+        provider_failure_kind=provider_failure_kind,
+        capture_raw_values_for_controlled_experiment=(capture_raw_values_for_controlled_experiment),
+    )
+
+    return ExecutionResult(
+        disclosure_result=result,
+        spans=spans,
+        provider_response=provider_response,
+        reconstructed_text=reconstructed_text,
+        audit=audit,
+    )
+
+
 def run_disclosure_case(
     treatment: DisclosureTreatment,
     request: DisclosureRequest,
@@ -268,16 +397,24 @@ def run_disclosure_case(
     through ``provider`` via ``invoke_provider`` -- and, if ``treatment``
     supports it, through local reconstruction of the provider's response.
 
+    Composed of the two halves above and nothing else:
+    :func:`decide_disclosure` produces one ``DisclosureDecision``, and
+    :func:`execute_disclosure_decision` executes *that* object. The decision
+    this call executes is therefore, structurally, the decision this call
+    made -- pinned by
+    ``tests/test_pipeline.py::test_run_disclosure_case_executes_the_decision_it_computed_itself``.
+
+    Both halves are called from inside this function's own
+    ``pipeline.run_disclosure_case`` span and neither opens one of its own,
+    which is what keeps ``detection.detect``, ``<treatment>.sanitize`` and
+    ``<treatment>.reconstruct`` direct children of it -- the span topology
+    ``experiments/stage_timing.py`` reads.
+
     Every treatment receives the same detected spans (via the same
     ``Detector``), regardless of whether it reads them: B0 discards them,
     B1/B2 consume them. This mirrors the pre-existing shared
     ``sanitize(request, spans)`` contract exactly, so plugging in B3/B4
     later requires no change here.
-
-    ``expected_provider_class`` for ``invoke_provider`` comes from
-    ``request.context.provider_class`` -- the value policy already
-    evaluates against (see ``providers.invoke_provider``'s docstring) --
-    never from the treatment or the provider itself.
 
     See the module docstring for the pseudonym-scope identifier contract:
     this function passes ``request.context`` through unchanged and invents
@@ -289,83 +426,27 @@ def run_disclosure_case(
         otel_span.set_attribute("treatment", treatment.treatment.value)
 
         decision = decide_disclosure(treatment, request, detector=detector)
-        spans = decision.spans
-        result = decision.result
-
-        provider_response: ProviderResponse | None = None
-        reconstructed_text: str | None = None
-        provider_class_used: str | None = None
-        provider_attempted = False
-        provider_failure_kind: str | None = None
-
-        if result.status == "allowed":
-            provider_request = ProviderRequest(payload=result.external_payload, task=request.task)
-            provider_class_used = provider.provider_class
-            try:
-                provider_response = invoke_provider(
-                    provider,
-                    provider_request,
-                    expected_provider_class=request.context.provider_class,
-                    timeout=timeout,
-                )
-            except ProviderError as exc:
-                # Fail closed, observably: a provider error or timeout must
-                # not crash this call with no audit record at all. Record
-                # that the provider failed, by failure *kind* only (the
-                # exception's class name) -- never its message, which a
-                # third-party provider client could have populated with
-                # request content (invoke_provider's own docstring already
-                # breaks that chain with `from None`; this call site must
-                # not resurface it either). No fallback to B0 -- Direct:
-                # provider_response/reconstructed_text simply stay
-                # None/unset.
-                #
-                # Whether the audit should say the provider was "called" is
-                # read from the exception itself (``provider_invoked``) --
-                # the one fact only ``invoke_provider`` knows for certain,
-                # since it is the only code that knows whether
-                # ``provider.generate`` was actually submitted before this
-                # failure happened. This deliberately does not special-case
-                # ``ProviderClassMismatchError`` by isinstance: any future
-                # pre-flight check invoke_provider grows before the
-                # ``generate`` call carries the same attribute automatically,
-                # without this call site needing to change.
-                provider_attempted = exc.provider_invoked
-                provider_failure_kind = type(exc).__name__
-            else:
-                provider_attempted = True
-                if isinstance(treatment, ReconstructingTreatment):
-                    reconstructed_text = treatment.reconstruct(
-                        provider_response.text, result, request.context
-                    )
-
-        # Metadata only -- never the payload, the raw text, or any
-        # reconstructed content.
-        otel_span.set_attribute("pipeline.status", result.status)
-        otel_span.set_attribute("pipeline.provider_called", provider_attempted)
-        otel_span.set_attribute("pipeline.provider_failed", provider_failure_kind is not None)
-        otel_span.set_attribute("pipeline.reconstruction_attempted", reconstructed_text is not None)
-        otel_span.set_attribute("pipeline.duration_ms", elapsed_ms_since(started))
-
-        audit = build_audit_record(
-            request=request,
-            spans=spans,
-            result=result,
-            treatment=treatment.treatment,
-            provider_response=provider_response,
-            provider_class=provider_class_used,
-            reconstructed_text=reconstructed_text,
-            provider_attempted=provider_attempted,
-            provider_failure_kind=provider_failure_kind,
+        execution = execute_disclosure_decision(
+            treatment,
+            request,
+            provider,
+            decision=decision,
+            timeout=timeout,
             capture_raw_values_for_controlled_experiment=(
                 capture_raw_values_for_controlled_experiment
             ),
         )
 
-        return ExecutionResult(
-            disclosure_result=result,
-            spans=spans,
-            provider_response=provider_response,
-            reconstructed_text=reconstructed_text,
-            audit=audit,
+        # Metadata only -- never the payload, the raw text, or any
+        # reconstructed content. Read off the ExecutionResult just produced
+        # (its audit record is the canonical account of what the provider
+        # stage did) rather than recomputed here.
+        otel_span.set_attribute("pipeline.status", execution.disclosure_result.status)
+        otel_span.set_attribute("pipeline.provider_called", execution.audit.provider.called)
+        otel_span.set_attribute("pipeline.provider_failed", execution.audit.provider.failed)
+        otel_span.set_attribute(
+            "pipeline.reconstruction_attempted", execution.reconstructed_text is not None
         )
+        otel_span.set_attribute("pipeline.duration_ms", elapsed_ms_since(started))
+
+        return execution

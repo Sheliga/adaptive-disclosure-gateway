@@ -414,7 +414,7 @@ browser -> Next.js -> HTTP API -> Python application/core -> B0–B4 -> provider
 
 ### T20 / Issue #28 — application boundary + CLI/HTTP/MCP
 
-Status: **first vertical slice in review (PR open) / non-blocking for M3**.
+Status: **T20 demo integration: in validation** (PR open against `develop`). The earlier vertical slices (application boundary, HTTP API, CLI, comparison surface) are merged; the demo-integration slice described under *Demo-integration slice* below is the one under review.
 
 For the advisor demo, HTTP API is the first required adapter. CLI and MCP should share the same application service but do not need to block the first hosted URL.
 
@@ -448,13 +448,35 @@ This is an **explanatory surface, not an evaluation surface**: it never touches 
 | CLI | delivered |
 | MCP | pending |
 
+#### Demo-integration slice — in validation
+
+The gate Issue #41 calls *Gate A*: connect capabilities that already existed into one contract-analysis flow.
+
+```text
+multipart HTTP upload -> T12 normalized ingestion -> NormalizedContent
+  -> Contracts governance preset (domain=contracts, policy_version=contracts-v1)
+  -> B4 — Policy-governed preview -> server-signed confirmation
+  -> confirmed execute (re-uploaded, re-verified) -> configured provider
+  -> local reconstruction
+```
+
+- `POST /documents/preview` and `POST /documents/execute` — `multipart/form-data` routes taking `file`, `task`, `document_type`, optional `analysis_mode` and optional `strategy`. PDF/DOCX/TXT/MD (and XLSX, which rides the same T12 path) reach the ingestion boundary as bytes; the response schemas are the existing `PreviewResponse`/`ExecuteResponse`, unchanged. `GET /documents/types` exposes the caller-facing vocabulary so a UI never hardcodes it.
+- `application/presets.py` — the server-owned allowlist that turns `(document_type, analysis_mode)` into a `GovernanceOverrides`. `document_type` is required on every upload, so an uploaded contract can never fall through to the deployer's HR default; an unregistered document type or an unlisted analysis mode is refused. A preset never sets `provider_class` or any lifecycle identifier.
+- `DisclosureApplicationService.build_document_request` — the one entry point an upload adapter uses; it has no `governance` parameter, so an adapter cannot supply a domain/policy version/purpose of its own. The service also takes an injectable `document_parser`, keeping the T12 adapter replaceable and the test suite offline.
+- `api/limits.py` — a pure ASGI request-body ceiling (`ADG_MAX_UPLOAD_BYTES`, default 8 MiB) enforced before any route or body parser runs, on both the declared `Content-Length` and the streamed byte count. It is deliberately below `ingestion.MAX_INPUT_BYTES` (10 MiB) so the HTTP boundary is the binding one for an upload.
+- `application/settings.build_default_service` — now builds the provider through `providers.build_provider_from_env`, and derives the default `GovernanceContext.provider_class` from that provider. `ADG_PROVIDER=anthropic` therefore works in a deployment without hand-injecting a custom service, with `provider_class = external_llm`; `FakeProvider` stays the default and an unrecognized value fails closed.
+- `application/preview_confirmation.py` — the server-signed proof binding one execute to the preview a reviewer approved. Added during review of this slice, which found that `/documents/preview` and `/documents/execute` were two unrelated requests: a client could preview under `recommended`/B4 and execute the same upload under `strategy=b0`, so what reached the provider need not have been what was reviewed. `/documents/execute` now requires the token the matching preview issued, re-computes the approved state from the re-uploaded request, and refuses any divergence before the provider call. HMAC-SHA256 (standard library), stateless — no database, cache, session or stored document — keyed by `ADG_PREVIEW_CONFIRMATION_SECRET`, which a deployment wired to an external provider must configure or it refuses to start. Bound: normalized document, task, document type, resolved analysis mode, resolved governance, strategy/treatment, provider class and the external payload; content is bound as *keyed* digests, so the token itself discloses nothing.
+- B0 — Direct is not executable against a provider outside the trust boundary through `/documents/execute`, and fails closed before the provider call. A product/demo-surface rule only: B0's experimental semantics, its role as the unsafe control, and its visibility in preview and comparison are unchanged, and the T10 runner never passes through this surface.
+
+Uploads stay ephemeral: bytes are read into memory, handed to ingestion and never written to disk.
+
 #### Deliberately still out
 
-MCP adapter, multipart/binary upload, execute-based/utility-aware B0–B4 comparison, real-provider mode (T22 / Issue #30), authentication and rate limiting.
+MCP adapter, execute-based/utility-aware B0–B4 comparison, image/OCR ingestion, authentication and rate limiting, generic provider/model selection.
 
 #### Scientific state unchanged
 
-This slice adds no treatment, policy, corpus, oracle or metric semantics. B0–B4, the frozen HR corpus, `hr-v1`/`hr-v2`/`hr-v3`, the M2 artifacts and every experimental metric are untouched; the application layer never reaches the oracle, and the T10 scoring modules are not imported by it.
+This slice adds no treatment, policy, corpus, oracle or metric semantics. B0–B4, the frozen HR corpus, `hr-v1`/`hr-v2`/`hr-v3`, `contracts-v1`, the M2 artifacts and every experimental metric are untouched; the application layer never reaches the oracle, and the T10 scoring modules are not imported by it. The demo-integration slice added no policy rule, no detector rule and no corpus material — its Contracts fixtures are the existing synthetic development fixtures under `tests/`, and nothing under `corpus/` was read or modified.
 
 ### T21 / Issue #29 — Next.js advisor-facing UI
 
