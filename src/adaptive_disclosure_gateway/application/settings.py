@@ -36,6 +36,13 @@ from adaptive_disclosure_gateway.application.preview_confirmation import (
     PreviewConfirmationConfigurationError,
     PreviewConfirmationSigner,
 )
+from adaptive_disclosure_gateway.application.restore_handle import (
+    DEFAULT_TTL_SECONDS as RESTORE_HANDLE_DEFAULT_TTL_SECONDS,
+)
+from adaptive_disclosure_gateway.application.restore_handle import (
+    RestoreHandleConfigurationError,
+    RestoreHandleSealer,
+)
 from adaptive_disclosure_gateway.application.service import DisclosureApplicationService
 from adaptive_disclosure_gateway.domain import GovernanceContext
 from adaptive_disclosure_gateway.policies import PolicyRepository
@@ -111,6 +118,57 @@ def build_preview_confirmation_signer(*, provider) -> PreviewConfirmationSigner:
     )
 
 
+RESTORE_HANDLE_SECRET_ENV_VAR = "ADG_RESTORE_HANDLE_SECRET"
+"""Names the variable only -- see ``PREVIEW_CONFIRMATION_SECRET_ENV_VAR``
+above for why the value is read once and handed straight to the sealer."""
+
+RESTORE_HANDLE_TTL_ENV_VAR = "ADG_RESTORE_HANDLE_TTL_SECONDS"
+
+
+def _restore_handle_ttl_seconds() -> int:
+    """``ADG_RESTORE_HANDLE_TTL_SECONDS``, or the sealer's own default.
+
+    Only parses the *format* (an integer); the actual bounds check ([1,
+    MAX_TTL_SECONDS]) lives on ``RestoreHandleSealer`` itself, which is the
+    single place that must reject an out-of-range value -- this function
+    must not duplicate that check and risk disagreeing with it. An
+    unparseable value fails closed (T26 / issue #67, D3): unlike
+    ``api.settings.max_upload_bytes``, it does NOT fall back to the
+    default -- a malformed TTL is a deployment mistake, not a soft
+    preference, and CLAUDE.md's "fail closed -- do not silently fall back"
+    applies to it explicitly.
+    """
+    raw = os.getenv(RESTORE_HANDLE_TTL_ENV_VAR)
+    if raw is None or not raw.strip():
+        return RESTORE_HANDLE_DEFAULT_TTL_SECONDS
+    try:
+        return int(raw.strip())
+    except ValueError:
+        raise RestoreHandleConfigurationError(
+            f"{RESTORE_HANDLE_TTL_ENV_VAR} must be a positive integer number of seconds"
+        ) from None
+
+
+def build_restore_handle_sealer() -> RestoreHandleSealer:
+    """The sealer the default demo service issues/opens restore handles
+    with.
+
+    Unlike ``build_preview_confirmation_signer``, there is no ephemeral-key
+    branch and no refusal-to-start branch: an unset
+    ``ADG_RESTORE_HANDLE_SECRET`` is a deliberate, supported "export/restore
+    disabled" state (T26 / issue #67, D2) -- the sealer still constructs, so
+    the service (and every OTHER route) still builds normally, and only
+    ``export``/``restore`` themselves fail closed
+    (``RestoreUnavailableError``) the moment they are actually called. A
+    malformed TTL, in contrast, DOES raise here (via
+    ``RestoreHandleSealer.__init__``), because that is a value someone
+    actually configured and got wrong, not an intentionally absent one.
+    """
+    raw_secret = os.getenv(RESTORE_HANDLE_SECRET_ENV_VAR)
+    secret = raw_secret.strip() if raw_secret is not None and raw_secret.strip() else None
+    return RestoreHandleSealer(secret=secret, ttl_seconds=_restore_handle_ttl_seconds())
+
+
 def default_governance_context(*, provider_class: str) -> GovernanceContext:
     """The demo's default ``GovernanceContext``, env-overridable field by
     field except for ``provider_class``.
@@ -182,4 +240,5 @@ def build_default_service() -> DisclosureApplicationService:
         default_context=default_governance_context(provider_class=provider.provider_class),
         examples_directory=examples_directory(),
         preview_confirmation_signer=build_preview_confirmation_signer(provider=provider),
+        restore_handle_sealer=build_restore_handle_sealer(),
     )

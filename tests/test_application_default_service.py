@@ -41,6 +41,10 @@ from adaptive_disclosure_gateway.application.preview_confirmation import (
     PreviewConfirmationError,
     PreviewConfirmationState,
 )
+from adaptive_disclosure_gateway.application.restore_handle import (
+    RestoreHandleConfigurationError,
+    RestoreUnavailableError,
+)
 from adaptive_disclosure_gateway.application.settings import (
     build_default_service,
     default_governance_context,
@@ -53,6 +57,7 @@ from adaptive_disclosure_gateway.providers import (
 
 MARKER_API_KEY = "sk-ant-marker-DO-NOT-LEAK-9f3b2a1c"
 MARKER_CONFIRMATION_SECRET = "confirmation-marker-DO-NOT-LEAK-4e7d1b8a-2c5f"
+MARKER_RESTORE_HANDLE_SECRET = "restore-handle-marker-DO-NOT-LEAK-9c2f7a1e-6b3d"
 
 
 def _confirmation_state() -> PreviewConfirmationState:
@@ -247,3 +252,92 @@ def test_the_confirmation_secret_reaches_no_health_record_repr_or_token(monkeypa
 
     assert MARKER_CONFIRMATION_SECRET not in rendered
     assert MARKER_API_KEY not in rendered
+
+
+# --- restore handle configuration (T26 / issue #67, D2/D3) -------------------
+#
+# Unlike the preview-confirmation secret above, an unset restore-handle
+# secret is a deliberate, supported state: the deployment must still start
+# and serve every other route, with only export/restore themselves failing
+# closed at call time.
+
+
+def test_the_default_service_starts_with_no_restore_handle_secret_and_still_serves_health(
+    monkeypatch,
+):
+    monkeypatch.delenv("ADG_PROVIDER", raising=False)
+    monkeypatch.delenv("ADG_RESTORE_HANDLE_SECRET", raising=False)
+
+    service = build_default_service()  # must not raise
+
+    assert service.describe_health().provider_class == "fake"
+
+
+def test_export_fails_closed_on_the_default_service_with_no_restore_handle_secret(monkeypatch):
+    from adaptive_disclosure_gateway.application.contracts import (
+        DisclosureApplicationRequest,
+        DisclosureStrategy,
+        GovernanceOverrides,
+    )
+    from adaptive_disclosure_gateway.application.ingestion import normalize_text
+
+    monkeypatch.delenv("ADG_PROVIDER", raising=False)
+    monkeypatch.delenv("ADG_RESTORE_HANDLE_SECRET", raising=False)
+
+    service = build_default_service()
+    request = DisclosureApplicationRequest(
+        content=normalize_text("Employee: Ana Souza\n"),
+        task="summarize",
+        strategy=DisclosureStrategy.REVERSIBLE_PSEUDONYMIZATION,
+        governance=GovernanceOverrides(),
+    )
+
+    with pytest.raises(RestoreUnavailableError):
+        service.export(request)
+
+
+def test_a_configured_restore_handle_secret_survives_across_constructions(monkeypatch):
+    """What an unset secret cannot do, and why a deployment that wants
+    export/restore must configure one: a handle issued by one process opens
+    in another.
+    """
+    monkeypatch.delenv("ADG_PROVIDER", raising=False)
+    monkeypatch.setenv("ADG_RESTORE_HANDLE_SECRET", MARKER_RESTORE_HANDLE_SECRET)
+
+    issuing_sealer = build_default_service()._restore_handle_sealer
+    opening_sealer = build_default_service()._restore_handle_sealer
+
+    issued = issuing_sealer.issue({"PSEUDO-x-" + "0" * 32: "original"})
+    assert opening_sealer.open(issued.handle) == {"PSEUDO-x-" + "0" * 32: "original"}
+
+
+def test_an_unparseable_restore_handle_ttl_fails_closed(monkeypatch):
+    monkeypatch.delenv("ADG_PROVIDER", raising=False)
+    monkeypatch.setenv("ADG_RESTORE_HANDLE_SECRET", MARKER_RESTORE_HANDLE_SECRET)
+    monkeypatch.setenv("ADG_RESTORE_HANDLE_TTL_SECONDS", "not-a-number")
+
+    with pytest.raises(RestoreHandleConfigurationError):
+        build_default_service()
+
+
+def test_a_restore_handle_ttl_beyond_seven_days_fails_closed(monkeypatch):
+    monkeypatch.delenv("ADG_PROVIDER", raising=False)
+    monkeypatch.setenv("ADG_RESTORE_HANDLE_SECRET", MARKER_RESTORE_HANDLE_SECRET)
+    monkeypatch.setenv("ADG_RESTORE_HANDLE_TTL_SECONDS", str(604800 + 1))
+
+    with pytest.raises(RestoreHandleConfigurationError):
+        build_default_service()
+
+
+def test_the_restore_handle_secret_reaches_no_health_record_or_repr(monkeypatch):
+    monkeypatch.delenv("ADG_PROVIDER", raising=False)
+    monkeypatch.setenv("ADG_RESTORE_HANDLE_SECRET", MARKER_RESTORE_HANDLE_SECRET)
+
+    service = build_default_service()
+    sealer = service._restore_handle_sealer
+    issued = sealer.issue({"PSEUDO-x-" + "1" * 32: "some original value"})
+
+    rendered = " ".join(
+        (repr(service), repr(sealer), repr(service.describe_health()), issued.handle)
+    )
+    assert MARKER_RESTORE_HANDLE_SECRET not in rendered
