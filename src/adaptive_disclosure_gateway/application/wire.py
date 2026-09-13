@@ -27,7 +27,12 @@ specifically (both adapters serve it verbatim) so a client can assert
 compatibility, and only needs to change when a response shape actually
 changes incompatibly. Its value, ``"t20-application-api-v1"``, is a
 published contract identifier and must not be renamed or bumped as part of
-this move.
+this move. ``PreviewResponse.inspection`` (T27 / issue #69) is one such
+non-incompatible change: an additive, nullable field -- ``null`` whenever
+the demo transparency flag is off (the historical, unmodified behavior for
+every existing caller) and populated only when a deployer opts in -- so it
+does not bump ``CONTRACT_VERSION`` either, for the same reason
+``ExportResponse``/``RestoreResponse`` below did not.
 
 Every enum-valued field below is serialized as its frozen string value
 (``Treatment``/``DisclosureStrategy``/``PseudonymScope`` are all
@@ -71,6 +76,8 @@ from adaptive_disclosure_gateway.application.contracts import (
     CategoryDisclosureSummary,
     DisclosureExecution,
     DisclosureExport,
+    DisclosureInspection,
+    DisclosureInspectionSegment,
     DisclosurePreview,
     DisclosureRestore,
     DisclosureSummary,
@@ -329,6 +336,55 @@ class ProviderModeModel(BaseModel):
     provider_class: str
 
 
+class InspectionSegmentModel(BaseModel):
+    """One ``DisclosureInspectionSegment`` (T27 / issue #69). ``action`` is
+    the frozen ``DisclosureAction`` string value (e.g. ``"remove"``), or
+    ``None`` for an untouched segment -- never a human-readable label; the UI
+    owns copy, exactly like every other action/outcome code this contract
+    serializes.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: str | None
+    category: str | None
+    original: str
+    disclosed: str
+
+    @classmethod
+    def from_domain(cls, segment: DisclosureInspectionSegment) -> InspectionSegmentModel:
+        return cls(
+            action=segment.action.value if segment.action is not None else None,
+            category=segment.category,
+            original=segment.original,
+            disclosed=segment.disclosed,
+        )
+
+
+class DisclosureInspectionModel(BaseModel):
+    """The T27 / issue #69 visual diff/inspector projection. ``segments`` is
+    empty whenever ``available`` is ``False`` -- see
+    ``application/inspection.py``/``contracts.DisclosureInspection`` for the
+    two ``unavailable_reason`` cases this can be.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    available: bool
+    unavailable_reason: str | None
+    segments: list[InspectionSegmentModel]
+
+    @classmethod
+    def from_domain(cls, inspection: DisclosureInspection) -> DisclosureInspectionModel:
+        return cls(
+            available=inspection.available,
+            unavailable_reason=inspection.unavailable_reason,
+            segments=[
+                InspectionSegmentModel.from_domain(segment) for segment in inspection.segments
+            ],
+        )
+
+
 class PreviewResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -340,6 +396,7 @@ class PreviewResponse(BaseModel):
     strategy: str
     governance: SafeGovernanceViewModel
     provider_mode: ProviderModeModel
+    inspection: DisclosureInspectionModel | None = None
 
     @classmethod
     def from_domain(cls, preview: DisclosurePreview) -> PreviewResponse:
@@ -352,6 +409,11 @@ class PreviewResponse(BaseModel):
             strategy=preview.strategy.value,
             governance=SafeGovernanceViewModel.from_domain(preview.governance),
             provider_mode=ProviderModeModel(provider_class=preview.provider_mode.provider_class),
+            inspection=(
+                DisclosureInspectionModel.from_domain(preview.inspection)
+                if preview.inspection is not None
+                else None
+            ),
         )
 
 

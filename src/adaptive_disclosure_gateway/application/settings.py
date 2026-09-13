@@ -169,6 +169,27 @@ def build_restore_handle_sealer() -> RestoreHandleSealer:
     return RestoreHandleSealer(secret=secret, ttl_seconds=_restore_handle_ttl_seconds())
 
 
+DEMO_TRANSPARENCY_ENV_VAR = "ADG_ENABLE_DEMO_TRANSPARENCY"
+"""Server-side opt-in for the demo transparency surfaces (T27 / issue #69's
+preview inspection now; a later web export/restore proxy). Deliberately not
+a general-purpose boolean parser: enabled iff the variable is set AND its
+stripped value is exactly ``"1"`` -- unset, blank, ``"0"``, ``"true"``,
+``"yes"`` or anything else is disabled. Disabled is the safe direction (no
+extra data is exposed, ``/health``/``/ready`` are unaffected either way), so
+there is no startup refusal for an unrecognized value the way
+``ADG_PROVIDER`` refuses one -- this flag only ever widens or narrows an
+opt-in surface, never changes which provider a request reaches.
+"""
+
+
+def demo_transparency_enabled() -> bool:
+    """Read :data:`DEMO_TRANSPARENCY_ENV_VAR` -- see its own docstring for
+    the exact parsing rule. Default disabled.
+    """
+    value = os.getenv(DEMO_TRANSPARENCY_ENV_VAR)
+    return value is not None and value.strip() == "1"
+
+
 def default_governance_context(*, provider_class: str) -> GovernanceContext:
     """The demo's default ``GovernanceContext``, env-overridable field by
     field except for ``provider_class``.
@@ -241,4 +262,5 @@ def build_default_service() -> DisclosureApplicationService:
         examples_directory=examples_directory(),
         preview_confirmation_signer=build_preview_confirmation_signer(provider=provider),
         restore_handle_sealer=build_restore_handle_sealer(),
+        demo_transparency_enabled=demo_transparency_enabled(),
     )
