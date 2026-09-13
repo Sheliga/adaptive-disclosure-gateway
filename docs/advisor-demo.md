@@ -616,13 +616,26 @@ T25 keeps the API internal-only behind the web proxy, and there is
 deliberately no proxy route or UI action for export/restore in this slice —
 adding one is a later UI slice's job, not a security gap: the mechanism
 itself is scope-bound and fails closed exactly as `/documents/preview`/
-`/documents/execute` do, it simply has no button yet.
+`/documents/execute` do, it simply has no button yet. The reason is explicit,
+not incidental: the public hosted demo has no authentication, so a reachable
+restore endpoint would be a re-identification oracle for anyone who could
+reach it -- restore must stay behind something that authenticates the
+caller, which the hosted web demo does not do. Until then, export/restore
+remain API/CLI-only and the `api` service itself stays internal-only in
+`compose.demo.yaml` (no `ports:`, see "Security stance" above).
 
 Configuration: `ADG_RESTORE_HANDLE_SECRET` and `ADG_RESTORE_HANDLE_TTL_SECONDS`
 on the `api` service only (never `web`), both optional. Unset
 `ADG_RESTORE_HANDLE_SECRET` does not block startup and does not affect any
 other route -- `POST /documents/export` and `POST /documents/restore` return
 503 until a secret is configured, exactly as described in `.env.example`.
+`GET /ready` never consults the restore-handle secret either, so leaving it
+unset never makes the deployment report not-ready -- only the export/restore
+routes themselves refuse. `tests/test_demo_deployment_config.py`'s
+`TestWebDoesNotExposeExportRestore` pins the absence of a web proxy route
+statically (by scanning `web/app/api` and every non-excluded file under
+`web/`), so a future restructure trips a test rather than silently
+regressing this boundary.
 
 ## Security stance
 
