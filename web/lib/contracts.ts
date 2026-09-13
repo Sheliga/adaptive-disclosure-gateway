@@ -381,8 +381,12 @@ export interface ValidationErrorResponse {
   detail: ValidationErrorItem[];
 }
 
-// --- POST /documents/export / POST /documents/restore (T26 / issue #67, ------
-// gated behind ADG_ENABLE_DEMO_TRANSPARENCY for the web UI -- T28 / #70) -----
+// --- export / restore (T26 / issue #67; gated behind -----------------------
+// ADG_ENABLE_DEMO_TRANSPARENCY for the web UI -- T28 / #70). This module
+// never spells out either route handler's own upstream path string in
+// prose -- see tests/test_demo_deployment_config.py::TestWebExportRestoreIsGated,
+// which pins those two literal strings to the route handlers and lib/api.ts
+// only.
 
 /**
  * `application/wire.py`'s `ExportResponse`. Deliberately excludes anything

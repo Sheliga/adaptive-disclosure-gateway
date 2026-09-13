@@ -439,8 +439,8 @@ export const isCompareResponse: ResponseGuard<CompareResponse> = (
   isSafeGovernanceView(value.governance) &&
   isProviderMode(value.provider_mode);
 
-// --- POST /documents/export / POST /documents/restore (T26/#67, gated for ---
-// the web UI behind ADG_ENABLE_DEMO_TRANSPARENCY -- T28/#70) -----------------
+// --- export / restore (T26/#67, gated for the web UI behind ----------------
+// ADG_ENABLE_DEMO_TRANSPARENCY -- T28/#70) -----------------------------------
 
 export const isExportResponse: ResponseGuard<ExportResponse> = (
   value: unknown,

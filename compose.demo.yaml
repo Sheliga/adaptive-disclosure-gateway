@@ -127,12 +127,13 @@ services:
       ADG_API_BASE_URL: http://api:8000
       # T27/T28 / issues #69-#70. Mirrors the api service's own variable
       # above -- read at request time (not baked in at build time, exactly
-      # like ADG_API_BASE_URL) by a later slice's export/restore proxy route
-      # to decide whether to gate itself on. Same optional, off-by-default
-      # posture as on api: unset here changes nothing about the current web
-      # app, which has no export/restore proxy yet (see
-      # TestWebDoesNotExposeExportRestore in
-      # tests/test_demo_deployment_config.py).
+      # like ADG_API_BASE_URL) by the web app's own export/restore proxy
+      # routes (web/lib/demoTransparency.ts) to decide whether to forward to
+      # the upstream api service at all. Same optional, off-by-default
+      # posture as on api: unset here (the default) keeps both proxy routes
+      # returning a fixed 404 without ever calling the api service -- see
+      # TestWebExportRestoreIsGated in tests/test_demo_deployment_config.py,
+      # which pins that the gate is checked before any proxy call.
       ADG_ENABLE_DEMO_TRANSPARENCY: ${ADG_ENABLE_DEMO_TRANSPARENCY:-}
     # Loopback-only: bound to 127.0.0.1 specifically, not every host
     # interface. Without an explicit host IP, compose publishes on ALL
