@@ -1,0 +1,42 @@
+# Docker build context excludes for the API image (docker/api.Dockerfile).
+#
+# The API image build context is the repository root. Without this file, a
+# plain `COPY . .`-style build step would bake a developer's real `.env`
+# (with a real Anthropic key) straight into an image layer -- exactly the
+# side-channel class CLAUDE.md's no-leak invariant warns about. Everything
+# below is either a secret, a local/derived artifact, or simply not needed
+# at runtime.
+
+# --- secrets: never let a real credential enter the build context --------
+.env
+.env.*
+!.env.example
+
+# --- version control / CI -------------------------------------------------
+.git
+.github
+
+# --- Python environments and caches ---------------------------------------
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+*.egg-info
+
+# --- web toolchain (irrelevant to the API image) ---------------------------
+web/node_modules
+web/.next
+web/coverage
+
+# --- experimental/local data never needed inside a container --------------
+local-data/
+/vault/
+artifacts/private/
+
+# --- editor/OS noise ---------------------------------------------------
+.vscode
+.idea
+.DS_Store
+Thumbs.db

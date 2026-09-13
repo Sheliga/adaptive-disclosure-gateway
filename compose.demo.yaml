@@ -1,0 +1,162 @@
+# Demo/deployment compose file (T25 / issue #42) -- distinct from
+# `compose.yaml`, which is the dev/test harness that mounts the repository
+# and runs pytest. This file describes the small, reproducible
+# advisor-facing research demo:
+#
+#   browser -> web (published) -> api (internal-only) -> external provider
+#
+# Usage (see docs/advisor-demo.md for the full walkthrough):
+#
+#   ADG_PROVIDER=fake docker compose -f compose.demo.yaml up --build
+#
+# or with a `.env` file (git-ignored) supplying ADG_PROVIDER and, for the
+# real provider, ANTHROPIC_API_KEY / ADG_PREVIEW_CONFIRMATION_SECRET:
+#
+#   docker compose -f compose.demo.yaml --env-file .env up --build
+#
+# `ADG_PROVIDER` is a REQUIRED interpolation (`:?...` below) so this stack
+# never silently launches with an unintended provider default in either
+# direction -- the caller must say `fake` or `anthropic` explicitly. Every
+# other variable interpolated into the `api` service is optional
+# (`:-` defaults to empty, which each setting's own env-reading function
+# already treats the same as "unset" -- see application/settings.py,
+# providers/settings.py and api/settings.py).
+#
+# No secret is ever assigned to the `web` service: the browser never talks
+# to the Python API directly (see web/lib/proxy.ts), so `web` only needs to
+# know WHERE the api service is, never any credential.
+
+networks:
+  adg-demo:
+    driver: bridge
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    image: adg-demo-api
+    environment:
+      # Required, no silent default either way.
+      ADG_PROVIDER: ${ADG_PROVIDER:?set ADG_PROVIDER to 'fake' or 'anthropic' -- there is no safe default for a demo deployment}
+      # Real-provider credential/config. Empty is equivalent to "unset" for
+      # every one of these (see the env-reading functions cited above), so
+      # leaving them unset on the host is safe with ADG_PROVIDER=fake.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ADG_ANTHROPIC_MODEL_ID: ${ADG_ANTHROPIC_MODEL_ID:-}
+      ADG_ANTHROPIC_MAX_OUTPUT_TOKENS: ${ADG_ANTHROPIC_MAX_OUTPUT_TOKENS:-}
+      ADG_ANTHROPIC_EFFORT: ${ADG_ANTHROPIC_EFFORT:-}
+      ADG_ANTHROPIC_THINKING: ${ADG_ANTHROPIC_THINKING:-}
+      ADG_ANTHROPIC_TIMEOUT_SECONDS: ${ADG_ANTHROPIC_TIMEOUT_SECONDS:-}
+      # Server-side only; never forwarded to the web service. Mandatory in
+      # practice once ADG_PROVIDER=anthropic -- the app itself refuses to
+      # start without it (application/settings.build_preview_confirmation_signer).
+      ADG_PREVIEW_CONFIRMATION_SECRET: ${ADG_PREVIEW_CONFIRMATION_SECRET:-}
+      # Engineering limits/CORS. Safe repository defaults apply when unset;
+      # CORS can stay empty because the browser only ever calls the web
+      # origin (docs/advisor-demo.md's architectural boundary).
+      ADG_MAX_UPLOAD_BYTES: ${ADG_MAX_UPLOAD_BYTES:-}
+      ADG_ALLOWED_ORIGINS: ${ADG_ALLOWED_ORIGINS:-}
+    networks:
+      - adg-demo
+    # No `ports:` -- the api service is reachable only from other
+    # containers on the adg-demo network, never from the host.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)
+      interval: 15s
+      timeout: 5s
+      # Docling's import/model-load path is slow on a cold container; a
+      # short start_period would flag a perfectly healthy first boot as
+      # failed before it ever got to answer /health.
+      start_period: 120s
+      retries: 5
+    # `unless-stopped` restarts a crashed container, but a fail-closed
+    # startup refusal (e.g. ADG_PROVIDER=anthropic with no confirmation
+    # secret) exits every time it restarts -- `docker compose ps` still
+    # shows it as unhealthy/restarting, never as a false "healthy", so this
+    # policy does not hide that refusal.
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    image: adg-demo-web
+    environment:
+      # Runtime-only (read per-request by lib/proxy.ts), never a build-time
+      # ENV/ARG in web/Dockerfile -- see that file's module docstring.
+      # Points at the api service by its compose network name, not
+      # localhost/127.0.0.1 (those would resolve to the web container
+      # itself).
+      ADG_API_BASE_URL: http://api:8000
+    ports:
+      - "${ADG_DEMO_WEB_PORT:-3000}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - adg-demo
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          fetch('http://127.0.0.1:3000/api/health').then((r) =>
+          process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+    restart: unless-stopped
+
+  # Optional TLS-terminating reverse proxy for a hosted deployment. Not
+  # started by a plain `docker compose up`; opt in with:
+  #
+  #   ADG_DEMO_DOMAIN=demo.example.org docker compose -f compose.demo.yaml --profile tls up -d --build
+  #
+  # Its certificate volume is the only volume anywhere in this file --
+  # `api`/`web` remain volume-free (no persistent storage for uploaded
+  # documents).
+  caddy:
+    profiles:
+      - tls
+    image: caddy:2-alpine
+    environment:
+      # Deliberately `:-` (optional), not `:?` (required): compose
+      # interpolates every service's environment -- including a
+      # not-activated profile's -- while parsing `build`/`up` for the
+      # DEFAULT profile too, so a `:?` here would break a plain
+      # `docker compose -f compose.demo.yaml up` that never asked for the
+      # tls profile at all. The requirement is enforced instead where it
+      # actually applies: inside this container's own entrypoint below,
+      # which only ever runs when the tls profile is explicitly activated.
+      ADG_DEMO_DOMAIN: ${ADG_DEMO_DOMAIN:-}
+    entrypoint:
+      - sh
+      - -c
+      - >-
+        if [ -z "$$ADG_DEMO_DOMAIN" ]; then
+        echo "ADG_DEMO_DOMAIN must be set to the public hostname to run the tls profile" >&2;
+        exit 1; fi;
+        exec caddy reverse-proxy --from "$$ADG_DEMO_DOMAIN" --to web:3000
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy_data:/data
+    depends_on:
+      web:
+        condition: service_healthy
+    networks:
+      - adg-demo
+    restart: unless-stopped
+
+volumes:
+  # Caddy's ACME account/certificate state. Deliberately the only volume in
+  # this file -- see the caddy service comment above.
+  caddy_data:
