@@ -29,9 +29,11 @@ describe("describeProviderMode — a verified answer", () => {
     expect(notice?.tone).toBe("demo");
   });
 
-  it("says nothing when health confirms a real provider", () => {
-    // Silence is only correct here: the question was asked and answered.
-    expect(describeProviderMode(ready(false))).toBeNull();
+  it("announces when health confirms an external provider", () => {
+    expect(describeProviderMode(ready(false))).toEqual({
+      message: copy.provider.externalModelLabel,
+      tone: "external",
+    });
   });
 });
 

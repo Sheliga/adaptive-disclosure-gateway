@@ -39,6 +39,8 @@
 import type {
   CompareResponse,
   DisclosureRequestBody,
+  DocumentPreviewResponse,
+  DocumentTypesResponse,
   ExamplesResponse,
   ExecuteResponse,
   HealthResponse,
@@ -48,6 +50,8 @@ import type { AppCopy } from "./copy";
 import { copy as defaultCopy } from "./copy";
 import {
   isCompareResponse,
+  isDocumentPreviewResponse,
+  isDocumentTypesResponse,
   isExamplesResponse,
   isExecuteResponse,
   isHealthResponse,
@@ -110,6 +114,9 @@ function genericError(appCopy: AppCopy): DisplayError {
 }
 
 async function toDisplayError(response: Response, appCopy: AppCopy): Promise<DisplayError> {
+  if (response.status === 413) {
+    return { message: appCopy.errors.fileTooLarge, kind: "RequestTooLarge", fields: null };
+  }
   let parsed: unknown;
   try {
     parsed = await response.json();
@@ -126,7 +133,13 @@ async function toDisplayError(response: Response, appCopy: AppCopy): Promise<Dis
   }
 
   if (isErrorResponseShape(parsed)) {
-    return { message: parsed.detail, kind: parsed.kind, fields: null };
+    const known: Record<string, string> = {
+      IngestionError: appCopy.errors.documentParsing,
+      DocumentAnalysisPresetError: appCopy.errors.invalidAnalysisMode,
+      PreviewConfirmationError: appCopy.errors.previewExpired,
+      UpstreamUnreachable: appCopy.errors.upstreamUnreachable,
+    };
+    return { message: known[parsed.kind] ?? parsed.detail, kind: parsed.kind, fields: null };
   }
 
   // Parsed fine but matches neither contract this app trusts -- fail
@@ -187,6 +200,36 @@ export function getHealth(appCopy: AppCopy = defaultCopy): Promise<ApiResult<Hea
 
 export function getExamples(appCopy: AppCopy = defaultCopy): Promise<ApiResult<ExamplesResponse>> {
   return requestJson("/api/examples", isExamplesResponse, undefined, appCopy);
+}
+
+export function getDocumentTypes(
+  appCopy: AppCopy = defaultCopy,
+): Promise<ApiResult<DocumentTypesResponse>> {
+  return requestJson("/api/documents/types", isDocumentTypesResponse, undefined, appCopy);
+}
+
+export function previewDocument(
+  form: FormData,
+  appCopy: AppCopy = defaultCopy,
+): Promise<ApiResult<DocumentPreviewResponse>> {
+  return requestJson(
+    "/api/documents/preview",
+    isDocumentPreviewResponse,
+    { method: "POST", body: form },
+    appCopy,
+  );
+}
+
+export function executeDocument(
+  form: FormData,
+  appCopy: AppCopy = defaultCopy,
+): Promise<ApiResult<ExecuteResponse>> {
+  return requestJson(
+    "/api/documents/execute",
+    isExecuteResponse,
+    { method: "POST", body: form },
+    appCopy,
+  );
 }
 
 export function previewDisclosure(

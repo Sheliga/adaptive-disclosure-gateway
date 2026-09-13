@@ -71,7 +71,9 @@ export function ResultScreen({
         <p
           role="status"
           className={
-            providerModeNotice.tone === "demo" ? styles.demoLabel : styles.unverifiedModeLabel
+            providerModeNotice.tone === "unverified"
+              ? styles.unverifiedModeLabel
+              : styles.demoLabel
           }
         >
           {providerModeNotice.message}

@@ -28,15 +28,30 @@ describe("describeCategory — the HR policy's categories read as pt-BR", () => 
   });
 });
 
+describe("describeCategory — Contracts categories have reviewed human labels", () => {
+  it.each([
+    ["party_name", "Parte do contrato"],
+    ["representative_name", "Representante"],
+    ["cnpj", "CNPJ"],
+    ["cpf", "CPF"],
+    ["contract_value", "Valor do contrato"],
+    ["penalty_amount", "Multa / penalidade"],
+    ["deadline", "Prazo"],
+    ["bank_account", "Conta bancária"],
+  ])("maps %s to %s", (identifier, label) => {
+    expect(describeCategory(identifier)).toMatchObject({ label, known: true });
+  });
+});
+
 describe("describeCategory — fails closed on anything it has no copy for", () => {
   it("does not invent a meaning for an unrecognized identifier", () => {
-    const descriptor = describeCategory("bank_account");
+    const descriptor = describeCategory("unknown_contract_field");
 
     expect(descriptor.known).toBe(false);
     expect(descriptor.label).toBe(copy.categories.unrecognized);
     // The raw identifier survives as a technical detail so the reviewer can
     // report what they saw -- it is simply not the label.
-    expect(descriptor.technicalId).toBe("bank_account");
+    expect(descriptor.technicalId).toBe("unknown_contract_field");
   });
 
   it("never derives a label by prettifying the identifier itself", () => {
@@ -44,7 +59,7 @@ describe("describeCategory — fails closed on anything it has no copy for", () 
     // and is exactly wrong here: it produces a confident-looking label for
     // a category this UI has never been reviewed against. `party_name`
     // would become "Party name", which reads as authoritative copy.
-    const descriptor = describeCategory("party_name");
+    const descriptor = describeCategory("unreviewed_party_field");
 
     expect(descriptor.known).toBe(false);
     expect(descriptor.label).not.toContain("party");
