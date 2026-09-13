@@ -322,6 +322,91 @@ export const en: AppCopy = {
     tryAgain: "Try again",
   },
 
+  inspectionActions: {
+    preserve: {
+      label: "Preserved",
+      explanation: "This segment was kept unchanged in this disclosure.",
+    },
+    pseudonymize: {
+      label: "Pseudonymized",
+      explanation: "This segment was replaced with a local pseudonym.",
+    },
+    generalize: {
+      label: "Generalized",
+      explanation: "This segment was replaced with a less specific version before being sent.",
+    },
+    remove: {
+      label: "Removed",
+      explanation: "This segment was removed and is not present in the disclosed version.",
+    },
+    untouched: {
+      label: "Unchanged",
+      explanation: "This segment was not identified as sensitive and remains the same.",
+    },
+    unknown: {
+      label: "Unrecognized action",
+      explanation:
+        "The system returned an action this version of the interface does not recognize. For safety, it is not treated as any of the known actions.",
+    },
+    removedMarker: "[removed segment]",
+  },
+
+  disclosureInspector: {
+    toggleLabel: "View side-by-side comparison (original vs. disclosed)",
+    heading: "Comparison: original vs. disclosed",
+    originalColumnHeading: "Original",
+    disclosedColumnHeading: "Disclosed",
+    legendHeading: "Action legend",
+    disclaimer:
+      "This transparency view exists for evaluation and research purposes. A final product would significantly restrict this feature. There is no vault explorer: this view shows only this document's own transformations.",
+    unavailableBlockedHeading: "Comparison not available",
+    unavailableBlockedExplanation:
+      "The request was blocked by the disclosure policy, so there is no disclosed version to compare.",
+    unavailableAlignmentFailedHeading: "Comparison not available for this decision",
+    unavailableAlignmentFailedExplanation:
+      "The alignment between the original and disclosed text could not be safely verified for this decision. The exact payload remains available above.",
+    detailPanelHeading: "Selected segment detail",
+    detailActionLabel: "Action:",
+    detailCategoryLabel: "Category:",
+    detailTreatmentLabel: "Treatment:",
+    detailStrategyLabel: "Strategy:",
+    detailReasonLabel: "Reason:",
+    detailReasonUnavailable: "Reason not available for this category.",
+    detailOriginalLabel: "Original:",
+    detailDisclosedLabel: "Disclosed:",
+    detailPositionLabel: "Item {n} of {total}",
+    noSelectionHint: "Select a highlighted segment to see its details.",
+  },
+
+  exportRestorePanel: {
+    heading: "Export and restore (demonstration)",
+    disclaimer:
+      "This feature exists to demonstrate the full export/restore cycle for evaluation purposes. A final product would restrict or remove this surface.",
+    uploadOnlyNote: "HTTP export is available only for the file-upload flow in this demonstration.",
+    exportButton: "Export",
+    exportedPayloadHeading: "Exported disclosed representation",
+    restorableCountLabel: "restorable items",
+    expiresAtLabel: "Expires at:",
+    treatmentLabel: "Treatment:",
+    strategyLabel: "Strategy:",
+    handleHeading: "Restore handle",
+    handleHiddenNotice: "The handle is kept only on this screen, never saved automatically.",
+    copyHandleButton: "Copy handle",
+    copyHandleSuccess: "Handle copied.",
+    downloadHandleButton: "Download handle (.txt)",
+    importHandleLabel: "Import handle from a file",
+    simulateResponseHeading: "Simulate external response",
+    simulateResponseHint:
+      "Edit the text below as if it were a response received from outside the gateway, keeping the pseudonyms you want to restore.",
+    restoreButton: "Restore locally",
+    restoredResultHeading: "Restore result",
+    restoredCountLabel: "pseudonyms restored",
+    unresolvedCountLabel: "tokens not recognized by this handle",
+    unresolvedExplanation:
+      "Unresolved tokens look like pseudonyms but do not belong to this restore handle's scope; they remain unchanged in the restored text.",
+    clearButton: "Clear",
+  },
+
   errors: {
     generic: "The operation could not be completed. Please try again.",
     upstreamUnreachable: "Could not reach the service right now. Please try again shortly.",
