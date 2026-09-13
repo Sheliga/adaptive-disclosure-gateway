@@ -62,6 +62,7 @@ to any shape a client already depends on.
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
@@ -78,7 +79,7 @@ from adaptive_disclosure_gateway.application.contracts import (
     StrategyOption,
 )
 from adaptive_disclosure_gateway.application.examples import ExampleSummary
-from adaptive_disclosure_gateway.application.service import ServiceHealth
+from adaptive_disclosure_gateway.application.service import ServiceHealth, ServiceReadiness
 from adaptive_disclosure_gateway.audit import ProviderStage, ReconstructionStage
 
 CONTRACT_VERSION = "t20-application-api-v1"
@@ -120,6 +121,52 @@ class HealthResponse(BaseModel):
             contract_version=CONTRACT_VERSION,
             provider=ProviderHealthModel.from_domain(health),
             treatments_available=[treatment.value for treatment in health.treatments_available],
+        )
+
+
+# --- GET /ready (T25 review finding 2) ------------------------------------------
+
+
+class ReadinessReason(StrEnum):
+    """The closed vocabulary ``GET /ready``'s optional ``reason`` field is
+    restricted to (``extra="forbid"`` on ``ReadyResponse`` below rejects
+    anything else). Every member names a *category* of unreadiness only --
+    never a credential, an environment variable's value, a config value or
+    any exception text (CLAUDE.md's no-leak invariant). The string values
+    are produced independently by ``providers.readiness`` and
+    ``application.preview_confirmation`` (which cannot import this module
+    without a cycle); this enum is the one place their shared vocabulary is
+    pinned as a closed set for the wire contract.
+    """
+
+    PROVIDER_CREDENTIAL_MISSING = "provider_credential_missing"
+    PROVIDER_SDK_UNAVAILABLE = "provider_sdk_unavailable"
+    CONFIRMATION_SECRET_NOT_DURABLE = "confirmation_secret_not_durable"
+    PROVIDER_UNRECOGNIZED = "provider_unrecognized"
+
+
+class ReadyResponse(BaseModel):
+    """``GET /ready``'s response -- a purely local readiness probe meant for
+    a container healthcheck/orchestrator, not a versioned data contract a
+    client parses: unlike every other response model here, it carries no
+    ``contract_version``.
+
+    ``reason`` is present only when ``status`` is ``"not_ready"`` and is
+    always one of ``ReadinessReason``'s fixed values -- ``extra="forbid"``
+    plus the closed enum together mean a caller can never observe anything
+    beyond this fixed vocabulary through this endpoint.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: str
+    reason: ReadinessReason | None = None
+
+    @classmethod
+    def from_domain(cls, readiness: ServiceReadiness) -> ReadyResponse:
+        return cls(
+            status="ready" if readiness.ready else "not_ready",
+            reason=ReadinessReason(readiness.reason) if readiness.reason is not None else None,
         )
 
 

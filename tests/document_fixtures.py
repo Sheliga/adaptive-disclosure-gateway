@@ -12,6 +12,11 @@ its own. It exists so the ingestion tests
 (``tests/test_application_ingestion_docling.py``) and the HTTP upload tests
 (``tests/test_api_documents_upload.py``) build their documents the same way
 instead of maintaining two drifting copies of a minimal PDF writer.
+
+``scripts/prewarm_docling.py`` (T25 / issue #42) imports this module too, to
+prewarm the API image's Docling model cache at build time with a real
+conversion -- the API Dockerfile copies only this file (plus ``__init__.py``)
+out of ``tests/``, never the rest of the test suite.
 """
 
 from __future__ import annotations
