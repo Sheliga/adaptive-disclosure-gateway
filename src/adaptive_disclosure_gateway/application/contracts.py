@@ -320,10 +320,63 @@ class ProviderMode:
 
 
 @dataclass(frozen=True)
+class DisclosureInspectionSegment:
+    """One contiguous slice of the source text for the T27 / issue #69
+    visual diff/inspector, in source order: either untouched (``action`` and
+    ``category`` both ``None``, ``original == disclosed``) or the result of
+    exactly one ``Transformation`` (``action``/``category`` mirror that
+    transformation, ``original`` is the detected span's own value,
+    ``disclosed`` is what actually crossed the trust boundary for it --
+    ``""`` for ``DisclosureAction.REMOVE``, never ``None``).
+
+    Never carries anything beyond what ``decision.result`` already produced:
+    no rule identifier, no policy reasoning text, no vault/pseudonym mapping
+    -- see ``application/inspection.py``'s module docstring for the
+    alignment this is projected from and why a mismatch fails the whole
+    projection closed rather than guessing.
+    """
+
+    action: DisclosureAction | None
+    category: str | None
+    original: str
+    disclosed: str
+
+
+@dataclass(frozen=True)
+class DisclosureInspection:
+    """The T27 / issue #69 visual diff/inspector projection of one
+    disclosure decision: ``segments``, in source order, reconstruct the
+    original text (``original``, concatenated) and the disclosed payload
+    (``disclosed``, concatenated) alike -- see
+    ``application/inspection.py::build_inspection`` for the construction and
+    verification this guarantees.
+
+    ``available`` is ``False`` -- with ``segments`` empty -- for a blocked
+    decision (``unavailable_reason="blocked"``, never echoing the original
+    text a blocked decision has no disclosed representation for) or when the
+    decision's own structured metadata does not align with the source text
+    closely enough to project safely (``unavailable_reason="alignment_failed"``,
+    the fail-closed outcome for any other unresolved mismatch -- never a
+    best-effort guess, and never a raised exception).
+    """
+
+    available: bool
+    unavailable_reason: Literal["blocked", "alignment_failed"] | None
+    segments: tuple[DisclosureInspectionSegment, ...]
+
+
+@dataclass(frozen=True)
 class DisclosurePreview:
     """The "review before sending" result: everything about what would
     happen, plus the exact payload that would cross the trust boundary --
     without ever calling a provider.
+
+    ``inspection`` is ``None`` whenever the demo transparency surface (T27 /
+    issue #69, gated by ``ADG_ENABLE_DEMO_TRANSPARENCY`` -- see
+    ``application/settings.py``) is disabled for this service; it is
+    populated only by ``preview``/``preview_document`` when that flag is on,
+    never by ``export``/``execute``/``execute_document``/
+    ``compare_strategies`` -- see ``service.py``'s own docstring.
     """
 
     summary: DisclosureSummary
@@ -333,6 +386,7 @@ class DisclosurePreview:
     strategy: DisclosureStrategy
     governance: SafeGovernanceView
     provider_mode: ProviderMode
+    inspection: DisclosureInspection | None = None
 
 
 @dataclass(frozen=True)
