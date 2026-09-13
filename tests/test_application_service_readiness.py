@@ -183,9 +183,7 @@ def test_fake_provider_ready_regardless_of_restore_handle_secret_being_unset():
 
 
 def test_fake_provider_ready_regardless_of_restore_handle_secret_being_configured():
-    service = _service(
-        FakeProvider(), restore_handle_sealer=RestoreHandleSealer(secret="a" * 32)
-    )
+    service = _service(FakeProvider(), restore_handle_sealer=RestoreHandleSealer(secret="a" * 32))
 
     readiness = service.describe_readiness()
 

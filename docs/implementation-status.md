@@ -593,7 +593,7 @@ The target is a small research-demo deployment, not desktop distribution, instal
 
 ### T26 / Issue #67 — export the disclosed representation with sealed restore handles
 
-Status: **in validation** (open PR to `develop`; not demo-critical, not on the scientific critical path).
+Status: **in validation** (open PR to `develop`, reconciled with T25 / Issue #42's merged demo deployment; not demo-critical, not on the scientific critical path).
 
 Lets a caller take a disclosed representation of a document (the same `external_payload` `POST /documents/preview` already returns) outside the gateway and, later, restore its pseudonyms locally through an explicit, sealed restore handle. Design decisions in `docs/adr/0002-deferred-restore-handles.md`.
 
@@ -602,6 +602,7 @@ Lets a caller take a disclosed representation of a document (the same `external_
 - No ephemeral-key mode (unlike preview confirmation): an unset `ADG_RESTORE_HANDLE_SECRET` still starts the service and leaves every other route working, but export/restore themselves fail closed (`RestoreUnavailableError`, HTTP 503, non-zero CLI exit).
 - HTTP: `POST /documents/export` (multipart, same fields as `/documents/preview`), `POST /documents/restore` (JSON `{text, restore_handle}`). CLI: `adg export`, `adg restore` (handle/text read from a file or stdin, never a plain argv value).
 - Not in this PR: any web proxy route or UI (T25 keeps the API internal-only behind the web proxy; export/restore are API/CLI-only until a later UI slice), PDF/DOCX re-rendering, any change to B2 — Reversible Pseudonymization / B3 — Task-aware / B4 — Policy-governed semantics.
+- Reconciled with T25's merged `compose.demo.yaml`: `ADG_RESTORE_HANDLE_SECRET` and `ADG_RESTORE_HANDLE_TTL_SECONDS` reach the `api` service only, both as OPTIONAL interpolations (unset = export/restore disabled with 503, no effect on any other route); `web` carries neither, and a static test pins that the hosted demo has no proxy route or reference to either path (ADR-0002). `docker/api-constraints.txt` was regenerated for `cryptography` as part of this reconciliation. `GET /ready`'s readiness check (T25) does not consult the restore-handle secret, pinned by regression tests added during reconciliation.
 
 ### Demo completion criterion
 

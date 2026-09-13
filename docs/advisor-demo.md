@@ -542,9 +542,10 @@ documented, not only its version.
 `tests/test_docker_reproducibility.py` enforces this stays true: every `pyproject.toml` runtime
 dependency (base `dependencies` plus the `api`/`documents`/`anthropic` extras) must have a pin in
 the constraints file, so adding a dependency without refreshing the lock fails the local test
-suite rather than silently shipping unpinned. **Note for whichever of this PR (T25) and PR #68
-(T26, which adds `cryptography` as a base dependency) merges second**: that merge must regenerate
-`docker/api-constraints.txt` before it lands, or this test fails.
+suite rather than silently shipping unpinned. T26 / issue #67 added `cryptography>=44,<51` as a
+base dependency (the sealed restore handle) after this file (T25) merged first; reconciling T26
+with `develop` regenerated `docker/api-constraints.txt` accordingly -- only `cryptography` and its
+own transitive `cffi`/`pycparser` were added, every pre-existing pin held unchanged.
 
 Regenerate after any dependency change:
 
