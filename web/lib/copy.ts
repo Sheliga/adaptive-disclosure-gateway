@@ -446,6 +446,11 @@ const ptBR = {
     invalidAnalysisMode: "Esse tipo de análise não é aceito para o documento selecionado.",
     previewExpired: "Esta revisão não é mais válida. Faça uma nova revisão antes de enviar.",
     comparisonUnavailableForUpload: "A comparação ainda não está disponível para documentos estruturados.",
+    demoTransparencyDisabled: "Este recurso de demonstração não está habilitado nesta implantação.",
+    exportRefused: "Não foi possível gerar a exportação para este conteúdo.",
+    restoreUnavailable: "A restauração local não está disponível nesta implantação no momento.",
+    restoreHandleInvalid: "Este identificador de restauração não é válido.",
+    restoreHandleExpired: "Este identificador de restauração expirou. Gere uma nova exportação.",
   },
 
   sectionHeadings: {

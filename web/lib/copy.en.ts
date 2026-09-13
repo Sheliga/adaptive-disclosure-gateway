@@ -331,6 +331,11 @@ export const en: AppCopy = {
     invalidAnalysisMode: "That analysis type is not accepted for the selected document.",
     previewExpired: "This review is no longer valid. Run a new review before sending.",
     comparisonUnavailableForUpload: "Comparison is not yet available for structured documents.",
+    demoTransparencyDisabled: "This demonstration feature is not enabled on this deployment.",
+    exportRefused: "The export could not be generated for this content.",
+    restoreUnavailable: "Local restore is not available on this deployment right now.",
+    restoreHandleInvalid: "This restore handle is not valid.",
+    restoreHandleExpired: "This restore handle has expired. Generate a new export.",
   },
 
   sectionHeadings: {

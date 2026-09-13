@@ -1,14 +1,26 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { compareStrategies, executeDisclosure, getExamples, getHealth, previewDisclosure } from "./api";
+import {
+  compareStrategies,
+  executeDisclosure,
+  exportDocument,
+  getDemoFeatures,
+  getExamples,
+  getHealth,
+  previewDisclosure,
+  restoreText,
+} from "./api";
 import { CONTRACT_VERSION } from "./contracts";
 import type {
   CategoryDisclosureSummary,
   CompareResponse,
+  DemoFeaturesResponse,
   ExamplesResponse,
   ExecuteResponse,
+  ExportResponse,
   HealthResponse,
   PreviewResponse,
+  RestoreResponse,
 } from "./contracts";
 import { copy } from "./copy";
 
@@ -989,5 +1001,304 @@ describe("200 response validation — examples and health", () => {
     stub200(draft);
 
     expect((await getHealth()).ok).toBe(false);
+  });
+});
+
+/**
+ * T28 / issue #70: getDemoFeatures, exportDocument, restoreText.
+ */
+
+function demoFeaturesBody(enabled: boolean): DemoFeaturesResponse {
+  return { demo_transparency_enabled: enabled };
+}
+
+function exportBody(): ExportResponse {
+  return {
+    contract_version: CONTRACT_VERSION,
+    external_payload: "conteudo divulgado com PSEUDO-abc123",
+    restore_handle: "opaque.restore.handle",
+    expires_at: 1_800_000_000,
+    restorable_count: 1,
+    treatment: "b2",
+    strategy: "b2",
+    governance: previewBody().governance,
+  };
+}
+
+function restoreBody(): RestoreResponse {
+  return {
+    contract_version: CONTRACT_VERSION,
+    restored_text: "conteudo restaurado com Maria Oliveira",
+    restored_count: 1,
+    unresolved_count: 0,
+  };
+}
+
+describe("getDemoFeatures — calls the local proxy route and validates the body", () => {
+  it("returns ok:true for a fully valid body", async () => {
+    const payload = demoFeaturesBody(true);
+    stub200(payload);
+
+    const result = await getDemoFeatures();
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data).toEqual(payload);
+    }
+  });
+
+  it("calls /api/demo/features, never the upstream API directly", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getDemoFeatures();
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/demo/features");
+  });
+
+  it("rejects a 200 whose demo_transparency_enabled is not a real boolean", async () => {
+    stub200({ demo_transparency_enabled: "true" });
+
+    expect((await getDemoFeatures()).ok).toBe(false);
+  });
+
+  it("treats a 404 (disabled) the same fail-closed way as any other error", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ detail: "not found", kind: "DemoTransparencyDisabled" }), {
+          status: 404,
+        }),
+      ),
+    );
+
+    const result = await getDemoFeatures();
+
+    expect(result.ok).toBe(false);
+  });
+});
+
+describe("exportDocument — request shape and 200 validation", () => {
+  it("posts FormData to /api/documents/export without setting Content-Type manually", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json(exportBody()));
+    vi.stubGlobal("fetch", fetchMock);
+    const form = new FormData();
+
+    const result = await exportDocument(form);
+
+    expect(result.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/documents/export",
+      expect.objectContaining({ method: "POST", body: form }),
+    );
+    expect(fetchMock.mock.calls[0][1].headers).toBeUndefined();
+  });
+
+  it("accepts a fully valid ExportResponse", async () => {
+    const body = exportBody();
+    stub200(body);
+
+    const result = await exportDocument(new FormData());
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data).toEqual(body);
+    }
+  });
+
+  it("rejects a 200 missing restore_handle", async () => {
+    const draft = draftOf(exportBody());
+    delete draft["restore_handle"];
+    stub200(draft);
+
+    expect((await exportDocument(new FormData())).ok).toBe(false);
+  });
+
+  it("rejects a 200 whose expires_at is not a number", async () => {
+    const draft = draftOf(exportBody());
+    draft["expires_at"] = "1800000000";
+    stub200(draft);
+
+    expect((await exportDocument(new FormData())).ok).toBe(false);
+  });
+
+  it("maps a 400 ExportRefusedError to its own copy message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ detail: "export refused", kind: "ExportRefusedError" }), {
+          status: 400,
+        }),
+      ),
+    );
+
+    const result = await exportDocument(new FormData());
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe("ExportRefusedError");
+      expect(result.error.message).toBe(copy.errors.exportRefused);
+    }
+  });
+
+  it("maps a 503 RestoreUnavailableError (no secret configured) to its own copy message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ detail: "restore is not available", kind: "RestoreUnavailableError" }), {
+          status: 503,
+        }),
+      ),
+    );
+
+    const result = await exportDocument(new FormData());
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toBe(copy.errors.restoreUnavailable);
+    }
+  });
+
+  it("maps a 404 DemoTransparencyDisabled to its own copy message, never a generic fallback", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ detail: "not found", kind: "DemoTransparencyDisabled" }), {
+          status: 404,
+        }),
+      ),
+    );
+
+    const result = await exportDocument(new FormData());
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe("DemoTransparencyDisabled");
+      expect(result.error.message).toBe(copy.errors.demoTransparencyDisabled);
+    }
+  });
+});
+
+describe("restoreText — request shape and 200 validation", () => {
+  it("POSTs {text, restore_handle} as JSON to /api/documents/restore", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json(restoreBody()));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await restoreText({ text: "PSEUDO-abc123", restore_handle: "opaque.handle" });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/documents/restore");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({ text: "PSEUDO-abc123", restore_handle: "opaque.handle" });
+  });
+
+  it("accepts a fully valid RestoreResponse", async () => {
+    const body = restoreBody();
+    stub200(body);
+
+    const result = await restoreText({ text: "x", restore_handle: "h" });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data).toEqual(body);
+    }
+  });
+
+  it("accepts a foreign-handle result (restored_count: 0, unresolved_count > 0)", async () => {
+    const draft = draftOf(restoreBody());
+    draft["restored_count"] = 0;
+    draft["unresolved_count"] = 3;
+    stub200(draft);
+
+    const result = await restoreText({ text: "x", restore_handle: "h" });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.restored_count).toBe(0);
+      expect(result.data.unresolved_count).toBe(3);
+    }
+  });
+
+  it("rejects a 200 whose restored_text is not a string", async () => {
+    const draft = draftOf(restoreBody());
+    draft["restored_text"] = null;
+    stub200(draft);
+
+    expect((await restoreText({ text: "x", restore_handle: "h" })).ok).toBe(false);
+  });
+
+  it("maps a 400 RestoreHandleInvalidError to its own copy message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ detail: "restore handle is invalid", kind: "RestoreHandleInvalidError" }), {
+          status: 400,
+        }),
+      ),
+    );
+
+    const result = await restoreText({ text: "x", restore_handle: "h" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toBe(copy.errors.restoreHandleInvalid);
+    }
+  });
+
+  it("maps a 400 RestoreHandleExpiredError to its own copy message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ detail: "restore handle has expired", kind: "RestoreHandleExpiredError" }), {
+          status: 400,
+        }),
+      ),
+    );
+
+    const result = await restoreText({ text: "x", restore_handle: "h" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toBe(copy.errors.restoreHandleExpired);
+    }
+  });
+
+  it("maps a 503 RestoreUnavailableError to its own copy message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ detail: "restore is not available", kind: "RestoreUnavailableError" }), {
+          status: 503,
+        }),
+      ),
+    );
+
+    const result = await restoreText({ text: "x", restore_handle: "h" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toBe(copy.errors.restoreUnavailable);
+    }
+  });
+
+  it("never echoes the request text/handle in a rejected/error result", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ detail: "restore handle is invalid", kind: "RestoreHandleInvalidError" }), {
+          status: 400,
+        }),
+      ),
+    );
+
+    const result = await restoreText({
+      text: "PSEUDO-marker SESSION_SECRET_MARKER",
+      restore_handle: "opaque.handle.SESSION_SECRET_MARKER",
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(JSON.stringify(result.error)).not.toContain("SESSION_SECRET_MARKER");
+    }
   });
 });
