@@ -505,8 +505,10 @@ class TestWebDoesNotExposeExportRestore:
 
     def test_no_route_handler_for_export_or_restore(self) -> None:
         api_dir = _WEB_ROOT / "app" / "api"
-        if not api_dir.is_dir():
-            return
+        assert api_dir.is_dir(), (
+            f"expected web API route directory at {api_dir}; if the web app has been "
+            "restructured, update this pin rather than let it silently pass"
+        )
         for route_file in api_dir.rglob("route.ts"):
             relative = route_file.relative_to(api_dir).as_posix()
             assert "documents/export" not in relative, (

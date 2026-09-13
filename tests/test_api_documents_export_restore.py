@@ -17,6 +17,7 @@ from adaptive_disclosure_gateway.api.app import create_app
 from adaptive_disclosure_gateway.application.presets import CONTRACT_DOCUMENT_TYPE
 from adaptive_disclosure_gateway.application.restore_handle import RestoreHandleSealer
 from adaptive_disclosure_gateway.application.service import DisclosureApplicationService
+from adaptive_disclosure_gateway.application.wire import CONTRACT_VERSION
 from adaptive_disclosure_gateway.policies import PolicyRepository
 from tests.api_support import POLICY_DIR, NeverCallMeProvider, default_context
 from tests.contracts_fixture import CONTRACTING_PARTY, CONTRACTS_FIXTURE
@@ -74,6 +75,9 @@ def test_export_returns_200_with_a_disclosed_payload_and_a_handle():
     assert body["restore_handle"]
     assert body["restorable_count"] > 0
     assert "expires_at" in body
+    # T26 / #67: export is additive to the existing contract; it must not
+    # bump CONTRACT_VERSION.
+    assert body["contract_version"] == CONTRACT_VERSION
 
 
 def test_export_response_never_contains_the_original_value():
@@ -165,6 +169,9 @@ def test_restore_recovers_originals_present_in_the_submitted_text():
         "restored_count",
         "unresolved_count",
     }
+    # T26 / #67: restore is additive to the existing contract; it must not
+    # bump CONTRACT_VERSION.
+    assert body["contract_version"] == CONTRACT_VERSION
 
 
 def test_restore_returns_400_for_a_tampered_handle():
