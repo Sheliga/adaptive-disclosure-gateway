@@ -28,6 +28,7 @@ function preview(): DocumentPreviewResponse {
     strategy: "recommended",
     governance,
     provider_mode: { provider_class: "FakeProvider" },
+    inspection: null,
     confirmation_token: "opaque",
   };
 }

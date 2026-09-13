@@ -37,6 +37,7 @@ function preview(overrides: Partial<PreviewResponse> = {}): PreviewResponse {
       requested_pseudonym_scope: "session",
     },
     provider_mode: { provider_class: "FakeProvider" },
+    inspection: null,
     ...overrides,
   };
 }

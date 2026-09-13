@@ -51,6 +51,7 @@ function preview(categories: CategoryDisclosureSummary[], status: "allowed" | "b
       requested_pseudonym_scope: "session",
     },
     provider_mode: { provider_class: "FakeProvider" },
+    inspection: null,
   };
 }
 

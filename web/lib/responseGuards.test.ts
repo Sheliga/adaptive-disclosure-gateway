@@ -47,6 +47,9 @@ const VALIDATED_CONTRACT_INTERFACES = [
   "CategoryDisclosureSummary",
   "SafeGovernanceView",
   "ProviderMode",
+  // T27 / issue #69 -- PreviewResponse.inspection
+  "DisclosureInspection",
+  "InspectionSegment",
   // POST /disclosure/execute
   "ExecuteResponse",
   "ProviderStage",
@@ -54,9 +57,14 @@ const VALIDATED_CONTRACT_INTERFACES = [
   // POST /disclosure/compare
   "CompareResponse",
   "StrategyComparisonEntry",
+  // POST /documents/export / POST /documents/restore (T26/#67, T28/#70)
+  "ExportResponse",
+  "RestoreResponse",
+  // GET /api/demo/features (web-only)
+  "DemoFeaturesResponse",
 ] as const;
 
-/** The five top-level response bodies, each of which carries a version. */
+/** The top-level response bodies that carry a `contract_version`. */
 const TOP_LEVEL_RESPONSE_GUARDS = [
   "isHealthResponse",
   "isExamplesResponse",
@@ -65,6 +73,8 @@ const TOP_LEVEL_RESPONSE_GUARDS = [
   "isDocumentPreviewResponse",
   "isExecuteResponse",
   "isCompareResponse",
+  "isExportResponse",
+  "isRestoreResponse",
 ] as const;
 
 function declaredFieldsOf(source: string, interfaceName: string): string[] {
@@ -137,5 +147,69 @@ describe("responseGuards covers every field of every validated response contract
     // is derived from -- a truthiness check here would let the string
     // "false" flip the warning on and an absent field silence it.
     expect(guards).toContain("isBoolean(value.unsafe_control_baseline)");
+  });
+});
+
+/**
+ * T27/T28 (issues #69-#70) field-set drift test: reads
+ * `application/wire.py`'s own pydantic model field declarations off disk
+ * (the actual wire shape, not `application/contracts.py`'s domain shape) and
+ * asserts the TS interfaces this module validates declare exactly the same
+ * field NAMES -- not types, which a text scrape cannot check meaningfully,
+ * but names, which is exactly the thing a hand-maintained mirror can forget
+ * to update when a field is added, renamed or removed on the Python side.
+ * `contracts.test.ts` already does the analogous thing for the domain-level
+ * enums/order these guards read; this is the same technique applied to the
+ * wire-level model shapes those guards validate field-by-field.
+ */
+describe("T27/T28 wire field sets stay synchronized with application/wire.py", () => {
+  function readWireSource(): string {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const wirePath = path.resolve(
+      here,
+      "..",
+      "..",
+      "src",
+      "adaptive_disclosure_gateway",
+      "application",
+      "wire.py",
+    );
+    return readFileSync(wirePath, "utf-8");
+  }
+
+  function readPythonModelFields(source: string, className: string): string[] {
+    const classMatch = source.match(
+      new RegExp(`class ${className}\\(BaseModel\\):[\\s\\S]*?(?=\\nclass |$)`),
+    );
+    if (!classMatch) {
+      throw new Error(
+        `could not locate \`class ${className}(BaseModel):\` in application/wire.py -- ` +
+          "has it been renamed, removed, or moved?",
+      );
+    }
+    const fields = [...classMatch[0].matchAll(/^ {4}([a-z_][a-z0-9_]*): /gm)].map(
+      (match) => match[1],
+    );
+    if (fields.length === 0) {
+      throw new Error(`found class ${className} but extracted zero fields -- regex likely stale`);
+    }
+    return fields;
+  }
+
+  function readTsInterfaceFields(interfaceName: string): string[] {
+    const contracts = readLibSource("contracts.ts");
+    return declaredFieldsOf(contracts, interfaceName);
+  }
+
+  it.each([
+    ["InspectionSegmentModel", "InspectionSegment"],
+    ["DisclosureInspectionModel", "DisclosureInspection"],
+    ["ExportResponse", "ExportResponse"],
+    ["RestoreResponse", "RestoreResponse"],
+  ])("%s (Python) and %s (TS) declare the exact same field set", (pythonClass, tsInterface) => {
+    const pythonFields = readPythonModelFields(readWireSource(), pythonClass);
+    const tsFields = readTsInterfaceFields(tsInterface);
+
+    expect([...tsFields].sort()).toEqual([...pythonFields].sort());
   });
 });
