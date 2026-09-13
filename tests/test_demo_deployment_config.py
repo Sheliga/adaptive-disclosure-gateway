@@ -164,6 +164,21 @@ class TestApiServiceSecurity:
         api = _service(_load_compose(), "api")
         assert api.get("healthcheck"), "the api service must define a healthcheck"
 
+    def test_api_service_healthcheck_targets_ready_not_health(self) -> None:
+        """T25 review finding 2: the container healthcheck that gates
+        ``web``'s ``depends_on: service_healthy`` must probe ``/ready``
+        (purely local, 503 when not ready), not ``/health`` (always 200,
+        liveness/introspection only) -- a container wired to an external
+        provider with no credential must show as unhealthy, which only
+        ``/ready`` can report.
+        """
+        api = _service(_load_compose(), "api")
+        command = " ".join(str(part) for part in api["healthcheck"]["test"])
+        assert "/ready" in command, f"api healthcheck must target /ready; got: {command!r}"
+        assert "/health" not in command, (
+            f"api healthcheck must not target /health; got: {command!r}"
+        )
+
     def test_secret_named_variables_on_api_are_interpolations_not_literals(self) -> None:
         """Every secret-shaped variable must be a compose interpolation
         (``${VAR}``/``${VAR:-...}``/``${VAR:?...}``) sourced from the host
@@ -225,6 +240,19 @@ class TestWebServiceSecurity:
     def test_web_service_has_a_healthcheck(self) -> None:
         web = _service(_load_compose(), "web")
         assert web.get("healthcheck"), "the web service must define a healthcheck"
+
+    def test_web_service_healthcheck_targets_api_ready_not_api_health(self) -> None:
+        """T25 review finding 2: the web container's own healthcheck must
+        hit its ``/api/ready`` proxy route (which tracks the real API's
+        ``/ready``), not ``/api/health`` -- so web's reported health tracks
+        whether the API is actually ready, not merely alive.
+        """
+        web = _service(_load_compose(), "web")
+        command = " ".join(str(part) for part in web["healthcheck"]["test"])
+        assert "/api/ready" in command, f"web healthcheck must target /api/ready; got: {command!r}"
+        assert "/api/health" not in command, (
+            f"web healthcheck must not target /api/health; got: {command!r}"
+        )
 
     def test_web_service_publishes_exactly_one_host_port(self) -> None:
         web = _service(_load_compose(), "web")
@@ -314,10 +342,48 @@ class TestDockerfiles:
                     f"api.Dockerfile must not declare {name} via ENV/ARG: {stripped!r}"
                 )
 
+    def test_api_dockerfile_healthcheck_targets_ready_not_health(self) -> None:
+        """T25 review finding 2: the image's own ``HEALTHCHECK`` -- used
+        whenever the image runs outside ``compose.demo.yaml`` too -- must
+        probe ``/ready``, not ``/health``, for the same reason
+        ``compose.demo.yaml``'s own healthcheck must.
+        """
+        text = _API_DOCKERFILE_PATH.read_text(encoding="utf-8")
+        urlopen_lines = [
+            line
+            for line in text.splitlines()
+            if "urlopen(" in line and not line.strip().startswith("#")
+        ]
+        assert urlopen_lines, "api.Dockerfile's HEALTHCHECK CMD must call urlopen(...)"
+        for line in urlopen_lines:
+            assert "/ready" in line, f"api.Dockerfile HEALTHCHECK must target /ready: {line!r}"
+            assert "/health" not in line, (
+                f"api.Dockerfile HEALTHCHECK must not target /health: {line!r}"
+            )
+
     def test_api_dockerfile_runs_as_non_root(self) -> None:
         text = _API_DOCKERFILE_PATH.read_text(encoding="utf-8")
         assert "USER " in text, "api.Dockerfile must switch to a non-root USER"
         assert "USER root" not in text.splitlines()[-5:]
+
+    def test_web_dockerfile_healthcheck_targets_api_ready_not_api_health(self) -> None:
+        """T25 review finding 2: mirrors the api.Dockerfile check above for
+        the web image's own ``HEALTHCHECK``.
+        """
+        text = _WEB_DOCKERFILE_PATH.read_text(encoding="utf-8")
+        fetch_lines = [
+            line
+            for line in text.splitlines()
+            if "fetch(" in line and not line.strip().startswith("#")
+        ]
+        assert fetch_lines, "web/Dockerfile's HEALTHCHECK CMD must call fetch(...)"
+        for line in fetch_lines:
+            assert "/api/ready" in line, (
+                f"web/Dockerfile HEALTHCHECK must target /api/ready: {line!r}"
+            )
+            assert "/api/health" not in line, (
+                f"web/Dockerfile HEALTHCHECK must not target /api/health: {line!r}"
+            )
 
     def test_web_dockerfile_runs_as_non_root(self) -> None:
         text = _WEB_DOCKERFILE_PATH.read_text(encoding="utf-8")

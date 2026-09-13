@@ -282,6 +282,20 @@ def create_app(
         service = _get_service(request)
         return schemas.HealthResponse.from_domain(service.describe_health()).model_dump()
 
+    @app.get("/ready", response_model=None)
+    def ready(request: Request) -> JSONResponse:
+        """Purely local readiness (T25 review finding 2): no network call,
+        no provider call, no SDK client construction -- see
+        ``DisclosureApplicationService.describe_readiness``'s own docstring.
+        Distinct from ``/health`` above, which is liveness/introspection and
+        always returns 200; this returns 503 when not ready so a container
+        orchestrator's healthcheck can act on it directly.
+        """
+        service = _get_service(request)
+        readiness = service.describe_readiness()
+        body = schemas.ReadyResponse.from_domain(readiness).model_dump(exclude_none=True)
+        return JSONResponse(status_code=200 if readiness.ready else 503, content=body)
+
     @app.get("/examples", response_model=None)
     def list_examples(request: Request) -> dict[str, object]:
         service = _get_service(request)

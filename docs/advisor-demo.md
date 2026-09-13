@@ -454,15 +454,35 @@ an agent session -- no hosting credentials exist in that environment):
 
 ### Health checks
 
-- `GET /health` on the API (internal-only; not reachable from outside the compose network) --
-  reports provider class/model and `deterministic_demo_mode`, never calls the provider itself.
-- `GET /api/health` on the web origin -- a thin proxy to the above; a healthy response also
-  proves the web container can reach the api container.
-- Both containers declare a Docker `HEALTHCHECK`, and `compose.demo.yaml` additionally gates
-  `web`'s startup on `api` being `service_healthy`.
-- A fail-closed startup refusal (misconfigured provider) surfaces as the api container never
-  becoming healthy -- `restart: unless-stopped` retries the exited container rather than masking
-  the failure as healthy.
+Two distinct endpoints, deliberately not one (T25 review finding 2):
+
+- `GET /health` -- **liveness/introspection**, always 200 once the process is serving requests.
+  Reports provider class/model and `deterministic_demo_mode`; never calls the provider and never
+  reflects readiness. `GET /api/health` on the web origin is a thin proxy to it.
+- `GET /ready` -- **readiness**, purely local: no network call, no provider call, no SDK client
+  construction. Returns `{"status": "ready"}` with HTTP 200, or `{"status": "not_ready", "reason":
+  "<code>"}` with HTTP 503. `reason` is one fixed, closed-vocabulary code, never free text, a
+  credential or a config value:
+
+  | `reason` | Meaning |
+  | --- | --- |
+  | `provider_credential_missing` | `ADG_PROVIDER=anthropic` and its credential environment variable is unset or blank |
+  | `provider_sdk_unavailable` | the `anthropic` package is not importable |
+  | `confirmation_secret_not_durable` | an external provider is wired with only an ephemeral, per-process preview-confirmation signer |
+  | `provider_unrecognized` | the wired provider is not one this deployment recognizes (fail-closed) |
+
+  `FakeProvider` is always ready. `GET /api/ready` on the web origin proxies the same contract.
+- Both containers' Docker `HEALTHCHECK` (and `compose.demo.yaml`'s own `healthcheck:`) target
+  `/ready`/`/api/ready`, not `/health`/`/api/health` -- so a container reporting healthy actually
+  means ready, not merely alive. `compose.demo.yaml` additionally gates `web`'s startup on `api`
+  being `service_healthy` under this same corrected definition.
+- A fail-closed startup refusal (invalid `ADG_PROVIDER`, or an external provider with no
+  `ADG_PREVIEW_CONFIRMATION_SECRET`) still surfaces as the api process exiting immediately, so it
+  never reaches either endpoint -- `restart: unless-stopped` retries the exited container rather
+  than masking the failure as healthy. A *running* but not-ready api (e.g. `ADG_PROVIDER=anthropic`
+  with no `ANTHROPIC_API_KEY`) instead serves `/health` 200 and `/ready` 503, so `docker compose ps`
+  shows it `unhealthy` rather than `Exited`, and `web` never starts (`depends_on: service_healthy`
+  is never satisfied).
 
 ### Running the smoke test
 

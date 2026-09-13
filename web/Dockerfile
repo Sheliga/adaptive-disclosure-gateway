@@ -62,10 +62,14 @@ USER adg
 EXPOSE 3000
 
 # node, not curl: the slim base has no curl, and this avoids adding a
-# package purely for the healthcheck. Hits the app's OWN health proxy
-# (`/api/health` -> `lib/proxy.ts` -> the api service), so a healthy status
-# here also proves the web container can reach the api container.
+# package purely for the healthcheck. Hits the app's OWN readiness proxy
+# (`/api/ready` -> `lib/proxy.ts` -> the api service's /ready), not
+# `/api/health` (T25 review finding 2): /health always reports 200 once the
+# api process is up, even mid-startup-refusal, while /ready reports 503
+# until the api is actually ready -- so a healthy status here also proves
+# the web container can reach a genuinely ready api container, not merely a
+# live one.
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=5 \
-    CMD node -e "fetch('http://127.0.0.1:3000/api/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+    CMD node -e "fetch('http://127.0.0.1:3000/api/ready').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
 CMD ["node", "server.js"]

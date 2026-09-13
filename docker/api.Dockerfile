@@ -101,8 +101,15 @@ EXPOSE 8000
 
 # python, not curl: python:3.13-slim has no curl installed, and adding one
 # just for the healthcheck would be a needless extra package/layer.
+#
+# Targets /ready, not /health (T25 review finding 2): /health is
+# liveness/introspection and always reports 200 once the process is up, even
+# mid-startup-refusal; /ready is the purely local readiness check that
+# reports 503 while, e.g., a real-provider deployment has no credential yet.
+# urlopen() itself raises urllib.error.HTTPError on a non-2xx response, which
+# already makes this CMD exit non-zero on a 503 with no extra handling.
 HEALTHCHECK --interval=15s --timeout=5s --start-period=120s --retries=5 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)" || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)" || exit 1
 
 # `api/app.py` exposes `create_app()`, a factory, not a module-level `app` --
 # `--factory` tells uvicorn to call it. Single worker: Docling's model

@@ -61,12 +61,18 @@ services:
       - adg-demo
     # No `ports:` -- the api service is reachable only from other
     # containers on the adg-demo network, never from the host.
+    # Targets /ready, not /health: /health is liveness/introspection and
+    # always reports 200 once the process is up, even mid-startup-refusal;
+    # /ready is the purely local readiness check (T25 review finding 2) that
+    # reports 503 while, e.g., ADG_PROVIDER=anthropic has no credential yet
+    # -- urlopen() itself raises on a non-2xx status, so a 503 here already
+    # makes this CMD exit non-zero without any extra status-code handling.
     healthcheck:
       test:
         - CMD
         - python
         - -c
-        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)
       interval: 15s
       timeout: 5s
       # Docling's import/model-load path is slow on a cold container; a
@@ -108,13 +114,18 @@ services:
         condition: service_healthy
     networks:
       - adg-demo
+    # Targets /api/ready (proxies the api container's /ready), not
+    # /api/health -- so web's reported container health tracks whether the
+    # api service is actually ready, not merely alive (T25 review finding
+    # 2). depends_on below still gates web's own startup on api being
+    # service_healthy under this same corrected definition.
     healthcheck:
       test:
         - CMD
         - node
         - -e
         - >-
-          fetch('http://127.0.0.1:3000/api/health').then((r) =>
+          fetch('http://127.0.0.1:3000/api/ready').then((r) =>
           process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))
       interval: 15s
       timeout: 5s
