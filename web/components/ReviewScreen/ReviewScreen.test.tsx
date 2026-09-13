@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { renderWithLocale } from "@/i18n/renderWithLocale";
-import type { CategoryDisclosureSummary, PreviewResponse } from "@/lib/contracts";
+import type { CategoryDisclosureSummary, DisclosureInspection, PreviewResponse } from "@/lib/contracts";
 import { copy } from "@/lib/copy";
 import { en } from "@/lib/copy.en";
 
@@ -29,7 +29,11 @@ function category(overrides: Partial<CategoryDisclosureSummary>): CategoryDisclo
   };
 }
 
-function preview(categories: CategoryDisclosureSummary[], status: "allowed" | "blocked" = "allowed"): PreviewResponse {
+function preview(
+  categories: CategoryDisclosureSummary[],
+  status: "allowed" | "blocked" = "allowed",
+  inspection: DisclosureInspection | null = null,
+): PreviewResponse {
   return {
     contract_version: "t20-application-api-v1",
     summary: {
@@ -51,7 +55,7 @@ function preview(categories: CategoryDisclosureSummary[], status: "allowed" | "b
       requested_pseudonym_scope: "session",
     },
     provider_mode: { provider_class: "FakeProvider" },
-    inspection: null,
+    inspection,
   };
 }
 
@@ -319,5 +323,58 @@ describe("ReviewScreen -- switches to English (T21 fourth slice)", () => {
     await userEvent.click(screen.getByText(en.review.showPayloadToggle));
 
     expect(await screen.findByText(p.external_payload)).toBeInTheDocument();
+  });
+});
+
+/**
+ * T27 / issue #69: `ReviewScreen` renders the transformation inspector only
+ * when `preview.inspection !== null`, and only via the inspector's own
+ * collapsed disclosure -- its content must stay out of the DOM here too,
+ * for the same reason `external_payload` does.
+ */
+describe("ReviewScreen -- disclosure inspector (T27)", () => {
+  it("renders no inspector toggle when inspection is null", () => {
+    render(
+      <ReviewScreen preview={preview([category({})])} executeError={null} onConfirm={vi.fn()} onCancel={vi.fn()} />,
+    );
+
+    expect(screen.queryByText(copy.disclosureInspector.toggleLabel)).not.toBeInTheDocument();
+  });
+
+  it("renders the inspector toggle when inspection is provided, with its content absent until opened", async () => {
+    const inspection = {
+      available: true,
+      unavailable_reason: null,
+      segments: [{ action: null, category: null, original: "hello", disclosed: "hello" }],
+    };
+    render(
+      <ReviewScreen
+        preview={preview([category({})], "allowed", inspection)}
+        executeError={null}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(copy.disclosureInspector.toggleLabel)).toBeInTheDocument();
+    expect(screen.queryByText(copy.disclosureInspector.originalColumnHeading)).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByText(copy.disclosureInspector.toggleLabel));
+
+    expect(screen.getByText(copy.disclosureInspector.originalColumnHeading)).toBeInTheDocument();
+  });
+
+  it("renders the unavailable message when inspection.available is false", () => {
+    const inspection = { available: false as const, unavailable_reason: "blocked" as const, segments: [] };
+    render(
+      <ReviewScreen
+        preview={preview([category({})], "allowed", inspection)}
+        executeError={null}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(copy.disclosureInspector.unavailableBlockedHeading)).toBeInTheDocument();
   });
 });

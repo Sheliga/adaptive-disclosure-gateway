@@ -27,6 +27,7 @@ import type { DisplayError } from "@/lib/api";
 import type { PreviewResponse } from "@/lib/contracts";
 
 import { CategoryOutcomeRow } from "../CategoryOutcomeRow/CategoryOutcomeRow";
+import { DisclosureInspector } from "../DisclosureInspector/DisclosureInspector";
 import styles from "./ReviewScreen.module.css";
 
 export interface ReviewScreenProps {
@@ -106,6 +107,15 @@ export function ReviewScreen({ preview, executeError, onConfirm, onCancel }: Rev
           </>
         )}
       </details>
+
+      {preview.inspection !== null && (
+        <DisclosureInspector
+          inspection={preview.inspection}
+          categories={preview.summary.categories}
+          treatment={preview.treatment}
+          strategy={preview.strategy}
+        />
+      )}
 
       {executeError && (
         <p role="alert" className={styles.error}>
