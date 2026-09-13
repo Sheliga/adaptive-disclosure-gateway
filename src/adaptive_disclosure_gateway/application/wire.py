@@ -69,7 +69,9 @@ from pydantic import BaseModel, ConfigDict
 from adaptive_disclosure_gateway.application.contracts import (
     CategoryDisclosureSummary,
     DisclosureExecution,
+    DisclosureExport,
     DisclosurePreview,
+    DisclosureRestore,
     DisclosureSummary,
     DocumentDisclosurePreview,
     SafeGovernanceView,
@@ -465,6 +467,63 @@ class CompareResponse(BaseModel):
             ],
             governance=SafeGovernanceViewModel.from_domain(comparison.governance),
             provider_mode=ProviderModeModel(provider_class=comparison.provider_mode.provider_class),
+        )
+
+
+# --- POST /documents/export / POST /documents/restore ---------------------------
+#
+# T26 / issue #67. Two new, additive response shapes -- neither replaces nor
+# widens an existing one, so CONTRACT_VERSION is not bumped (see this
+# module's own docstring on why adding a response model is not an
+# incompatible change to any shape a client already depends on).
+#
+# Deliberately excludes anything that would let the mapping travel wholesale:
+# ``ExportResponse`` never carries the (pseudonym -> original) entries, only
+# ``restore_handle`` (opaque) and ``restorable_count``; ``RestoreResponse``
+# never carries the mapping either, only the restored text and two counts.
+
+
+class ExportResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: str
+    external_payload: str
+    restore_handle: str
+    expires_at: int
+    restorable_count: int
+    treatment: str
+    strategy: str
+    governance: SafeGovernanceViewModel
+
+    @classmethod
+    def from_domain(cls, export: DisclosureExport) -> ExportResponse:
+        return cls(
+            contract_version=CONTRACT_VERSION,
+            external_payload=export.external_payload,
+            restore_handle=export.restore_handle,
+            expires_at=export.expires_at,
+            restorable_count=export.restorable_count,
+            treatment=export.treatment.value,
+            strategy=export.strategy.value,
+            governance=SafeGovernanceViewModel.from_domain(export.governance),
+        )
+
+
+class RestoreResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: str
+    restored_text: str
+    restored_count: int
+    unresolved_count: int
+
+    @classmethod
+    def from_domain(cls, restore: DisclosureRestore) -> RestoreResponse:
+        return cls(
+            contract_version=CONTRACT_VERSION,
+            restored_text=restore.restored_text,
+            restored_count=restore.restored_count,
+            unresolved_count=restore.unresolved_count,
         )
 
 

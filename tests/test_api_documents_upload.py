@@ -317,6 +317,13 @@ def test_there_is_no_upload_endpoint_that_both_uploads_and_calls_the_provider_un
     """The review step is the product. A route that ingested and executed in
     one call would defeat it, so the only execute route is a separate,
     explicitly-confirmed one.
+
+    ``/documents/export`` (T26 / issue #67) is not an exception to this: it
+    never calls the provider either (see
+    ``tests/test_api_documents_export_restore.py::test_export_never_calls_the_provider``),
+    so it carries none of the risk this test guards against.
+    ``/documents/restore`` is not an upload route at all -- it takes a JSON
+    body, independent of any document.
     """
     service = build_service(document_parser=StubContractParser())
     client = build_client(service)
@@ -326,7 +333,13 @@ def test_there_is_no_upload_endpoint_that_both_uploads_and_calls_the_provider_un
         if getattr(route, "path", "").startswith("/documents")
     }
 
-    assert paths == {"/documents/preview", "/documents/execute", "/documents/types"}
+    assert paths == {
+        "/documents/preview",
+        "/documents/execute",
+        "/documents/types",
+        "/documents/export",
+        "/documents/restore",
+    }
 
 
 # --- a preview authorises exactly one execute --------------------------------

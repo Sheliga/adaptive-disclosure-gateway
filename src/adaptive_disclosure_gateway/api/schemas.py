@@ -45,12 +45,14 @@ from adaptive_disclosure_gateway.application.wire import (
     ExamplesResponse,
     ExampleSummaryModel,
     ExecuteResponse,
+    ExportResponse,
     HealthResponse,
     PreviewResponse,
     ProviderHealthModel,
     ProviderModeModel,
     ProviderStageModel,
     ReconstructionStageModel,
+    RestoreResponse,
     SafeGovernanceViewModel,
     StrategiesResponse,
     StrategyComparisonEntryModel,
@@ -71,6 +73,7 @@ __all__ = [
     "ExampleSummaryModel",
     "ExamplesResponse",
     "ExecuteResponse",
+    "ExportResponse",
     "GovernanceOverridesBody",
     "HealthResponse",
     "PreviewResponse",
@@ -78,6 +81,8 @@ __all__ = [
     "ProviderModeModel",
     "ProviderStageModel",
     "ReconstructionStageModel",
+    "RestoreRequestBody",
+    "RestoreResponse",
     "SafeGovernanceViewModel",
     "StrategiesResponse",
     "StrategyComparisonEntryModel",
@@ -135,6 +140,23 @@ class DisclosureRequestBody(BaseModel):
     task: str | None = None
     strategy: DisclosureStrategy | None = None
     governance: GovernanceOverridesBody | None = None
+
+
+class RestoreRequestBody(BaseModel):
+    """The JSON body for ``POST /documents/restore`` (T26 / issue #67):
+    arbitrary submitted text plus the opaque restore handle a prior export
+    issued for it.
+
+    Deliberately just these two fields -- no scope, session or document
+    identifier, and no governance overrides. The handle alone determines
+    what can be restored; a caller cannot widen or redirect that by
+    supplying anything else.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str
+    restore_handle: str
 
 
 # --- document-upload vocabulary ---------------------------------------------
