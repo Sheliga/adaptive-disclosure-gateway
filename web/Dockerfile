@@ -17,7 +17,12 @@
 # to the Python API directly (see `lib/proxy.ts`'s module docstring), so
 # nothing about that address belongs in the client bundle.
 
-FROM node:24-slim AS base
+# Pinned by exact version and digest, not a floating "24-slim" tag -- see
+# docker/api.Dockerfile's base-image comment for why, and
+# docs/advisor-demo.md's "Reproducible dependencies" section for the refresh
+# procedure. Digest captured by pulling node:24.21.0-slim and reading
+# `docker inspect --format='{{index .RepoDigests 0}}'`.
+FROM node:24.21.0-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553 AS base
 
 # ---------------------------------------------------------------------------
 FROM base AS deps

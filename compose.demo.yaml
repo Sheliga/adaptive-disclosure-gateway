@@ -144,7 +144,11 @@ services:
   caddy:
     profiles:
       - tls
-    image: caddy:2-alpine
+    # Pinned by exact version and digest, not the floating "2-alpine" tag --
+    # see docker/api.Dockerfile's base-image comment for why. Digest
+    # captured by pulling caddy:2.11.4-alpine and reading
+    # `docker inspect --format='{{index .RepoDigests 0}}'`.
+    image: caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
     environment:
       # Deliberately `:-` (optional), not `:?` (required): compose
       # interpolates every service's environment -- including a

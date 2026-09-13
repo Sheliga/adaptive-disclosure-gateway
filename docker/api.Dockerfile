@@ -25,7 +25,14 @@
 # `/app/corpus/hr/v1/cases` resolve as the default policy/examples
 # directories with no extra environment configuration.
 
-FROM python:3.13.13-slim AS base
+# Pinned by digest, not tag alone: a tag can be republished to point at a
+# different image; the digest is the only immutable part of this reference.
+# Digest captured by pulling python:3.13.13-slim and reading
+# `docker inspect --format='{{index .RepoDigests 0}}'`; see
+# docs/advisor-demo.md's "Reproducible dependencies" section for the exact
+# refresh procedure (re-pull the tag, re-capture the digest, re-verify the
+# constraints file still resolves cleanly).
+FROM python:3.13.13-slim@sha256:aa938a849bcb82dce8f49480f056ab82bf5c1c3ebc294f0430f37b6820e7f286 AS base
 
 # ---------------------------------------------------------------------------
 FROM base AS builder
@@ -50,6 +57,11 @@ COPY scripts ./scripts
 # Only the two files scripts/prewarm_docling.py needs for synthetic
 # PDF/DOCX fixtures -- never the rest of the test suite.
 COPY tests/__init__.py tests/document_fixtures.py ./tests/
+# T25 review finding 4: the full resolved runtime dependency closure, pinned
+# to exact versions -- see that file's own header for what it covers and how
+# to regenerate it. Copied in before the installs below so both `pip
+# install` steps can constrain against it.
+COPY docker/api-constraints.txt ./docker/api-constraints.txt
 
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
@@ -60,8 +72,19 @@ ENV PATH="/opt/venv/bin:${PATH}"
 # pip's resolver finds it already satisfied when `docling` asks for `torch`
 # and never replaces it with the CUDA build. This demo has no GPU and no use
 # for one.
-RUN pip install --index-url https://download.pytorch.org/whl/cpu torch \
-    && pip install --extra-index-url https://download.pytorch.org/whl/cpu \
+#
+# `-c docker/api-constraints.txt` on both steps: a constraint never adds a
+# package pip was not already going to install (unlike a requirements file),
+# it only pins the version once pip decides to install it -- so this cannot
+# accidentally pull in something extra, only make the resolved closure
+# reproducible. Adding a runtime dependency to pyproject.toml without
+# refreshing this file makes the *build* keep working (pip still resolves
+# it, just unpinned) while `tests/test_docker_reproducibility.py` fails the
+# local test suite -- refresh the lock before that PR merges.
+RUN pip install -c docker/api-constraints.txt \
+        --index-url https://download.pytorch.org/whl/cpu torch \
+    && pip install -c docker/api-constraints.txt \
+        --extra-index-url https://download.pytorch.org/whl/cpu \
         ".[api,documents,anthropic]"
 
 # Prewarm Docling's model cache: one real PDF + DOCX conversion of synthetic,

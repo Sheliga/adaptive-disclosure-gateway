@@ -525,6 +525,53 @@ normalized, disclosed and discarded within one request -- never written to disk.
 volume in `compose.demo.yaml` holds Caddy's TLS certificate/account state under the optional
 `tls` profile.
 
+### Reproducible dependencies (T25 review finding 4)
+
+The api image's full resolved runtime dependency closure -- every direct and transitive
+dependency pip resolves for the base project plus its `api`/`documents`/`anthropic` extras, not
+only the ones `pyproject.toml` names directly -- is pinned to exact `name==version` in
+[`docker/api-constraints.txt`](../docker/api-constraints.txt). `docker/api.Dockerfile` passes it
+to every `pip install` with `-c` (a constraint, never a requirement: it cannot add a package pip
+was not already going to install, it only pins the version once pip decides to install it), so
+two builds of the same commit resolve the identical dependency set instead of drifting with
+whatever the package index happens to serve that day. `torch`/`torchvision` are pinned to their
+exact CPU-build version (`+cpu` local version identifier); the Dockerfile also keeps the CPU wheel
+index (`https://download.pytorch.org/whl/cpu`) explicit so the *source* of the wheel stays
+documented, not only its version.
+
+`tests/test_docker_reproducibility.py` enforces this stays true: every `pyproject.toml` runtime
+dependency (base `dependencies` plus the `api`/`documents`/`anthropic` extras) must have a pin in
+the constraints file, so adding a dependency without refreshing the lock fails the local test
+suite rather than silently shipping unpinned. **Note for whichever of this PR (T25) and PR #68
+(T26, which adds `cryptography` as a base dependency) merges second**: that merge must regenerate
+`docker/api-constraints.txt` before it lands, or this test fails.
+
+Regenerate after any dependency change:
+
+```bash
+docker build --target builder -f docker/api.Dockerfile -t adg-constraints-builder .
+docker run --rm adg-constraints-builder pip freeze --exclude adaptive-disclosure-gateway \
+  > docker/api-constraints.txt
+# restore docker/api-constraints.txt's header comment (pip freeze emits no comments),
+# then rebuild to confirm the constrained install still resolves cleanly:
+docker compose -f compose.demo.yaml build --no-cache
+```
+
+Base images are pinned by exact tag **and** digest (a tag alone can be republished to point at a
+different image later; the digest is the only immutable part of the reference):
+
+| Image | Pinned reference |
+| --- | --- |
+| api base | `python:3.13.13-slim@sha256:aa938a849bcb82dce8f49480f056ab82bf5c1c3ebc294f0430f37b6820e7f286` |
+| web base | `node:24.21.0-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553` |
+| caddy (`tls` profile) | `caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648` |
+
+Refresh a digest by pulling the tag and reading it back: `docker pull <image>:<tag>` then
+`docker inspect --format='{{index .RepoDigests 0}}' <image>:<tag>`.
+
+This pins dependency *versions* and image *references* only -- no scientific/experimental
+semantics changed.
+
 ### Resource use (measured, FakeProvider stack, this environment)
 
 | | |
