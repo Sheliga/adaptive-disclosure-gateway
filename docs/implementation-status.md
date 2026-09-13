@@ -572,22 +572,22 @@ The UI adds no treatment, policy, corpus, oracle or metric semantics. It renders
 
 ### T25 / Issue #42 — containerized demo/deploy infrastructure
 
-Status: **backlog / follows functional API+UI integration / non-blocking for M3**.
+Status: **in validation via PR (feat/t25-advisor-demo-deployment -> develop)**. Hosted URL and
+live Anthropic smoke through that URL are **pending** -- neither T25 nor the Demo Track (#41)
+is complete until both exist.
 
-The current root `compose.yaml` is a development/test harness rather than deploy infrastructure: it mounts the repository and runs tests. T25 owns a distinct deployment-oriented topology.
+The current root `compose.yaml` is a development/test harness rather than deploy infrastructure: it mounts the repository and runs tests. T25 owns a distinct deployment-oriented topology, delivered as `compose.demo.yaml` plus `docker/api.Dockerfile` and `web/Dockerfile`.
 
-Required demo infrastructure includes:
+Delivered in this PR:
 
-- Python API image on the supported Python 3.13 runtime;
-- Next.js image;
-- demo/deploy compose/profile distinct from test compose;
-- service networking;
-- health/readiness checks;
-- explicit CORS/API-origin handling;
-- server-side-only provider secrets;
-- one-command local startup;
-- documented simple hosted container deployment suitable for sharing a URL;
-- core/application version provenance.
+- Python API image (`docker/api.Dockerfile`) on Python 3.13.13, multi-stage, CPU-only torch wheels, a build-time Docling model-cache prewarm step, non-root runtime user;
+- Next.js image (`web/Dockerfile`) using `output: "standalone"`, multi-stage, non-root runtime user;
+- `compose.demo.yaml`: `api` (internal-only, no published port, no volume) and `web` (one published port, depends on `api` being healthy) on a dedicated network, plus an opt-in `tls` profile (Caddy reverse proxy, the stack's only volume);
+- health/readiness checks on both services;
+- `ADG_PROVIDER` is a required compose interpolation (no silent default either way); every Anthropic/secret variable reaches `api` only, as an interpolation, never a literal;
+- `.dockerignore` (root and `web/`) excluding `.env`/`.env.*`, `.git`, `.venv`, `node_modules`, `.next` and the repository's own never-commit paths (`local-data/`, `/vault/`, `artifacts/private/`);
+- `tests/test_demo_deployment_config.py` pins the security-relevant shape of the above statically (no Docker required to run it);
+- an opt-in E2E smoke test (`tests/test_demo_smoke_e2e.py`, gated on `ADG_DEMO_SMOKE_BASE_URL`) drives the web origin's `/api/documents/{types,preview,execute}` with synthetic PDF/DOCX contracts.
 
 The target is a small research-demo deployment, not desktop distribution, installers, multi-tenant SaaS or production-scale orchestration.
 

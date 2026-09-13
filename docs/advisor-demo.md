@@ -374,6 +374,134 @@ T25 owns:
 - documented hosted deployment path;
 - application/core version provenance.
 
+## Deployment
+
+Delivered by T25 / Issue #42: `compose.demo.yaml`, `docker/api.Dockerfile` and
+`web/Dockerfile`, distinct from the root `compose.yaml` (the dev/test harness that mounts the
+repository and runs pytest).
+
+### Local one-command startup
+
+```bash
+# 1. Copy the example env and fill in only what you need (placeholders only,
+#    never commit a real value):
+cp .env.example .env
+
+# 2. Deterministic demo mode (no credential, no cost, no network egress):
+ADG_PROVIDER=fake docker compose -f compose.demo.yaml up --build
+```
+
+`ADG_PROVIDER` is a required compose variable (`${ADG_PROVIDER:?...}`) -- there is no default in
+either direction, so a plain `docker compose -f compose.demo.yaml up` with nothing set refuses
+immediately rather than silently picking a provider. Once both containers report healthy, open
+`http://localhost:3000` (override the host port with `ADG_DEMO_WEB_PORT`).
+
+To stop: `docker compose -f compose.demo.yaml down`.
+
+### Enabling the real Anthropic provider
+
+```bash
+export ADG_PROVIDER=anthropic
+export ANTHROPIC_API_KEY=sk-ant-...
+# Required once a provider outside the trust boundary is selected -- see
+# provider-configuration.md's "A real provider also requires
+# ADG_PREVIEW_CONFIRMATION_SECRET".
+export ADG_PREVIEW_CONFIRMATION_SECRET=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
+
+docker compose -f compose.demo.yaml up --build
+```
+
+Every `ADG_ANTHROPIC_*` variable from [`provider-configuration.md`](provider-configuration.md)
+is threaded through to the `api` service unchanged (`ADG_ANTHROPIC_MODEL_ID`,
+`ADG_ANTHROPIC_MAX_OUTPUT_TOKENS`, `ADG_ANTHROPIC_EFFORT`, `ADG_ANTHROPIC_THINKING`,
+`ADG_ANTHROPIC_TIMEOUT_SECONDS`); none of it, and no credential, is ever forwarded to the `web`
+service -- the browser only ever talks to the web origin (see `web/lib/proxy.ts`), never the
+Python API, so `web` has no legitimate reason to hold any of it.
+
+### Hosted deployment path
+
+The smallest option compatible with a two-container stack and Docling's memory needs is a
+single Docker host VM. Steps a human runs once a VM exists (no infrastructure is provisioned by
+an agent session -- no hosting credentials exist in that environment):
+
+1. Provision a VM (>=4 GB RAM -- see "Resource use" below for the measured footprint) with
+   Docker and the Compose plugin installed, and a public IP.
+2. Point DNS (an A/AAAA record) for the chosen hostname at that IP.
+3. Clone the repository on the VM and create a `.env` (git-ignored) with `ADG_PROVIDER`,
+   `ANTHROPIC_API_KEY`, `ADG_PREVIEW_CONFIRMATION_SECRET` and `ADG_DEMO_DOMAIN` set as above.
+4. Open ports 80/443 on the VM's firewall (the `tls` profile terminates TLS itself; it needs no
+   separate load balancer).
+5. Start the stack with the optional Caddy TLS reverse-proxy profile, which automatically
+   requests and renews a certificate for `ADG_DEMO_DOMAIN`:
+
+   ```bash
+   docker compose -f compose.demo.yaml --env-file .env --profile tls up -d --build
+   ```
+
+   Caddy's certificate/account state is the *only* volume anywhere in `compose.demo.yaml` --
+   `api` and `web` remain volume-free, consistent with "no persistent storage of uploaded
+   source documents."
+6. Verify: `curl -sf https://<ADG_DEMO_DOMAIN>/api/health` reports `"status": "ok"`, then open
+   the URL in a browser and run the guided flow with a synthetic document.
+7. Share `https://<ADG_DEMO_DOMAIN>` with prospective advisors.
+
+### Health checks
+
+- `GET /health` on the API (internal-only; not reachable from outside the compose network) --
+  reports provider class/model and `deterministic_demo_mode`, never calls the provider itself.
+- `GET /api/health` on the web origin -- a thin proxy to the above; a healthy response also
+  proves the web container can reach the api container.
+- Both containers declare a Docker `HEALTHCHECK`, and `compose.demo.yaml` additionally gates
+  `web`'s startup on `api` being `service_healthy`.
+- A fail-closed startup refusal (misconfigured provider) surfaces as the api container never
+  becoming healthy -- `restart: unless-stopped` retries the exited container rather than masking
+  the failure as healthy.
+
+### Running the smoke test
+
+An opt-in E2E test (`tests/test_demo_smoke_e2e.py`) drives the **web origin only** --
+`/api/health` -> `/api/documents/types` -> multipart `/api/documents/preview` -> confirmed
+`/api/documents/execute` -- with synthetic PDF and DOCX contracts, and asserts the confirmation
+flow, the B0 -- Direct external-execute refusal (when the provider is external) and the 413
+request-size boundary. It is skipped unless `ADG_DEMO_SMOKE_BASE_URL` is set:
+
+```bash
+ADG_DEMO_SMOKE_BASE_URL=http://localhost:3000 \
+  .venv/Scripts/python.exe -m pytest tests/test_demo_smoke_e2e.py -v
+```
+
+### What is persisted
+
+Nothing document-related. `api` and `web` mount no volume; an uploaded file is read into memory,
+normalized, disclosed and discarded within one request -- never written to disk. The *only*
+volume in `compose.demo.yaml` holds Caddy's TLS certificate/account state under the optional
+`tls` profile.
+
+### Resource use (measured, FakeProvider stack, this environment)
+
+| | |
+| --- | --- |
+| `adg-demo-api` image size | ~2.64 GB (CPU-only torch + Docling + transformers) |
+| `adg-demo-web` image size | ~438 MB |
+| API container steady-state memory (models resident, idle/light load) | ~330-345 MiB |
+| API container cold start to `healthy` (fresh `docker compose up` after the image is built) | ~1s; single preview+execute round trip on the first request after a cold start, ~1.8s |
+
+A 4 GB VM is a comfortable floor; the measured API footprint leaves headroom for the web
+container and the OS. Numbers above are from a local Docker Desktop run of the FakeProvider
+stack, not a production host -- re-measure before committing to a specific hosted VM size.
+
+### Known limitations
+
+- No authentication: treat a shared demo URL as unlisted-but-not-secret, and set a spend limit
+  on the Anthropic account/key used, since anyone with the link can run real-provider requests.
+- Two T21 non-blockers carry over unchanged: no document-aware B0-B4 comparison for uploaded
+  files yet (comparison stays available for examples/pasted text), and the selected file's type
+  label can remain in the previous locale until reselection after a language switch.
+- Live Anthropic smoke through a hosted URL is **pending** -- no Anthropic credential exists in
+  the environment this deployment work was implemented in. T25/the Demo Track (#41) is not
+  complete until a hosted URL is published and a live Anthropic smoke test has run against it
+  with a synthetic contract.
+
 ## Security stance
 
 - provider credentials never reach the browser;
