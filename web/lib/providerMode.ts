@@ -57,7 +57,7 @@ export interface ProviderModeNotice {
    * re-deciding what it means: `demo` is a verified fact about the run,
    * `unverified` is an admission that no fact was obtained.
    */
-  tone: "demo" | "unverified";
+  tone: "demo" | "external" | "unverified";
 }
 
 /**
@@ -79,6 +79,6 @@ export function describeProviderMode(
     case "ready":
       return state.health.provider.deterministic_demo_mode
         ? { message: appCopy.provider.deterministicDemoLabel, tone: "demo" }
-        : null;
+        : { message: appCopy.provider.externalModelLabel, tone: "external" };
   }
 }

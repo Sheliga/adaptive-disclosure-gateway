@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { proxyGet, proxyJsonPost } from "./proxy";
+import { proxyGet, proxyJsonPost, proxyMultipartPost } from "./proxy";
 
 const ORIGINAL_ENV = { ...process.env };
 
@@ -77,6 +77,37 @@ describe("proxyGet", () => {
     const bodyText = JSON.stringify(body);
     expect(bodyText).not.toContain("ECONNREFUSED");
     expect(bodyText).not.toContain("secret internal detail");
+  });
+});
+
+describe("proxyMultipartPost", () => {
+  it("forwards the original body stream and multipart boundary without parsing it", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const boundary = "----synthetic-boundary";
+    const incoming = new Request("http://web.test/api/documents/preview", {
+      method: "POST",
+      headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+      body: `--${boundary}\r\nsynthetic multipart bytes\r\n--${boundary}--`,
+    });
+    const originalBody = incoming.body;
+
+    await proxyMultipartPost("/documents/preview", incoming);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://upstream.test/documents/preview",
+      expect.objectContaining({
+        method: "POST",
+        body: originalBody,
+        duplex: "half",
+        headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+      }),
+    );
   });
 });
 

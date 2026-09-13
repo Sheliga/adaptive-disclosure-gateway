@@ -38,8 +38,11 @@ const VALIDATED_CONTRACT_INTERFACES = [
   // GET /examples
   "ExamplesResponse",
   "ExampleSummary",
+  "DocumentTypesResponse",
+  "DocumentType",
   // POST /disclosure/preview
   "PreviewResponse",
+  "DocumentPreviewResponse",
   "DisclosureSummary",
   "CategoryDisclosureSummary",
   "SafeGovernanceView",
@@ -57,14 +60,16 @@ const VALIDATED_CONTRACT_INTERFACES = [
 const TOP_LEVEL_RESPONSE_GUARDS = [
   "isHealthResponse",
   "isExamplesResponse",
+  "isDocumentTypesResponse",
   "isPreviewResponse",
+  "isDocumentPreviewResponse",
   "isExecuteResponse",
   "isCompareResponse",
 ] as const;
 
 function declaredFieldsOf(source: string, interfaceName: string): string[] {
   const match = source.match(
-    new RegExp(`export interface ${interfaceName} \\{([\\s\\S]*?)\\n\\}`),
+    new RegExp(`export interface ${interfaceName}(?: extends [^{]+)? \\{([\\s\\S]*?)\\n\\}`),
   );
   if (!match) {
     throw new Error(

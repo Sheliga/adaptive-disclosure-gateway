@@ -4,8 +4,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resetVolatileLocaleForTests } from "@/i18n/LocaleProvider";
 import { readStoredLocale } from "@/i18n/localeStorage";
-import { compareStrategies, executeDisclosure, getExamples, getHealth, previewDisclosure } from "@/lib/api";
-import type { CompareResponse, ExecuteResponse, HealthResponse, PreviewResponse } from "@/lib/contracts";
+import {
+  compareStrategies,
+  executeDocument,
+  executeDisclosure,
+  getDocumentTypes,
+  getExamples,
+  getHealth,
+  previewDisclosure,
+  previewDocument,
+} from "@/lib/api";
+import type { CompareResponse, DocumentPreviewResponse, ExecuteResponse, HealthResponse, PreviewResponse } from "@/lib/contracts";
 import { copy } from "@/lib/copy";
 import { en } from "@/lib/copy.en";
 
@@ -14,15 +23,21 @@ import { GuidedFlow } from "./GuidedFlow";
 vi.mock("@/lib/api", () => ({
   getHealth: vi.fn(),
   getExamples: vi.fn(),
+  getDocumentTypes: vi.fn(),
   previewDisclosure: vi.fn(),
   executeDisclosure: vi.fn(),
+  previewDocument: vi.fn(),
+  executeDocument: vi.fn(),
   compareStrategies: vi.fn(),
 }));
 
 const mockedGetHealth = vi.mocked(getHealth);
 const mockedGetExamples = vi.mocked(getExamples);
+const mockedGetDocumentTypes = vi.mocked(getDocumentTypes);
 const mockedPreviewDisclosure = vi.mocked(previewDisclosure);
 const mockedExecuteDisclosure = vi.mocked(executeDisclosure);
+const mockedPreviewDocument = vi.mocked(previewDocument);
+const mockedExecuteDocument = vi.mocked(executeDocument);
 const mockedCompareStrategies = vi.mocked(compareStrategies);
 
 function healthResponse(deterministicDemoMode = true): HealthResponse {
@@ -199,6 +214,104 @@ beforeEach(() => {
         },
       ],
     },
+  });
+  mockedGetDocumentTypes.mockResolvedValue({
+    ok: true,
+    data: {
+      contract_version: "t20-application-api-v1",
+      document_types: [
+        {
+          document_type: "contract",
+          analysis_modes: ["contract_summary", "financial_audit", "compliance_review"],
+          default_analysis_mode: "contract_summary",
+        },
+      ],
+    },
+  });
+});
+
+describe("GuidedFlow -- confirmed structured contract flow", () => {
+  it("uploads the same PDF twice and executes only after explicit review confirmation", async () => {
+    const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
+    const documentPreview: DocumentPreviewResponse = {
+      ...previewResponse(),
+      confirmation_token: "opaque.confirmation.token",
+    };
+    mockedPreviewDocument.mockResolvedValue({ ok: true, data: documentPreview });
+    mockedExecuteDocument.mockResolvedValue({ ok: true, data: executeResponse() });
+
+    render(<GuidedFlow />);
+    await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
+    await userEvent.click(screen.getByRole("radio", { name: copy.entryModes.uploadFile }));
+
+    const file = new File([new Uint8Array([0x25, 0x50, 0x44, 0x46])], "synthetic-contract.pdf", {
+      type: "application/pdf",
+    });
+    await userEvent.upload(screen.getByLabelText(copy.newTest.uploadFieldLabel), file);
+    await userEvent.type(
+      screen.getByLabelText(copy.newTest.taskLabel),
+      "Quais são as principais obrigações e prazos?",
+    );
+    await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+
+    await screen.findByRole("heading", { name: copy.review.heading });
+    expect(mockedPreviewDocument).toHaveBeenCalledTimes(1);
+    expect(mockedExecuteDocument).not.toHaveBeenCalled();
+    expect(document.body).not.toHaveTextContent("opaque.confirmation.token");
+    expect(JSON.stringify(consoleLog.mock.calls)).not.toContain("opaque.confirmation.token");
+    expect(Object.values(window.localStorage)).not.toContain("opaque.confirmation.token");
+
+    const previewForm = mockedPreviewDocument.mock.calls[0][0];
+    expect(previewForm.get("file")).toBe(file);
+    expect(previewForm.get("document_type")).toBe("contract");
+    expect(previewForm.get("analysis_mode")).toBe("contract_summary");
+
+    await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+    await screen.findByRole("heading", { name: copy.result.heading });
+
+    const executeForm = mockedExecuteDocument.mock.calls[0][0];
+    expect(executeForm.get("file")).toBe(file);
+    expect(executeForm.get("task")).toBe(previewForm.get("task"));
+    expect(executeForm.get("document_type")).toBe(previewForm.get("document_type"));
+    expect(executeForm.get("analysis_mode")).toBe(previewForm.get("analysis_mode"));
+    expect(executeForm.get("confirmation_token")).toBe("opaque.confirmation.token");
+    expect(document.body).not.toHaveTextContent("opaque.confirmation.token");
+  });
+
+  it("cancelling, editing, and submitting again requires a new preview token", async () => {
+    mockedPreviewDocument
+      .mockResolvedValueOnce({
+        ok: true,
+        data: { ...previewResponse(), confirmation_token: "first-token" },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: { ...previewResponse(), confirmation_token: "second-token" },
+      });
+    mockedExecuteDocument.mockResolvedValue({ ok: true, data: executeResponse() });
+
+    render(<GuidedFlow />);
+    await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
+    await userEvent.click(screen.getByRole("radio", { name: copy.entryModes.uploadFile }));
+    await userEvent.upload(
+      screen.getByLabelText(copy.newTest.uploadFieldLabel),
+      new File(["synthetic"], "contract.docx"),
+    );
+    const task = screen.getByLabelText(copy.newTest.taskLabel);
+    await userEvent.type(task, "Resuma o contrato");
+    await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+    await screen.findByRole("heading", { name: copy.review.heading });
+
+    await userEvent.click(screen.getByRole("button", { name: copy.review.backToCompose }));
+    await userEvent.clear(screen.getByLabelText(copy.newTest.taskLabel));
+    await userEvent.type(screen.getByLabelText(copy.newTest.taskLabel), "Liste os prazos");
+    await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+    await screen.findByRole("heading", { name: copy.review.heading });
+    await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+
+    await waitFor(() => expect(mockedExecuteDocument).toHaveBeenCalledTimes(1));
+    expect(mockedPreviewDocument).toHaveBeenCalledTimes(2);
+    expect(mockedExecuteDocument.mock.calls[0][0].get("confirmation_token")).toBe("second-token");
   });
 });
 

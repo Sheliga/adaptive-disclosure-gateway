@@ -79,13 +79,35 @@ const ptBR = {
     pasteLabel: "Cole o texto que deseja testar",
     pastePlaceholder: "Cole aqui o conteúdo que deseja testar.",
     uploadFieldLabel: "Selecione um arquivo",
-    uploadDropHint: "Arraste um arquivo .txt ou .md aqui, ou escolha um arquivo.",
-    uploadUnsupportedType: "Apenas arquivos .txt ou .md são aceitos.",
+    uploadDropHint: "Arraste um contrato PDF, DOCX, TXT ou MD aqui, ou escolha um arquivo.",
+    uploadUnsupportedType: "Apenas arquivos PDF, DOCX, TXT ou MD são aceitos.",
     uploadReadError: "Não foi possível ler o arquivo selecionado.",
     removeFile: "Remover arquivo",
     fileNameLabel: "Nome do arquivo",
     fileTypeLabel: "Tipo",
     fileSizeLabel: "Tamanho",
+    documentTypeLabel: "Tipo de documento",
+    documentTypesLoading: "Carregando tipos de documento...",
+    documentTypesLoadError: "Não foi possível carregar os tipos de documento.",
+    analysisModeLabel: "Tipo de análise",
+    documentTypeLabels: {
+      contract: "Contrato",
+      hr_record: "Registro de RH",
+    } as Record<string, string>,
+    analysisModeLabels: {
+      contract_summary: "Resumo do contrato",
+      financial_audit: "Auditoria financeira",
+      compliance_review: "Revisão de conformidade",
+      team_summary: "Resumo da equipe",
+      salary_analysis: "Análise salarial",
+      compensation_review: "Revisão de remuneração",
+    } as Record<string, string>,
+    fileTypeLabels: {
+      pdf: "Documento PDF",
+      docx: "Documento Word",
+      txt: "Texto simples",
+      md: "Markdown",
+    } as Record<string, string>,
     taskLabel: "O que você quer que o modelo faça com esse conteúdo?",
     taskPlaceholder: "Ex.: Resuma os pontos principais deste documento.",
     taskHintForExample: "Deixe em branco para usar a tarefa sugerida pelo exemplo escolhido.",
@@ -126,6 +148,7 @@ const ptBR = {
 
   provider: {
     deterministicDemoLabel: "Provedor de demonstração determinístico — não é um modelo real.",
+    externalModelLabel: "Modelo externo configurado.",
     /*
      * Shown when `GET /health` could not be reached or did not satisfy its
      * contract. Deliberately states only that the check failed -- it must
@@ -138,6 +161,7 @@ const ptBR = {
 
   processingStages: {
     readingFile: "Lendo o arquivo",
+    analyzingDocument: "Analisando o documento",
     detectingSensitiveData: "Detectando dados sensíveis",
     applyingDisclosurePolicy: "Aplicando política de divulgação",
     consultingModel: "Consultando o modelo",
@@ -351,6 +375,13 @@ const ptBR = {
       salary: "Salário",
       department: "Departamento",
       medical_data: "Dados médicos",
+      party_name: "Parte do contrato",
+      representative_name: "Representante",
+      cnpj: "CNPJ",
+      contract_value: "Valor do contrato",
+      penalty_amount: "Multa / penalidade",
+      deadline: "Prazo",
+      bank_account: "Conta bancária",
     },
   },
 
@@ -410,6 +441,11 @@ const ptBR = {
     generic: "Não foi possível concluir a operação. Tente novamente.",
     upstreamUnreachable: "Não foi possível falar com o serviço no momento. Tente novamente em instantes.",
     validationFailed: "Os dados enviados não são válidos. Revise e tente novamente.",
+    fileTooLarge: "O arquivo excede o limite aceito pelo serviço.",
+    documentParsing: "Não foi possível processar este documento. Verifique o formato e tente novamente.",
+    invalidAnalysisMode: "Esse tipo de análise não é aceito para o documento selecionado.",
+    previewExpired: "Esta revisão não é mais válida. Faça uma nova revisão antes de enviar.",
+    comparisonUnavailableForUpload: "A comparação ainda não está disponível para documentos estruturados.",
   },
 
   sectionHeadings: {

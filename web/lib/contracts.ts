@@ -53,6 +53,19 @@ export interface ExamplesResponse {
   examples: ExampleSummary[];
 }
 
+// --- GET /documents/types ---------------------------------------------------
+
+export interface DocumentType {
+  document_type: string;
+  analysis_modes: string[];
+  default_analysis_mode: string;
+}
+
+export interface DocumentTypesResponse {
+  contract_version: string;
+  document_types: DocumentType[];
+}
+
 // --- shared preview/execute pieces ------------------------------------------
 
 /**
@@ -158,6 +171,11 @@ export interface PreviewResponse {
   strategy: string;
   governance: SafeGovernanceView;
   provider_mode: ProviderMode;
+}
+
+/** Structured-upload preview: the normal safe preview plus an opaque proof. */
+export interface DocumentPreviewResponse extends PreviewResponse {
+  confirmation_token: string;
 }
 
 // --- POST /disclosure/execute -----------------------------------------------

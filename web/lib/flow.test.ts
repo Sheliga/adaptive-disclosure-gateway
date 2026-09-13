@@ -113,13 +113,15 @@ describe("flowReducer -- compose screen", () => {
       compose: { ...initialComposeState, fileError: "bad file" },
       submitError: null,
     };
-    const file = { filename: "doc.txt", content: "hi", byteSize: 2, mimeGuess: "text/plain" };
+    const raw = new File(["hi"], "doc.txt");
+    const file = { file: raw, filename: "doc.txt", byteSize: 2, displayType: "Texto simples" };
     const next = flowReducer(withError, { type: "SET_FILE", file });
     expect(next).toMatchObject({ compose: { file, fileError: null } });
   });
 
   it("SET_FILE_ERROR clears any prior file", () => {
-    const file = { filename: "doc.txt", content: "hi", byteSize: 2, mimeGuess: "text/plain" };
+    const raw = new File(["hi"], "doc.txt");
+    const file = { file: raw, filename: "doc.txt", byteSize: 2, displayType: "Texto simples" };
     const withFile: FlowState = {
       screen: "compose",
       compose: { ...initialComposeState, file },
@@ -154,6 +156,7 @@ describe("flowReducer -- previewing screen", () => {
       screen: "review",
       compose: initialComposeState,
       preview: p,
+      confirmationToken: null,
       executeError: null,
     });
   });
@@ -179,17 +182,18 @@ describe("flowReducer -- review screen (the confirm gate)", () => {
     screen: "review",
     compose: initialComposeState,
     preview: p,
+    confirmationToken: null,
     executeError: null,
   };
 
   it("CONFIRM_REVIEW is the ONLY event that reaches the executing screen", () => {
     const next = flowReducer(state, { type: "CONFIRM_REVIEW" });
-    expect(next).toEqual({ screen: "executing", compose: initialComposeState, preview: p });
+    expect(next).toEqual({ screen: "executing", compose: initialComposeState, preview: p, confirmationToken: null });
   });
 
   it("CANCEL_REVIEW returns to compose, preserving the compose state, clearing errors", () => {
     const compose: ComposeState = { ...initialComposeState, task: "resuma" };
-    const withTask: FlowState = { screen: "review", compose, preview: p, executeError: null };
+    const withTask: FlowState = { screen: "review", compose, preview: p, confirmationToken: null, executeError: null };
     const next = flowReducer(withTask, { type: "CANCEL_REVIEW" });
     expect(next).toEqual({ screen: "compose", compose, submitError: null });
   });
@@ -202,7 +206,7 @@ describe("flowReducer -- review screen (the confirm gate)", () => {
 
 describe("flowReducer -- executing screen", () => {
   const p = preview();
-  const state: FlowState = { screen: "executing", compose: initialComposeState, preview: p };
+  const state: FlowState = { screen: "executing", compose: initialComposeState, preview: p, confirmationToken: null };
 
   it("EXECUTE_SUCCEEDED moves to result carrying the execute payload", () => {
     const e = execute();
@@ -222,7 +226,27 @@ describe("flowReducer -- executing screen", () => {
       screen: "review",
       compose: initialComposeState,
       preview: p,
+      confirmationToken: null,
       executeError: genericError,
+    });
+  });
+
+  it("an invalid preview confirmation returns to compose and requires a fresh preview", () => {
+    const confirmationError: DisplayError = {
+      message: "faça uma nova revisão",
+      kind: "PreviewConfirmationError",
+      fields: null,
+    };
+    const next = flowReducer(state, {
+      type: "EXECUTE_FAILED",
+      error: confirmationError,
+      requiresNewPreview: true,
+    });
+
+    expect(next).toEqual({
+      screen: "compose",
+      compose: initialComposeState,
+      submitError: confirmationError,
     });
   });
 });
@@ -454,13 +478,16 @@ describe("isComposeReady", () => {
     expect(isComposeReady({ ...initialComposeState, mode: "example", exampleId: "ex-1" })).toBe(true);
   });
 
-  it("upload mode requires a file", () => {
+  it("upload mode requires a file, backend vocabulary selection, and task", () => {
     expect(isComposeReady({ ...initialComposeState, mode: "upload", file: null })).toBe(false);
     expect(
       isComposeReady({
         ...initialComposeState,
         mode: "upload",
-        file: { filename: "a.txt", content: "x", byteSize: 1, mimeGuess: "text/plain" },
+        file: { file: new File(["x"], "a.txt"), filename: "a.txt", byteSize: 1, displayType: "Texto simples" },
+        documentType: "contract",
+        analysisMode: "contract_summary",
+        task: "resuma",
       }),
     ).toBe(true);
   });
@@ -472,14 +499,16 @@ describe("isComposeReady", () => {
 });
 
 describe("isSupportedUploadFilename", () => {
-  it("accepts .txt and .md, case-insensitively", () => {
+  it("accepts PDF, DOCX, TXT and MD, case-insensitively", () => {
+    expect(isSupportedUploadFilename("contract.pdf")).toBe(true);
+    expect(isSupportedUploadFilename("contract.docx")).toBe(true);
     expect(isSupportedUploadFilename("report.txt")).toBe(true);
     expect(isSupportedUploadFilename("REPORT.TXT")).toBe(true);
     expect(isSupportedUploadFilename("notes.md")).toBe(true);
   });
 
   it("rejects unsupported extensions", () => {
-    expect(isSupportedUploadFilename("scan.pdf")).toBe(false);
+    expect(isSupportedUploadFilename("scan.png")).toBe(false);
     expect(isSupportedUploadFilename("sheet.xlsx")).toBe(false);
     expect(isSupportedUploadFilename("noextension")).toBe(false);
   });
@@ -492,13 +521,13 @@ describe("buildRequestBody", () => {
     expect(body).not.toHaveProperty("strategy");
   });
 
-  it("sends file_content and filename for upload mode", () => {
+  it("does not force binary upload into the historical JSON request", () => {
     const body = buildRequestBody({
       ...initialComposeState,
       mode: "upload",
-      file: { filename: "doc.md", content: "# Title", byteSize: 7, mimeGuess: "text/markdown" },
+      file: { file: new File(["# Title"], "doc.md"), filename: "doc.md", byteSize: 7, displayType: "Markdown" },
     });
-    expect(body).toEqual({ file_content: "# Title", filename: "doc.md" });
+    expect(body).toEqual({});
   });
 
   it("sends text for paste mode", () => {

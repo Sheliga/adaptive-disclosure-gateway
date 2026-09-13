@@ -25,16 +25,16 @@ import type { DisplayError } from "./api";
 
 export type EntryMode = "example" | "upload" | "paste";
 
-/** `.txt`/`.md` only -- `docs/advisor-demo.md`'s supported upload path. */
-export const SUPPORTED_UPLOAD_EXTENSIONS = [".txt", ".md"] as const;
+/** First-demo document formats; backend validation remains authoritative. */
+export const SUPPORTED_UPLOAD_EXTENSIONS = [".pdf", ".docx", ".txt", ".md"] as const;
 
 export interface UploadedFile {
+  /** Original browser object retained only in memory for the confirmed re-upload. */
+  file: File;
   filename: string;
-  /** Full text content, read client-side via `FileReader.readAsText`. */
-  content: string;
   byteSize: number;
-  /** A simple, non-authoritative type label derived from the extension. */
-  mimeGuess: string;
+  /** Human-facing, non-authoritative type derived from the extension. */
+  displayType: string;
 }
 
 export interface ComposeState {
@@ -45,6 +45,8 @@ export interface ComposeState {
   /** Client-side validation/read error for the upload path (copy.ts text). */
   fileError: string | null;
   task: string;
+  documentType: string | null;
+  analysisMode: string | null;
 }
 
 export const initialComposeState: ComposeState = {
@@ -54,6 +56,8 @@ export const initialComposeState: ComposeState = {
   file: null,
   fileError: null,
   task: "",
+  documentType: null,
+  analysisMode: null,
 };
 
 export type FlowState =
@@ -64,9 +68,10 @@ export type FlowState =
       screen: "review";
       compose: ComposeState;
       preview: PreviewResponse;
+      confirmationToken: string | null;
       executeError: DisplayError | null;
     }
-  | { screen: "executing"; compose: ComposeState; preview: PreviewResponse }
+  | { screen: "executing"; compose: ComposeState; preview: PreviewResponse; confirmationToken: string | null }
   | {
       screen: "result";
       compose: ComposeState;
@@ -111,13 +116,15 @@ export type FlowEvent =
   | { type: "SET_FILE_ERROR"; message: string }
   | { type: "CLEAR_FILE" }
   | { type: "SET_TASK"; task: string }
+  | { type: "SET_DOCUMENT_TYPE"; documentType: string; analysisMode: string }
+  | { type: "SET_ANALYSIS_MODE"; analysisMode: string }
   | { type: "SUBMIT_COMPOSE" }
-  | { type: "PREVIEW_SUCCEEDED"; preview: PreviewResponse }
+  | { type: "PREVIEW_SUCCEEDED"; preview: PreviewResponse; confirmationToken?: string }
   | { type: "PREVIEW_FAILED"; error: DisplayError }
   | { type: "CONFIRM_REVIEW" }
   | { type: "CANCEL_REVIEW" }
   | { type: "EXECUTE_SUCCEEDED"; execute: ExecuteResponse }
-  | { type: "EXECUTE_FAILED"; error: DisplayError }
+  | { type: "EXECUTE_FAILED"; error: DisplayError; requiresNewPreview?: boolean }
   | { type: "REQUEST_COMPARISON" }
   | { type: "COMPARE_SUCCEEDED"; comparison: CompareResponse }
   | { type: "COMPARE_FAILED"; error: DisplayError }
@@ -182,6 +189,17 @@ function composeReducer(
       return { ...state, compose: { ...state.compose, file: null, fileError: null } };
     case "SET_TASK":
       return { ...state, compose: { ...state.compose, task: event.task } };
+    case "SET_DOCUMENT_TYPE":
+      return {
+        ...state,
+        compose: {
+          ...state.compose,
+          documentType: event.documentType,
+          analysisMode: event.analysisMode,
+        },
+      };
+    case "SET_ANALYSIS_MODE":
+      return { ...state, compose: { ...state.compose, analysisMode: event.analysisMode } };
     case "SUBMIT_COMPOSE":
       return { screen: "previewing", compose: state.compose };
     default:
@@ -199,6 +217,7 @@ function previewingReducer(
         screen: "review",
         compose: state.compose,
         preview: event.preview,
+        confirmationToken: event.confirmationToken ?? null,
         executeError: null,
       };
     case "PREVIEW_FAILED":
@@ -214,7 +233,12 @@ function reviewReducer(
 ): FlowState {
   switch (event.type) {
     case "CONFIRM_REVIEW":
-      return { screen: "executing", compose: state.compose, preview: state.preview };
+      return {
+        screen: "executing",
+        compose: state.compose,
+        preview: state.preview,
+        confirmationToken: state.confirmationToken,
+      };
     case "CANCEL_REVIEW":
       return { screen: "compose", compose: state.compose, submitError: null };
     default:
@@ -236,10 +260,14 @@ function executingReducer(
         compareError: null,
       };
     case "EXECUTE_FAILED":
+      if (event.requiresNewPreview) {
+        return { screen: "compose", compose: state.compose, submitError: event.error };
+      }
       return {
         screen: "review",
         compose: state.compose,
         preview: state.preview,
+        confirmationToken: state.confirmationToken,
         executeError: event.error,
       };
     default:
@@ -365,9 +393,8 @@ function comparisonReducer(
 
 /**
  * Whether `filename` has a supported extension for the upload path. Client
- * side only -- an accepted name still goes through the same
- * `file_content`+`filename` JSON contract as any other input, never a
- * separate/invented multipart endpoint.
+ * side only -- accepted files still go through the backend's multipart
+ * ingestion boundary, which remains authoritative.
  */
 export function isSupportedUploadFilename(filename: string): boolean {
   const lower = filename.toLowerCase();
@@ -380,14 +407,19 @@ export function isComposeReady(compose: ComposeState): boolean {
     case "example":
       return compose.exampleId !== null;
     case "upload":
-      return compose.file !== null;
+      return (
+        compose.file !== null &&
+        compose.documentType !== null &&
+        compose.analysisMode !== null &&
+        compose.task.trim().length > 0
+      );
     case "paste":
       return compose.pastedText.trim().length > 0;
   }
 }
 
 /**
- * Builds the exact `DisclosureRequestBody` for the current compose state.
+ * Builds the exact historical JSON request for example and paste modes.
  * Deliberately never sets `strategy` -- the API's "recommended" default is
  * used by omission (`docs/advisor-demo.md` / issue #29: the primary path
  * must never require knowing B0-B4), and never sets `governance` -- this
@@ -398,9 +430,6 @@ export function buildRequestBody(compose: ComposeState): DisclosureRequestBody {
 
   if (compose.mode === "example" && compose.exampleId !== null) {
     body.example_id = compose.exampleId;
-  } else if (compose.mode === "upload" && compose.file !== null) {
-    body.file_content = compose.file.content;
-    body.filename = compose.file.filename;
   } else if (compose.mode === "paste") {
     body.text = compose.pastedText;
   }
@@ -411,4 +440,29 @@ export function buildRequestBody(compose: ComposeState): DisclosureRequestBody {
   }
 
   return body;
+}
+
+/** Build the explicit multipart contract for the structured document routes. */
+export function buildDocumentFormData(
+  compose: ComposeState,
+  confirmationToken?: string,
+): FormData {
+  if (
+    compose.mode !== "upload" ||
+    compose.file === null ||
+    compose.documentType === null ||
+    compose.analysisMode === null
+  ) {
+    throw new Error("document upload state is incomplete");
+  }
+
+  const form = new FormData();
+  form.append("file", compose.file.file);
+  form.append("task", compose.task.trim());
+  form.append("document_type", compose.documentType);
+  form.append("analysis_mode", compose.analysisMode);
+  if (confirmationToken !== undefined) {
+    form.append("confirmation_token", confirmationToken);
+  }
+  return form;
 }

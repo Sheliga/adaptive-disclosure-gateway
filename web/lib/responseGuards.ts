@@ -76,6 +76,9 @@ import {
   DISCLOSURE_SUMMARY_STATUSES,
   type CategoryDisclosureSummary,
   type CompareResponse,
+  type DocumentPreviewResponse,
+  type DocumentType,
+  type DocumentTypesResponse,
   type DisclosureSummary,
   type DisclosureSummaryStatus,
   type ExampleSummary,
@@ -188,6 +191,23 @@ export const isExamplesResponse: ResponseGuard<ExamplesResponse> = (
   declaresKnownContractVersion(value) &&
   arrayOf(isExampleSummary)(value.examples);
 
+function isDocumentType(value: unknown): value is DocumentType {
+  return (
+    isRecord(value) &&
+    isString(value.document_type) &&
+    isStringArray(value.analysis_modes) &&
+    isString(value.default_analysis_mode) &&
+    value.analysis_modes.includes(value.default_analysis_mode)
+  );
+}
+
+export const isDocumentTypesResponse: ResponseGuard<DocumentTypesResponse> = (
+  value: unknown,
+): value is DocumentTypesResponse =>
+  isRecord(value) &&
+  declaresKnownContractVersion(value) &&
+  arrayOf(isDocumentType)(value.document_types);
+
 // --- shared preview/execute pieces ----------------------------------------------
 
 function isCategoryDisclosureSummary(value: unknown): value is CategoryDisclosureSummary {
@@ -248,6 +268,14 @@ export const isPreviewResponse: ResponseGuard<PreviewResponse> = (
   isString(value.strategy) &&
   isSafeGovernanceView(value.governance) &&
   isProviderMode(value.provider_mode);
+
+export const isDocumentPreviewResponse: ResponseGuard<DocumentPreviewResponse> = (
+  value: unknown,
+): value is DocumentPreviewResponse =>
+  isRecord(value) &&
+  declaresKnownContractVersion(value) &&
+  isPreviewResponse(value) &&
+  isString(value.confirmation_token);
 
 // --- POST /disclosure/execute ----------------------------------------------------
 

@@ -9,46 +9,19 @@
  * and `buildRequestBody` (`lib/flow.ts`) never sends a `strategy` field, so
  * the API's "recommended" default applies by omission.
  *
- * Upload reads the file client-side via `FileReader.readAsText` and stores
- * its text content in compose state; `lib/flow.ts`'s `buildRequestBody`
- * later sends that as `file_content` + `filename` -- the exact JSON shape
- * `POST /disclosure/preview` accepts. Extension validation
- * (`isSupportedUploadFilename`) happens BEFORE any read, so an unsupported
- * file never reaches `FileReader` and never reaches the API client.
- *
- * --- KNOWN GAP: there is no upload size limit anywhere in this path ---
- *
- * `readAsText` buffers the entire file in memory, `buildRequestBody`
- * inlines the whole string into a JSON body, and neither the Next route
- * handler (`app/api/disclosure/preview`, which streams the body through
- * `request.text()`) nor the Python API (no body-size ceiling in
- * `api/app.py` or in uvicorn's defaults) bounds it. A large enough .txt is
- * therefore a browser-tab memory problem and an unbounded upstream request.
- *
- * This is deliberately NOT fixed in this slice, for two reasons rather than
- * for convenience:
- *
- *  1. A cap enforced only here would not be a control. The API accepts the
- *     identical JSON from `curl`, so a client-side check is a usability
- *     affordance, not a limit -- the enforceable boundary is where the
- *     request is ACCEPTED (reverse proxy / uvicorn / ASGI middleware),
- *     which is T25's deployment surface, and secondarily at ingestion,
- *     which is T12's.
- *  2. Choosing the number is a real decision, not a detail. The ceiling
- *     bounds which documents the demo will accept at all, and it has to be
- *     reconciled with the corpus's own sizes and with T12's Docling
- *     ingestion path. Inventing one here would freeze an arbitrary
- *     methodological constraint inside a UI component.
- *
- * Tracked as a follow-up on T25 (#42, enforcement point) and T12 (#9,
- * ingestion limits). See this PR's description.
+ * Upload retains the original `File` object in memory and never decodes it
+ * in the browser. `GuidedFlow` sends it as multipart data to the structured
+ * document preview endpoint, then reuses the same object for the explicitly
+ * confirmed execute request. PDF/DOCX therefore never pass through
+ * `FileReader.readAsText`; TXT/MD deliberately use the same single upload
+ * path. The backend remains authoritative for size and format validation.
  */
 
-import { useRef, useState, type ChangeEvent, type DragEvent, type FormEvent } from "react";
+import { useRef, type ChangeEvent, type DragEvent, type FormEvent } from "react";
 
 import { useCopy } from "@/i18n/useLocale";
 import type { DisplayError } from "@/lib/api";
-import type { ExampleSummary } from "@/lib/contracts";
+import type { DocumentType, ExampleSummary } from "@/lib/contracts";
 import { describeExample } from "@/lib/exampleLabels";
 import {
   isComposeReady,
@@ -59,7 +32,6 @@ import {
   type UploadedFile,
 } from "@/lib/flow";
 
-import { ProcessingStatus } from "../ProcessingStatus/ProcessingStatus";
 import styles from "./ComposeScreen.module.css";
 
 export interface ComposeScreenProps {
@@ -67,6 +39,8 @@ export interface ComposeScreenProps {
   submitError: DisplayError | null;
   examples: ExampleSummary[] | null;
   examplesError: DisplayError | null;
+  documentTypes: DocumentType[] | null;
+  documentTypesError: DisplayError | null;
   dispatch: (event: FlowEvent) => void;
   onSubmit: () => void;
 }
@@ -78,8 +52,8 @@ function formatByteSize(bytes: number): string {
   return `${(bytes / 1024).toFixed(1)} KB`;
 }
 
-function mimeGuessFor(filename: string): string {
-  return filename.toLowerCase().endsWith(".md") ? "text/markdown" : "text/plain";
+function extensionFor(filename: string): string {
+  return filename.split(".").pop()?.toLowerCase() ?? "";
 }
 
 export function ComposeScreen({
@@ -87,46 +61,37 @@ export function ComposeScreen({
   submitError,
   examples,
   examplesError,
+  documentTypes,
+  documentTypesError,
   dispatch,
   onSubmit,
 }: ComposeScreenProps) {
   const copy = useCopy();
-  const [isReadingFile, setIsReadingFile] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const selectedExample = examples?.find(
     (example) => example.example_id === compose.exampleId,
   );
 
-  function readFile(file: File) {
+  function selectFile(file: File) {
     if (!isSupportedUploadFilename(file.name)) {
       dispatch({ type: "SET_FILE_ERROR", message: copy.newTest.uploadUnsupportedType });
       return;
     }
 
-    setIsReadingFile(true);
-    const reader = new FileReader();
-    reader.onload = () => {
-      const content = typeof reader.result === "string" ? reader.result : "";
-      const uploaded: UploadedFile = {
-        filename: file.name,
-        content,
-        byteSize: file.size,
-        mimeGuess: mimeGuessFor(file.name),
-      };
-      setIsReadingFile(false);
-      dispatch({ type: "SET_FILE", file: uploaded });
+    const extension = extensionFor(file.name);
+    const uploaded: UploadedFile = {
+      file,
+      filename: file.name,
+      byteSize: file.size,
+      displayType: copy.newTest.fileTypeLabels[extension] ?? extension.toUpperCase(),
     };
-    reader.onerror = () => {
-      setIsReadingFile(false);
-      dispatch({ type: "SET_FILE_ERROR", message: copy.newTest.uploadReadError });
-    };
-    reader.readAsText(file);
+    dispatch({ type: "SET_FILE", file: uploaded });
   }
 
   function handleFileInputChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (file) {
-      readFile(file);
+      selectFile(file);
     }
     // Reset so choosing the same filename again still fires onChange.
     event.target.value = "";
@@ -136,7 +101,7 @@ export function ComposeScreen({
     event.preventDefault();
     const file = event.dataTransfer.files?.[0];
     if (file) {
-      readFile(file);
+      selectFile(file);
     }
   }
 
@@ -252,13 +217,11 @@ export function ComposeScreen({
               id="file-input"
               ref={fileInputRef}
               type="file"
-              accept=".txt,.md"
+              accept=".pdf,.docx,.txt,.md"
               onChange={handleFileInputChange}
             />
             <p className={styles.hint}>{copy.newTest.uploadDropHint}</p>
           </div>
-
-          {isReadingFile && <ProcessingStatus stages={[copy.processingStages.readingFile]} />}
 
           {compose.fileError && <p className={styles.error}>{compose.fileError}</p>}
 
@@ -268,7 +231,7 @@ export function ComposeScreen({
                 <dt className={styles.fileDetailsTerm}>{copy.newTest.fileNameLabel}</dt>
                 <dd>{compose.file.filename}</dd>
                 <dt className={styles.fileDetailsTerm}>{copy.newTest.fileTypeLabel}</dt>
-                <dd>{compose.file.mimeGuess}</dd>
+                <dd>{compose.file.displayType}</dd>
                 <dt className={styles.fileDetailsTerm}>{copy.newTest.fileSizeLabel}</dt>
                 <dd>{formatByteSize(compose.file.byteSize)}</dd>
               </dl>
@@ -280,6 +243,63 @@ export function ComposeScreen({
                 {copy.newTest.removeFile}
               </button>
             </div>
+          )}
+
+          <label className={styles.label} htmlFor="document-type">
+            {copy.newTest.documentTypeLabel}
+          </label>
+          {documentTypesError ? (
+            <p className={styles.error}>{copy.newTest.documentTypesLoadError}</p>
+          ) : documentTypes === null ? (
+            <p role="status">{copy.newTest.documentTypesLoading}</p>
+          ) : (
+            <select
+              id="document-type"
+              className={styles.select}
+              value={compose.documentType ?? ""}
+              onChange={(event) => {
+                const selected = documentTypes.find(
+                  (item) => item.document_type === event.target.value,
+                );
+                if (selected) {
+                  dispatch({
+                    type: "SET_DOCUMENT_TYPE",
+                    documentType: selected.document_type,
+                    analysisMode: selected.default_analysis_mode,
+                  });
+                }
+              }}
+            >
+              {documentTypes.map((item) => (
+                <option key={item.document_type} value={item.document_type}>
+                  {copy.newTest.documentTypeLabels[item.document_type] ?? item.document_type}
+                </option>
+              ))}
+            </select>
+          )}
+
+          {compose.documentType && documentTypes && (
+            <>
+              <label className={styles.label} htmlFor="analysis-mode">
+                {copy.newTest.analysisModeLabel}
+              </label>
+              <select
+                id="analysis-mode"
+                className={styles.select}
+                value={compose.analysisMode ?? ""}
+                onChange={(event) =>
+                  dispatch({ type: "SET_ANALYSIS_MODE", analysisMode: event.target.value })
+                }
+              >
+                {documentTypes
+                  .find((item) => item.document_type === compose.documentType)
+                  ?.analysis_modes.map((mode) => (
+                    <option key={mode} value={mode}>
+                      {copy.newTest.analysisModeLabels[mode] ?? mode}
+                    </option>
+                  ))}
+              </select>
+            </>
           )}
         </div>
       )}
