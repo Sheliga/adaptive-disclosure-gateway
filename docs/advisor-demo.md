@@ -486,15 +486,36 @@ Two distinct endpoints, deliberately not one (T25 review finding 2):
 
 ### Running the smoke test
 
-An opt-in E2E test (`tests/test_demo_smoke_e2e.py`) drives the **web origin only** --
-`/api/health` -> `/api/documents/types` -> multipart `/api/documents/preview` -> confirmed
-`/api/documents/execute` -- with synthetic PDF and DOCX contracts, and asserts the confirmation
-flow, the B0 -- Direct external-execute refusal (when the provider is external) and the 413
-request-size boundary. It is skipped unless `ADG_DEMO_SMOKE_BASE_URL` is set:
+Two distinct opt-in E2E tests live in `tests/test_demo_smoke_e2e.py` (T25 review finding 3),
+gated by different environment variables on purpose -- one must pass against `FakeProvider`, the
+other must never pass against it:
+
+**Deployment/structural smoke** -- every class except `TestLiveProviderSmoke`. Drives the **web
+origin only** -- `/api/health` -> `/api/ready` -> `/api/documents/types` -> multipart
+`/api/documents/preview` -> confirmed `/api/documents/execute` -- with synthetic PDF and DOCX
+contracts, and asserts the confirmation flow, the B0 -- Direct external-execute refusal (when the
+provider is external), the 413 request-size boundary, and that the deployment reports `/api/ready`
+ready. A correctly-recorded provider *call* failure (rate limiting, a transient network error) is
+an acceptable outcome here -- the point is that the deployment's own wiring behaves correctly
+regardless of whether a live external call happens to succeed on any given run. Skipped unless
+`ADG_DEMO_SMOKE_BASE_URL` is set:
 
 ```bash
 ADG_DEMO_SMOKE_BASE_URL=http://localhost:3000 \
   .venv/Scripts/python.exe -m pytest tests/test_demo_smoke_e2e.py -v
+```
+
+**Live-provider smoke** -- `TestLiveProviderSmoke` only. Proves the deployment actually reaches a
+*real* external provider and gets a real answer back: it fails (never skips) on anything other
+than a genuine successful round trip, including a recorded provider failure -- the opposite
+tolerance from the structural smoke above. Requires **both** `ADG_DEMO_SMOKE_BASE_URL` and
+`ADG_RUN_DEMO_LIVE_PROVIDER_SMOKE=1`; setting only one of the two skips it. Run it only against a
+deployment with `ADG_PROVIDER=anthropic` and a working credential -- it costs real money:
+
+```bash
+ADG_DEMO_SMOKE_BASE_URL=https://<ADG_DEMO_DOMAIN> \
+ADG_RUN_DEMO_LIVE_PROVIDER_SMOKE=1 \
+  .venv/Scripts/python.exe -m pytest tests/test_demo_smoke_e2e.py::TestLiveProviderSmoke -v
 ```
 
 ### What is persisted

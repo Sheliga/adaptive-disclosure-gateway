@@ -150,6 +150,19 @@ class TestHealthAndVocabulary:
         assert body["status"] == "ok"
         assert "provider" in body
 
+    def test_ready_reports_ready(self) -> None:
+        """T25 review finding 3: the structural smoke expects a properly
+        configured deployment -- FakeProvider or a correctly-recorded
+        provider *call* failure is acceptable elsewhere in this file, but
+        the deployment itself (credential present, SDK importable, a
+        durable confirmation signer where one is required) must be ready.
+        An un-configured deployment fails here rather than being silently
+        accepted as a structural pass.
+        """
+        response = _get("/api/ready")
+        assert response.status_code == 200, response.text
+        assert response.json()["status"] == "ready"
+
     def test_documents_types_includes_contract(self) -> None:
         body = _get("/api/documents/types").raise_for_status().json()
         document_types = {entry["document_type"] for entry in body["document_types"]}
@@ -239,3 +252,93 @@ class TestRequestSizeLimit:
         oversized = b"0" * (16 * 1024 * 1024)
         response = _preview(oversized, "oversized.pdf", timeout=_EXECUTE_TIMEOUT_SECONDS)
         assert response.status_code == 413, response.text
+
+
+# --- live-provider smoke (T25 review finding 3) -----------------------------
+#
+# Everything above this line is the STRUCTURAL smoke: it must pass against
+# FakeProvider, and a correctly-recorded provider *call* failure (rate
+# limiting, a transient network error, ...) is an acceptable outcome there --
+# the point is that the deployment's own wiring (routing, confirmation,
+# request-size limits, the B0 execute refusal) behaves correctly regardless
+# of whether a live external call happens to succeed on any given run.
+#
+# TestLiveProviderSmoke below is a deliberately different, stricter contract:
+# it exists to prove the deployment actually reaches a REAL external
+# provider and gets a REAL answer back -- something the structural smoke
+# above can never prove, precisely because it must also pass against
+# FakeProvider and must tolerate a recorded provider failure. A provider
+# failure is never an acceptable outcome here: this class fails (not skips)
+# on anything other than a genuine, successful, external round trip.
+#
+# Opt-in on a SECOND, independent environment variable
+# (ADG_RUN_DEMO_LIVE_PROVIDER_SMOKE=1) in addition to ADG_DEMO_SMOKE_BASE_URL
+# (still required -- enforced by the module-level ``pytestmark`` above, which
+# every class in this module inherits): running this against a FakeProvider
+# deployment, or against nothing at all, must not silently report success.
+
+_LIVE_SMOKE_ENV_VAR = "ADG_RUN_DEMO_LIVE_PROVIDER_SMOKE"
+
+
+class TestLiveProviderSmoke:
+    """Opt-in: set both ``ADG_RUN_DEMO_LIVE_PROVIDER_SMOKE=1`` and
+    ``ADG_DEMO_SMOKE_BASE_URL`` to run this against a demo deployment wired
+    to a real external provider (``ADG_PROVIDER=anthropic`` with a working
+    credential). Skipped whenever either is unset -- in particular, setting
+    only ``ADG_DEMO_SMOKE_BASE_URL`` runs every class above but skips this
+    one, and setting neither skips both.
+    """
+
+    pytestmark = pytest.mark.skipif(
+        os.environ.get(_LIVE_SMOKE_ENV_VAR, "").strip() != "1",
+        reason=(
+            f"opt-in live-provider smoke: set {_LIVE_SMOKE_ENV_VAR}=1 (in addition to "
+            f"{_BASE_URL_ENV_VAR}) to run it against a deployment wired to a real external "
+            "provider"
+        ),
+    )
+
+    def test_deployment_is_ready(self) -> None:
+        response = _get("/api/ready")
+        assert response.status_code == 200, response.text
+        assert response.json()["status"] == "ready"
+
+    def test_provider_is_not_the_deterministic_fake(self) -> None:
+        body = _get("/api/health").raise_for_status().json()
+        assert body["provider"]["deterministic_demo_mode"] is False, (
+            "the live-provider smoke must run against a real external provider, not "
+            "FakeProvider -- deterministic_demo_mode must be false"
+        )
+
+    @pytest.mark.parametrize(
+        ("filename", "build_bytes"),
+        [
+            ("synthetic-contract-live.pdf", lambda: minimal_pdf_bytes(_CONTRACT_LINES)),
+            ("synthetic-contract-live.docx", lambda: minimal_docx_bytes(_CONTRACT_LINES)),
+        ],
+    )
+    def test_preview_confirm_execute_succeeds_against_the_real_provider(
+        self, filename: str, build_bytes
+    ) -> None:
+        """A provider failure is never success here -- unlike the
+        structural smoke's round trip, which explicitly tolerates one.
+        """
+        file_bytes = build_bytes()
+
+        preview_response = _preview(file_bytes, filename)
+        assert preview_response.status_code == 200, preview_response.text
+        preview_body = preview_response.json()
+        _assert_no_sensitive_value(preview_body["external_payload"], SENSITIVE_VALUES)
+
+        confirmation_token = preview_body["confirmation_token"]
+        assert confirmation_token
+
+        execute_response = _execute(file_bytes, filename, confirmation_token=confirmation_token)
+        assert execute_response.status_code == 200, execute_response.text
+        execute_body = execute_response.json()
+
+        assert execute_body["status"] == "allowed", execute_body
+        assert execute_body["provider"]["called"] is True, execute_body
+        assert execute_body["provider"]["failed"] is False, execute_body
+        final_answer = execute_body["final_answer"]
+        assert final_answer is not None and final_answer.strip(), execute_body
