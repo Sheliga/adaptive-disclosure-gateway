@@ -601,6 +601,127 @@ describe("200 response validation — preview fails closed on a broken contract"
   });
 });
 
+/**
+ * T27 / issue #69: `PreviewResponse.inspection` invariants. These are the
+ * regressions for the exact defect `isDisclosureInspectionField`
+ * (`lib/responseGuards.ts`) exists to catch: a body that LOOKS like a valid
+ * inspection at a glance but violates one of the cross-field guarantees
+ * `application/inspection.py` is supposed to provide.
+ */
+describe("200 response validation — inspection fails closed on a broken invariant", () => {
+  function previewWithInspection(inspection: unknown): Draft {
+    const draft = draftOf(previewBody());
+    draft["inspection"] = inspection;
+    return draft;
+  }
+
+  it("accepts inspection: null (the historical, flag-off shape)", async () => {
+    stub200(previewWithInspection(null));
+
+    expect((await previewDisclosure({ text: "x" })).ok).toBe(true);
+  });
+
+  it("accepts a fully valid available inspection whose disclosed segments join back to external_payload", async () => {
+    const draft = previewWithInspection({
+      available: true,
+      unavailable_reason: null,
+      segments: [{ action: null, category: null, original: "x", disclosed: "x" }],
+    });
+    draft["external_payload"] = "x";
+    stub200(draft);
+
+    expect((await previewDisclosure({ text: "x" })).ok).toBe(true);
+  });
+
+  it("accepts a valid blocked/unavailable inspection with empty segments", async () => {
+    stub200(
+      previewWithInspection({ available: false, unavailable_reason: "blocked", segments: [] }),
+    );
+
+    expect((await previewDisclosure({ text: "x" })).ok).toBe(true);
+  });
+
+  it("rejects when the joined disclosed segments do NOT equal external_payload", async () => {
+    // The single most important invariant: a body claiming available:true
+    // while its segments describe a DIFFERENT disclosed text than what the
+    // rest of this same response says was actually sent.
+    const draft = previewWithInspection({
+      available: true,
+      unavailable_reason: null,
+      segments: [{ action: null, category: null, original: "x", disclosed: "not-what-was-sent" }],
+    });
+    draft["external_payload"] = "conteudo transformado";
+    stub200(draft);
+
+    expect((await previewDisclosure({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects available:true with a non-null unavailable_reason", async () => {
+    const draft = previewWithInspection({
+      available: true,
+      unavailable_reason: "blocked",
+      segments: [],
+    });
+    stub200(draft);
+
+    expect((await previewDisclosure({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects available:false with non-empty segments", async () => {
+    stub200(
+      previewWithInspection({
+        available: false,
+        unavailable_reason: "alignment_failed",
+        segments: [{ action: null, category: null, original: "x", disclosed: "x" }],
+      }),
+    );
+
+    expect((await previewDisclosure({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects available:false with a non-string unavailable_reason", async () => {
+    stub200(previewWithInspection({ available: false, unavailable_reason: null, segments: [] }));
+
+    expect((await previewDisclosure({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a segment whose action is null but category is not (must be null together)", async () => {
+    const draft = previewWithInspection({
+      available: true,
+      unavailable_reason: null,
+      segments: [{ action: null, category: "employee_name", original: "x", disclosed: "x" }],
+    });
+    draft["external_payload"] = "x";
+    stub200(draft);
+
+    expect((await previewDisclosure({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a segment whose category is null but action is not (must be null together)", async () => {
+    const draft = previewWithInspection({
+      available: true,
+      unavailable_reason: null,
+      segments: [{ action: "remove", category: null, original: "x", disclosed: "" }],
+    });
+    draft["external_payload"] = "";
+    stub200(draft);
+
+    expect((await previewDisclosure({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a segment missing the original/disclosed string fields", async () => {
+    const draft = previewWithInspection({
+      available: true,
+      unavailable_reason: null,
+      segments: [{ action: null, category: null, disclosed: "x" }],
+    });
+    draft["external_payload"] = "x";
+    stub200(draft);
+
+    expect((await previewDisclosure({ text: "x" })).ok).toBe(false);
+  });
+});
+
 describe("200 response validation — execute fails closed on a broken contract", () => {
   it("accepts an execute body that satisfies the whole contract", async () => {
     const body = executeBody();
