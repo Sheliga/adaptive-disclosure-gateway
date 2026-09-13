@@ -56,6 +56,7 @@ def test_preview_response_field_sets_are_explicit():
         "strategy",
         "governance",
         "provider_mode",
+        "inspection",
     }
     assert set(schemas.DisclosureSummaryModel.model_fields) == {
         "status",
@@ -84,6 +85,36 @@ def test_preview_response_field_sets_are_explicit():
         "requested_pseudonym_scope",
     }
     assert set(schemas.ProviderModeModel.model_fields) == {"provider_class"}
+
+
+def test_inspection_response_field_sets_are_explicit():
+    """T27 / issue #69. ``PreviewResponse.inspection`` is nullable, but its
+    populated shape must still be an explicit, closed field set -- no
+    mapping-shaped field, no rule/reason text beyond what
+    ``CategoryDisclosureSummaryModel`` already exposes elsewhere.
+    """
+    assert set(schemas.DisclosureInspectionModel.model_fields) == {
+        "available",
+        "unavailable_reason",
+        "segments",
+    }
+    assert set(schemas.InspectionSegmentModel.model_fields) == {
+        "action",
+        "category",
+        "original",
+        "disclosed",
+    }
+
+
+def test_document_preview_response_field_sets_are_explicit():
+    """``DocumentPreviewResponse`` extends ``PreviewResponse`` with only
+    ``confirmation_token`` -- so it inherits ``inspection`` too (T27 / issue
+    #69), rather than needing a second, independently-maintained inspection
+    field.
+    """
+    assert set(schemas.DocumentPreviewResponse.model_fields) == set(
+        schemas.PreviewResponse.model_fields
+    ) | {"confirmation_token"}
 
 
 def test_execute_response_field_sets_are_explicit():
