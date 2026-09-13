@@ -386,6 +386,65 @@ class DisclosureExecution:
     total_ms: float
 
 
+class ExportRefusedError(Exception):
+    """Raised when ``DisclosureApplicationService.export`` is asked to
+    export a request whose disclosure decision is not ``"allowed"`` (T26 /
+    issue #67) -- a ``BLOCK_REQUEST`` outcome, or any other case where
+    ``preview`` would not have produced a disclosed representation at all.
+
+    Export exists to hand a caller the SAME disclosed representation
+    ``preview`` already shows them, plus a restore handle for it -- there is
+    nothing to export for a request that never produced one. Its message
+    names the surface only, never the document, the task, or which category
+    caused the block (that detail already exists, safely, on the ordinary
+    preview response).
+    """
+
+
+@dataclass(frozen=True)
+class DisclosureExport:
+    """The result of ``DisclosureApplicationService.export`` (T26 / issue
+    #67): the same disclosed representation ``preview``/``execute`` would
+    show, plus a stateless, sealed restore handle for it.
+
+    ``external_payload`` is exactly ``DisclosurePreview.external_payload``
+    for the same input -- see that field's own docstring for why returning
+    it is the product, not a leak. ``restore_handle`` is an opaque,
+    self-contained envelope (see ``application/restore_handle.py``); this
+    service never retains anything server-side to make it work later.
+    ``restorable_count`` is the number of pseudonym entries the handle
+    actually carries -- zero for B0 -- Direct and B1 -- Static Sanitization,
+    which never pseudonymize anything, and for any category a treatment
+    removed or generalized instead.
+    """
+
+    external_payload: str
+    restore_handle: str
+    expires_at: int
+    restorable_count: int
+    treatment: Treatment
+    strategy: DisclosureStrategy
+    governance: SafeGovernanceView
+
+
+@dataclass(frozen=True)
+class DisclosureRestore:
+    """The result of ``DisclosureApplicationService.restore`` (T26 / issue
+    #67): the submitted text with every pseudonym the handle recognizes
+    replaced by its original, plus two counts -- never the mapping, and
+    never an original for a pseudonym absent from the submitted text.
+
+    ``unresolved_count`` is the number of pseudonym-shaped tokens present in
+    the submitted text that this handle does NOT know about -- e.g. because
+    they belong to a different document's export. They are left untouched in
+    ``restored_text``, never reported individually.
+    """
+
+    restored_text: str
+    restored_count: int
+    unresolved_count: int
+
+
 @dataclass(frozen=True)
 class StrategyComparisonEntry:
     """One strategy's preview within a ``StrategyComparison`` -- see the
