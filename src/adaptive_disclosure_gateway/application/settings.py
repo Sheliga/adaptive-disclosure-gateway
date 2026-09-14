@@ -190,6 +190,29 @@ def demo_transparency_enabled() -> bool:
     return value is not None and value.strip() == "1"
 
 
+DEMO_VAULT_EXPLORER_ENV_VAR = "ADG_ENABLE_DEMO_VAULT_EXPLORER"
+"""Server-side opt-in for the demo vault explorer (T29 / issue #72): a local,
+debug-only surface that shows an operator exactly which vault entries back
+one decision's reversible pseudonymization and that reconstruction resolves
+them. Independent of :data:`DEMO_TRANSPARENCY_ENV_VAR` -- enabling one must
+never enable or require the other, even though both are demo/debug
+transparency layers. Parsing rule identical to
+``demo_transparency_enabled``: enabled iff the variable is set AND its
+stripped value is exactly ``"1"``. Disabled is the safe direction (no
+``PreviewResponse.vault_explorer_token`` is ever issued and the vault
+explorer route always answers 404), so there is no startup refusal for an
+unrecognized value.
+"""
+
+
+def demo_vault_explorer_enabled() -> bool:
+    """Read :data:`DEMO_VAULT_EXPLORER_ENV_VAR` -- see its own docstring for
+    the exact parsing rule. Default disabled.
+    """
+    value = os.getenv(DEMO_VAULT_EXPLORER_ENV_VAR)
+    return value is not None and value.strip() == "1"
+
+
 def default_governance_context(*, provider_class: str) -> GovernanceContext:
     """The demo's default ``GovernanceContext``, env-overridable field by
     field except for ``provider_class``.
@@ -263,4 +286,5 @@ def build_default_service() -> DisclosureApplicationService:
         preview_confirmation_signer=build_preview_confirmation_signer(provider=provider),
         restore_handle_sealer=build_restore_handle_sealer(),
         demo_transparency_enabled=demo_transparency_enabled(),
+        demo_vault_explorer_enabled=demo_vault_explorer_enabled(),
     )

@@ -38,6 +38,7 @@ function preview(overrides: Partial<PreviewResponse> = {}): PreviewResponse {
     },
     provider_mode: { provider_class: "FakeProvider" },
     inspection: null,
+    vault_explorer_token: null,
     ...overrides,
   };
 }

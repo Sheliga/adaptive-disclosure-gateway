@@ -33,6 +33,7 @@ function preview(
   categories: CategoryDisclosureSummary[],
   status: "allowed" | "blocked" = "allowed",
   inspection: DisclosureInspection | null = null,
+  vaultExplorerToken: string | null = null,
 ): PreviewResponse {
   return {
     contract_version: "t20-application-api-v1",
@@ -56,6 +57,7 @@ function preview(
     },
     provider_mode: { provider_class: "FakeProvider" },
     inspection,
+    vault_explorer_token: vaultExplorerToken,
   };
 }
 
@@ -434,5 +436,83 @@ describe("ReviewScreen -- export/restore panel (T28)", () => {
     );
 
     expect(screen.queryByText(copy.exportRestorePanel.heading)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * T29 / issue #72: `VaultExplorerPanel` renders whenever the caller passes
+ * `demoVaultExplorerEnabled={true}`, regardless of `preview.summary.status`
+ * -- unlike the export/restore panel above, a blocked decision's `null`
+ * token is a legitimate state the panel itself renders as "unavailable",
+ * not a reason for this screen to hide the panel outright. Defaults to
+ * `false`, so every existing render call in this file already proves the
+ * "disabled" half of this pin.
+ */
+describe("ReviewScreen -- Vault Explorer panel (T29)", () => {
+  it("does not render the panel when demoVaultExplorerEnabled is not passed (defaults to disabled), and makes no fetch call", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <ReviewScreen
+        preview={preview([category({})], "allowed", null, "vx1.token")}
+        executeError={null}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText(copy.vaultExplorerPanel.heading)).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("does not render the panel when explicitly disabled even though a token is present", () => {
+    render(
+      <ReviewScreen
+        preview={preview([category({})], "allowed", null, "vx1.token")}
+        executeError={null}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+        demoVaultExplorerEnabled={false}
+      />,
+    );
+
+    expect(screen.queryByText(copy.vaultExplorerPanel.heading)).not.toBeInTheDocument();
+  });
+
+  it("renders the panel with its unavailable note when enabled but the token is null", () => {
+    render(
+      <ReviewScreen
+        preview={preview([category({})], "allowed", null, null)}
+        executeError={null}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+        demoVaultExplorerEnabled={true}
+      />,
+    );
+
+    expect(screen.getByText(copy.vaultExplorerPanel.heading)).toBeInTheDocument();
+    expect(screen.getByText(copy.vaultExplorerPanel.unavailableForDecision)).toBeInTheDocument();
+  });
+
+  it("renders the interactive panel when enabled and the token is non-null, collapsed by default", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <ReviewScreen
+        preview={preview([category({})], "allowed", null, "vx1.token")}
+        executeError={null}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+        demoVaultExplorerEnabled={true}
+      />,
+    );
+
+    expect(screen.getByText(copy.vaultExplorerPanel.heading)).toBeInTheDocument();
+    expect(screen.getByText(copy.vaultExplorerPanel.toggleLabel)).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
   });
 });

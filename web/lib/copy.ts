@@ -548,6 +548,67 @@ const ptBR = {
     clearButton: "Limpar",
   },
 
+  /**
+   * T29 / issue #72: fail-closed presentation labels for the vault
+   * explorer's `scope` field (`lib/vaultScopes.ts`). Same split as
+   * `categories.labels` above -- keys are the frozen `PseudonymScope`
+   * identifiers verbatim (never translated), only the value is
+   * presentation prose. An unrecognized scope is reported as `unrecognized`
+   * rather than prettified from its identifier, same posture as
+   * `categories.unrecognized`.
+   */
+  vaultScopes: {
+    unrecognized: "Escopo não reconhecido",
+    technicalIdLabel: "Identificador técnico:",
+    labels: {
+      request: "Uma única requisição",
+      document: "Um documento",
+      session: "Uma sessão",
+    } as Record<string, string>,
+    explanations: {
+      request: "Este pseudônimo só pode ser revertido dentro da mesma requisição que o criou.",
+      document: "Este pseudônimo pode ser revertido em qualquer requisição sobre o mesmo documento.",
+      session: "Este pseudônimo pode ser revertido em qualquer requisição da mesma sessão.",
+    } as Record<string, string>,
+  },
+
+  /**
+   * T29 / issue #72: the demo vault explorer panel
+   * (`components/VaultExplorerPanel/`), rendered on the Review and Result
+   * screens only when the demo vault explorer feature flag is enabled AND
+   * the current preview carries a non-null `vault_explorer_token`.
+   *
+   * This panel is DELIBERATELY not merged with the T27 inspector
+   * (`disclosureInspector` above): the inspector shows what changed in this
+   * document's disclosed representation; this panel shows which reversible
+   * local state -- the pseudonym -> original mapping -- stayed inside the
+   * trust boundary for this decision. Two different questions, two
+   * different data models, one conceptual link stated here in copy only.
+   */
+  vaultExplorerPanel: {
+    heading: "Vault Explorer — Demonstração",
+    subtitle: "Fronteira de confiança local",
+    disclaimer:
+      "Esta visão existe apenas para fins de demonstração e avaliação. Um produto final não exporia estes mapeamentos desta forma.",
+    toggleLabel: "Ver o Vault Explorer (cofre local)",
+    unavailableForDecision:
+      "O Vault Explorer não está disponível para esta decisão (nenhuma referência foi emitida).",
+    loadingLabel: "Carregando entradas do cofre local...",
+    scopeLabel: "Escopo:",
+    entryCountLabel: "entradas reversíveis",
+    zeroEntriesMessage:
+      "Esta decisão não deixou estado reversível local: o tratamento removeu ou generalizou os dados sensíveis em vez de pseudonimizá-los.",
+    categoryLabel: "Categoria:",
+    pseudonymLabel: "O que o serviço externo recebeu:",
+    originalLabel: "O que permaneceu na fronteira local:",
+    presentLabel: "Ainda mantido localmente",
+    notPresentLabel: "Não está mais disponível localmente",
+    showOriginalsToggle: "Mostrar valores originais",
+    hideOriginalsToggle: "Ocultar valores originais",
+    maskedValuePlaceholder: "••••••••",
+    notAvailablePlaceholder: "—",
+  },
+
   errors: {
     generic: "Não foi possível concluir a operação. Tente novamente.",
     upstreamUnreachable: "Não foi possível falar com o serviço no momento. Tente novamente em instantes.",
@@ -562,6 +623,9 @@ const ptBR = {
     restoreUnavailable: "A restauração local não está disponível nesta implantação no momento.",
     restoreHandleInvalid: "Este identificador de restauração não é válido.",
     restoreHandleExpired: "Este identificador de restauração expirou. Gere uma nova exportação.",
+    demoVaultExplorerDisabled: "Este recurso de demonstração não está habilitado nesta implantação.",
+    vaultExplorerReferenceInvalid:
+      "Esta referência ao cofre local não é mais válida ou expirou. Faça uma nova revisão antes de continuar.",
   },
 
   sectionHeadings: {

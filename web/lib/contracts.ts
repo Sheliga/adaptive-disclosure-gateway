@@ -178,6 +178,17 @@ export interface PreviewResponse {
    * either `null` or a full `DisclosureInspection`.
    */
   inspection: DisclosureInspection | null;
+  /**
+   * T29 / issue #72. A sealed, opaque reference the demo vault explorer can
+   * later resolve back into its entries (`VaultExplorerResponse` below).
+   * `null` whenever the deployment has `ADG_ENABLE_DEMO_VAULT_EXPLORER` off,
+   * the decision was blocked, or the resolved pseudonym scope is
+   * `ORGANIZATION`/unresolvable -- never absent, always either `null` or a
+   * string. A token with zero entries is still issued for a decision with
+   * no pseudonymized values (B0 -- Direct, B1 -- Static Sanitization): a
+   * `null` token means "not available", never "nothing to show".
+   */
+  vault_explorer_token: string | null;
 }
 
 /** Structured-upload preview: the normal safe preview plus an opaque proof. */
@@ -418,6 +429,56 @@ export interface RestoreResponse {
   unresolved_count: number;
 }
 
+// --- demo vault explorer (T29 / issue #72; gated behind ---------------------
+// ADG_ENABLE_DEMO_VAULT_EXPLORER for the web UI). This module never spells
+// out the route handler's own upstream path string in prose -- see
+// tests/test_demo_deployment_config.py::TestWebVaultExplorerIsGated, which
+// pins that literal string to the route handler and lib/api.ts only.
+
+/**
+ * `application/domain.py`'s `PseudonymScope` values that the vault explorer
+ * can ever actually return, as `application/vault_explorer.py` resolves
+ * them -- deliberately EXCLUDING `"organization"`: `PreviewResponse.
+ * vault_explorer_token` is never issued for an ORGANIZATION-scoped
+ * decision (see that field's own docstring), so an explorer response can
+ * never carry that scope. Kept as a plain readonly array (not just a union)
+ * so `contracts.test.ts` can diff it against `domain.py`'s
+ * `PseudonymScope` on disk, deliberately in ONE direction only (every
+ * member here must be a real Python member) -- the exclusion is
+ * intentional and the other direction is not checked here.
+ */
+export const KNOWN_VAULT_SCOPES = ["request", "document", "session"] as const;
+
+export type KnownVaultScope = (typeof KNOWN_VAULT_SCOPES)[number];
+
+/**
+ * One reversible entry the sealed token names (`application/wire.py`'s
+ * `VaultExplorerEntryModel`). `original` is `string | null`: `present`
+ * tells the UI whether the local vault still holds this pseudonym --
+ * `present === false` means `original` is `null` (a category evicted/
+ * rotated out of the vault since the token was issued), never a "known but
+ * expired" third state.
+ */
+export interface VaultExplorerEntry {
+  category: string;
+  pseudonym: string;
+  original: string | null;
+  present: boolean;
+}
+
+/**
+ * `application/wire.py`'s `VaultExplorerResponse`. `scope` is `null` (with
+ * `entries` empty) exactly when the decision pseudonymized nothing (B0/B1),
+ * never a `null` standing in for "unknown" -- see `VaultExplorerEntry`'s
+ * docstring for the analogous `present`/`original` pairing.
+ */
+export interface VaultExplorerResponse {
+  contract_version: string;
+  scope: string | null;
+  entry_count: number;
+  entries: VaultExplorerEntry[];
+}
+
 // --- GET /api/demo/features (web-only; not part of application/wire.py) -----
 
 /**
@@ -430,9 +491,15 @@ export interface RestoreResponse {
  * whether to bother rendering export/restore controls, never to decide
  * anything security-relevant (the route handlers gate that independently,
  * per request, regardless of what this endpoint last reported).
+ *
+ * `demo_vault_explorer_enabled` (T29 / issue #72) is the SAME kind of
+ * presentational-only flag, computed from the independent
+ * `ADG_ENABLE_DEMO_VAULT_EXPLORER` gate -- the two booleans are unrelated
+ * deployment toggles and neither is derived from the other.
  */
 export interface DemoFeaturesResponse {
   demo_transparency_enabled: boolean;
+  demo_vault_explorer_enabled: boolean;
 }
 
 // --- request body ------------------------------------------------------------

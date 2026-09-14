@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   compareStrategies,
   executeDisclosure,
+  exploreVault,
   exportDocument,
   getDemoFeatures,
   getExamples,
@@ -21,6 +22,7 @@ import type {
   HealthResponse,
   PreviewResponse,
   RestoreResponse,
+  VaultExplorerResponse,
 } from "./contracts";
 import { copy } from "./copy";
 
@@ -103,6 +105,7 @@ function previewBody(): PreviewResponse {
     },
     provider_mode: { provider_class: "FakeProvider" },
     inspection: null,
+    vault_explorer_token: null,
   };
 }
 
@@ -1129,8 +1132,8 @@ describe("200 response validation — examples and health", () => {
  * T28 / issue #70: getDemoFeatures, exportDocument, restoreText.
  */
 
-function demoFeaturesBody(enabled: boolean): DemoFeaturesResponse {
-  return { demo_transparency_enabled: enabled };
+function demoFeaturesBody(enabled: boolean, vaultExplorerEnabled = false): DemoFeaturesResponse {
+  return { demo_transparency_enabled: enabled, demo_vault_explorer_enabled: vaultExplorerEnabled };
 }
 
 function exportBody(): ExportResponse {
@@ -1152,6 +1155,17 @@ function restoreBody(): RestoreResponse {
     restored_text: "conteudo restaurado com Maria Oliveira",
     restored_count: 1,
     unresolved_count: 0,
+  };
+}
+
+function vaultExplorerBody(): VaultExplorerResponse {
+  return {
+    contract_version: CONTRACT_VERSION,
+    scope: "session",
+    entry_count: 1,
+    entries: [
+      { category: "employee_name", pseudonym: "PSEUDO-a1b2", original: "Ana Souza", present: true },
+    ],
   };
 }
 
@@ -1420,6 +1434,156 @@ describe("restoreText — request shape and 200 validation", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(JSON.stringify(result.error)).not.toContain("SESSION_SECRET_MARKER");
+    }
+  });
+});
+
+/**
+ * T29 / issue #72: exploreVault.
+ */
+describe("exploreVault — request shape and 200 validation", () => {
+  it("POSTs {token} as JSON to /api/demo/vault-explorer, token only in the body", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json(vaultExplorerBody()));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await exploreVault("vx1.SECRET_TOKEN_VALUE");
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/demo/vault-explorer");
+    expect(url).not.toContain("SECRET_TOKEN_VALUE");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({ token: "vx1.SECRET_TOKEN_VALUE" });
+  });
+
+  it("accepts a fully valid VaultExplorerResponse", async () => {
+    const body = vaultExplorerBody();
+    stub200(body);
+
+    const result = await exploreVault("vx1.token");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data).toEqual(body);
+    }
+  });
+
+  it("accepts a zero-entry response with scope: null (B0/B1)", async () => {
+    stub200({ contract_version: CONTRACT_VERSION, scope: null, entry_count: 0, entries: [] });
+
+    const result = await exploreVault("vx1.token");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.scope).toBeNull();
+      expect(result.data.entries).toEqual([]);
+    }
+  });
+
+  it("rejects a 200 whose entry_count disagrees with entries.length", async () => {
+    const draft = draftOf(vaultExplorerBody());
+    draft["entry_count"] = 5;
+    stub200(draft);
+
+    expect((await exploreVault("vx1.token")).ok).toBe(false);
+  });
+
+  it("rejects a 200 with scope: null but a non-empty entries array", async () => {
+    const draft = draftOf(vaultExplorerBody());
+    draft["scope"] = null;
+    stub200(draft);
+
+    expect((await exploreVault("vx1.token")).ok).toBe(false);
+  });
+
+  it("rejects a 200 whose present entry disagrees with its own original", async () => {
+    const draft = draftOf(vaultExplorerBody());
+    firstEntry(draft)["present"] = false;
+    stub200(draft);
+
+    expect((await exploreVault("vx1.token")).ok).toBe(false);
+  });
+
+  it("rejects a 200 whose absent entry still carries an original", async () => {
+    const draft = draftOf(vaultExplorerBody());
+    firstEntry(draft)["present"] = true;
+    firstEntry(draft)["original"] = null;
+    stub200(draft);
+
+    expect((await exploreVault("vx1.token")).ok).toBe(false);
+  });
+
+  it("accepts a present:false entry with original: null (evicted from the local vault)", async () => {
+    const draft = draftOf(vaultExplorerBody());
+    firstEntry(draft)["present"] = false;
+    firstEntry(draft)["original"] = null;
+    stub200(draft);
+
+    const result = await exploreVault("vx1.token");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.entries[0].present).toBe(false);
+      expect(result.data.entries[0].original).toBeNull();
+    }
+  });
+
+  it("maps a 400 VaultExplorerReferenceError to its own copy message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            detail: "vault explorer reference is invalid, malformed, expired, or was not issued by this process",
+            kind: "VaultExplorerReferenceError",
+          }),
+          { status: 400 },
+        ),
+      ),
+    );
+
+    const result = await exploreVault("vx1.bad");
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toBe(copy.errors.vaultExplorerReferenceInvalid);
+    }
+  });
+
+  it("maps a 404 DemoVaultExplorerDisabled to its own copy message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ detail: "not found", kind: "DemoVaultExplorerDisabled" }), { status: 404 }),
+      ),
+    );
+
+    const result = await exploreVault("vx1.token");
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toBe(copy.errors.demoVaultExplorerDisabled);
+    }
+  });
+
+  it("never echoes the token, a pseudonym, or an original in a rejected/error result", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            detail: "vault explorer reference is invalid, malformed, expired, or was not issued by this process",
+            kind: "VaultExplorerReferenceError",
+          }),
+          { status: 400 },
+        ),
+      ),
+    );
+
+    const result = await exploreVault("vx1.SESSION_SECRET_TOKEN");
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(JSON.stringify(result.error)).not.toContain("SESSION_SECRET_TOKEN");
     }
   });
 });

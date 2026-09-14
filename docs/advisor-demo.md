@@ -626,7 +626,7 @@ other route -- `POST /documents/export` and `POST /documents/restore` return
 unset never makes the deployment report not-ready -- only the export/restore
 routes themselves refuse.
 
-## Demonstration surfaces (T27 / Issue #69, T28 / Issue #70)
+## Demonstration surfaces (T27 / Issue #69, T28 / Issue #70, T29 / Issue #72)
 
 Two additive, opt-in surfaces for advisor evaluation, both gated by the same
 `ADG_ENABLE_DEMO_TRANSPARENCY` flag (see `.env.example`) and both **off by
@@ -740,14 +740,147 @@ own owner, or remove the web-facing inspector/export/restore surfaces
 entirely and keep only the API/CLI paths T26 already scopes to a caller who
 holds the handle.
 
-### Why there is no Vault Explorer
+### T29 — Vault Explorer
 
-Neither surface lists, browses or dumps the pseudonym → original mapping.
-The inspector shows only the current request's own transformations (derived
-from that one decision, not from the vault). No endpoint returns the global
-mapping. Restore is scoped to one sealed handle and resolves only the
-pseudonyms that handle's own export produced -- it cannot be used to browse
-or enumerate anything outside that scope.
+A gated, demo-only local instrument for confirming that reversible
+pseudonymization genuinely reverses, entry by entry, for one already-computed
+decision. Off by default, gated by its own flag independent of
+`ADG_ENABLE_DEMO_TRANSPARENCY`.
+
+**Pedagogical purpose.** T27's inspector shows *what changed* (original →
+disclosed segments); T28's export/restore shows *that* T26's mechanism works
+end to end via a portable handle. Neither confirms, for one specific
+decision, exactly which vault entries a pseudonym in the disclosed payload
+maps to, and that local reconstruction genuinely resolves it. The Vault
+Explorer closes that gap: for one preview, an operator opens every value
+B2 — Reversible Pseudonymization through B4 — Policy-governed pseudonymized,
+in place, and sees the original → pseudonym → local scope → reconstruction
+chain concretely, without exporting anything or invoking a restore handle.
+
+**How to enable it.** Same non-secret, byte-identical parsing rule as
+`ADG_ENABLE_DEMO_TRANSPARENCY` (see `.env.example`): enabled iff the
+variable is set and, after stripping whitespace, exactly `"1"`. It is a
+fully independent flag -- `ADG_ENABLE_DEMO_VAULT_EXPLORER` does not require
+`ADG_ENABLE_DEMO_TRANSPARENCY`, and enabling one never enables or requires
+the other. Must be set on **both** `api` and `web`:
+
+```
+ADG_ENABLE_DEMO_VAULT_EXPLORER=1 \
+ADG_PROVIDER=fake docker compose -f compose.demo.yaml up --build
+```
+
+**Advisor walkthrough.**
+
+1. Load a contract or prepared example as usual.
+2. Preview under B2 — Reversible Pseudonymization or B4 — Policy-governed;
+   the response now also carries an opaque `vault_explorer_token` alongside
+   `inspection` (when T27 is also enabled).
+3. Open the inspector (T27), if enabled, for the segment-level original vs.
+   disclosed view.
+4. Open the Vault Explorer panel on Revisão or Resultado. It is collapsed by
+   default and fetches nothing until opened.
+5. The panel states plainly that the original values stay local: opening it
+   makes no upload and calls only `POST /demo/vault-explorer` with the
+   token, never a document.
+6. Confirm what actually crossed the provider boundary during the real
+   preview/execute call was only the pseudonym -- the explorer makes no new
+   provider call of any kind.
+7. Answer: the panel lists, per pseudonymized value, its category, the
+   pseudonym that appeared in the disclosed payload, and -- masked until an
+   explicit toggle -- the original the vault resolves it back to locally.
+   This is "local reconstruction," made visible.
+8. Optionally, use T26/T28's export/restore panel afterward to see the same
+   reversibility demonstrated through the durable, sealed-handle mechanism
+   instead -- two lenses on one property: live local inspection vs. a
+   portable, later-usable handle.
+
+**Scope authorization.** The explorer never accepts a client-chosen scope
+id. `POST /documents/preview` seals an opaque, server-generated reference
+(`vx1.…`) alongside the decision it just computed; the reference embeds the
+resolved scope, that scope's partition key, and this preview's own
+PSEUDONYMIZE `(pseudonym, category)` pairs -- each verified against the
+vault at issuance time -- and nothing else. A client cannot request a
+different scope, another document's entries, or "every entry in scope X":
+there is no list-all/enumeration capability, only
+`POST /demo/vault-explorer {token}` performing one point lookup
+(`vault.reconstruct(scope, key, pseudonym)`) per entry the token itself
+names. This is a narrower authorization than the lifecycle identifiers
+(e.g. `session_id`) governance overrides elsewhere accept: those select
+*which* governed context a request runs under, never *which vault entries*
+an already-computed decision may expose. `PseudonymScope.ORGANIZATION` is
+excluded outright -- `issue_reference` returns no token at all when the
+resolved scope is ORGANIZATION, since an explorer scoped to an entire
+organization would defeat the purpose of a per-decision lens.
+
+**Lifecycle.** No persistence anywhere -- not on disk, not in a database,
+not in any module-level collection. Each token is sealed with a fresh,
+random 32-byte AES-256-GCM key generated once per process, never derived
+from `ADG_RESTORE_HANDLE_SECRET`, `ADG_PREVIEW_CONFIRMATION_SECRET`, or any
+other configured value. A token expires 900 seconds (15 minutes) after
+issuance regardless of activity, and restarting the `api` process
+invalidates every outstanding token immediately, since the sealing key dies
+with the process. Running multiple `api` workers means a token issued by
+one worker fails closed on every other worker -- there is no shared key to
+synchronize, by design.
+
+**Difference from T26 restore handles.** A restore handle (T26) is the
+authorized, *deferred* re-identification mechanism: meant to outlive the
+process that issued it, keyed from a durable configured secret, and
+designed to be exported, stored and used later -- possibly on a different
+worker or after a restart -- to restore pseudonyms in arbitrary submitted
+text. The Vault Explorer is the opposite by design: live, local,
+in-process-only instrumentation that makes one already-computed decision's
+reversibility visible right now, and dies with the process. The explorer
+never decrypts or otherwise touches a restore handle, and neither mechanism
+can open the other's envelope -- independent keys, independent formats.
+
+**Difference from T27 inspector.** The inspector shows what changed -- the
+original/disclosed text side by side, segment by segment, from the
+decision's own structured transformation records; it never touches the
+vault and never shows an original value resolved back from a pseudonym. The
+Vault Explorer shows which reversible state stayed local -- it is the one
+surface that actually calls `Vault.reconstruct`, confirming concretely that
+the pseudonym the inspector shows really does resolve back to the original
+the inspector shows, via the same local vault the pipeline used. The two
+are complementary lenses on one decision: T27 answers "what happened to
+this text," T29 answers "prove the reversible part is really reversible,
+right here."
+
+**Demo instrument vs. product architecture.** Like T27/T28, this is a
+demonstration/pedagogical feature, not a capability the gateway's real API
+surface offers by default. It adds no new Vault protocol --
+`Vault.reconstruct` is called exactly as `execute`'s own reconstruction path
+already calls it, from one new module (`application/vault_explorer.py`)
+that is the only application/api-layer code besides the existing execute
+path allowed to call it (pinned by
+`tests/test_vault_explorer_import_isolation.py`). A final product would
+either remove this surface entirely or put it behind real
+authentication/authorization scoped to the document's own owner, exactly as
+T27/T28's "Demo vs final product" section above already states for those
+two surfaces.
+
+**What must never appear in logs/telemetry/audit/browser storage.** Any
+original value; any pseudonym beyond what the operator's own current
+preview already discloses; the vault-explorer sealing key; a scope's
+partition key; the raw token's decoded contents (the opaque `vx1.…` string
+itself may appear only in the gated route's own request/response bodies,
+never in a log line). The only OTel spans this feature opens
+(`vault_explorer.issue`, `vault_explorer.explore`) carry counts only
+(`entry_count`, `present_count`) -- never a category, pseudonym, original or
+the token. The web panel discards every fetched entry when closed and never
+shows an original by default.
+
+### Vault Explorer scope (no global dump/list endpoint)
+
+A gated, demo-only Vault Explorer now exists (T29 / Issue #72, above). What
+remains true and unchanged from the T27/T28 design: neither the inspector
+nor export/restore lists, browses or dumps the pseudonym → original
+mapping, and there is still no endpoint that returns the global mapping or
+lets a caller enumerate vault entries outside one decision's own scope.
+T29's explorer is deliberately just as narrow -- see "Scope authorization"
+above: it performs point lookups against one sealed, per-preview reference,
+never a scan of the vault, and every non-demo API continues to return no
+mapping at all.
 
 ### What must never appear in UI/logs
 
@@ -756,7 +889,10 @@ The full pseudonym → original mapping; the restore-handle secret
 decoded contents of a restore handle; any original or pseudonym value in a
 log line (api access logs, uvicorn logs, Next.js server logs) or an OTel
 span attribute; the restore handle itself in a URL or in browser storage
-(it lives only in React state for the lifetime of the tab).
+(it lives only in React state for the lifetime of the tab). The same rule
+covers T29's Vault Explorer: its opaque `vx1.…` reference, its decoded
+entries, and its per-process sealing key must never appear in a log line or
+span attribute either -- see the T29 section above for its own scoped list.
 
 ## Security stance
 

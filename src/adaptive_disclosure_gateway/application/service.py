@@ -161,6 +161,7 @@ from pathlib import Path
 
 from adaptive_disclosure_gateway.application.contracts import (
     CANONICAL_COMPARISON_ORDER,
+    DemoVaultExplorerDisabledError,
     DisclosureApplicationRequest,
     DisclosureExecution,
     DisclosureExport,
@@ -211,6 +212,10 @@ from adaptive_disclosure_gateway.application.restore_handle import (
     restore_pseudonyms,
 )
 from adaptive_disclosure_gateway.application.summaries import build_disclosure_summary
+from adaptive_disclosure_gateway.application.vault_explorer import (
+    VaultExplorerSealer,
+    VaultExplorerView,
+)
 from adaptive_disclosure_gateway.corpus.case_input import CorpusCaseInput
 from adaptive_disclosure_gateway.detection import Detector
 from adaptive_disclosure_gateway.domain import (
@@ -328,6 +333,7 @@ class DisclosureApplicationService:
         preview_confirmation_signer: PreviewConfirmationSigner | None = None,
         restore_handle_sealer: RestoreHandleSealer | None = None,
         demo_transparency_enabled: bool = False,
+        demo_vault_explorer_enabled: bool = False,
     ) -> None:
         self._policy_repository = policy_repository
         self._provider = provider
@@ -380,6 +386,15 @@ class DisclosureApplicationService:
         # changes ``export``/``execute``/``execute_document``/
         # ``compare_strategies`` behavior.
         self._demo_transparency_enabled = demo_transparency_enabled
+        # T29 / issue #72. Independent of ``_demo_transparency_enabled``
+        # above -- enabling one must never enable or require the other. The
+        # sealer is constructed unconditionally (its per-process random key
+        # costs nothing to generate and is never used unless the flag is on
+        # and ``explore_vault``/``preview`` actually reach it), mirroring
+        # how ``_restore_handle_sealer`` above always constructs even when
+        # its own feature is unconfigured.
+        self._demo_vault_explorer_enabled = demo_vault_explorer_enabled
+        self._vault_explorer_sealer = VaultExplorerSealer()
 
     def _build_treatment(self, request: DisclosureApplicationRequest):
         treatment_code = resolve_treatment(request.strategy)
@@ -418,6 +433,7 @@ class DisclosureApplicationService:
                 context=context,
                 decision=decision,
                 include_inspection=self._demo_transparency_enabled,
+                include_vault_explorer_token=self._demo_vault_explorer_enabled,
             )
 
             # Metadata only -- status, treatment code, counts, category
@@ -441,6 +457,7 @@ class DisclosureApplicationService:
         context: GovernanceContext,
         decision: DisclosureDecision,
         include_inspection: bool = False,
+        include_vault_explorer_token: bool = False,
     ) -> DisclosurePreview:
         """The "review before sending" view of one ``DisclosureDecision``.
 
@@ -458,9 +475,24 @@ class DisclosureApplicationService:
         ``self._demo_transparency_enabled`` is set. No second decision phase
         is run either way: ``build_inspection`` re-derives the projection
         from the SAME ``decision`` this method was handed.
+
+        ``include_vault_explorer_token`` (T29 / issue #72) mirrors that
+        exact same pattern for ``DisclosurePreview.vault_explorer_token``:
+        ``False`` by default so ``export``/``execute_document``'s internal
+        call never issues one, and ``VaultExplorerSealer.issue_reference``
+        is handed the SAME ``decision``/``context`` -- no second decision
+        phase, no vault call beyond the verification ``issue_reference``
+        itself performs.
         """
         inspection = (
             build_inspection(request.content.text, decision) if include_inspection else None
+        )
+        vault_explorer_token = (
+            self._vault_explorer_sealer.issue_reference(
+                decision, context, self._policy_repository, self._vault
+            )
+            if include_vault_explorer_token
+            else None
         )
         return DisclosurePreview(
             summary=build_disclosure_summary(decision),
@@ -471,6 +503,7 @@ class DisclosureApplicationService:
             governance=safe_governance_view(context),
             provider_mode=ProviderMode(provider_class=self._provider.provider_class),
             inspection=inspection,
+            vault_explorer_token=vault_explorer_token,
         )
 
     def execute(self, request: DisclosureApplicationRequest) -> DisclosureExecution:
@@ -668,6 +701,26 @@ class DisclosureApplicationService:
                 restored_count=restored_count,
                 unresolved_count=unresolved_count,
             )
+
+    def explore_vault(self, token: str) -> VaultExplorerView:
+        """Open a vault-explorer ``token`` (T29 / issue #72) and resolve its
+        entries against this service's own vault -- the same one every
+        ``preview``/``execute`` call on this instance shares.
+
+        Raises ``DemoVaultExplorerDisabledError`` (mapped to HTTP 404) when
+        ``demo_vault_explorer_enabled`` is not set for this service --
+        checked BEFORE ``token`` is touched at all, so a disabled deployment
+        never attempts to decrypt a caller-supplied string. Raises
+        ``VaultExplorerReferenceError`` (mapped to HTTP 400) for a token
+        that is malformed, tampered, expired, or was issued by a different
+        process (this sealer's key is per-process -- see
+        ``application/vault_explorer.py``).
+        """
+        if not self._demo_vault_explorer_enabled:
+            raise DemoVaultExplorerDisabledError(
+                "the demo vault explorer surface is not enabled for this deployment"
+            )
+        return self._vault_explorer_sealer.explore(token, self._vault)
 
     def compare_strategies(self, request: DisclosureApplicationRequest) -> StrategyComparison:
         """Run ``request`` through every B0-B4 strategy via ``preview`` --

@@ -74,8 +74,16 @@ from fastapi.responses import JSONResponse
 
 from adaptive_disclosure_gateway.api import schemas
 from adaptive_disclosure_gateway.api import settings as api_settings
-from adaptive_disclosure_gateway.api.limits import RequestBodySizeLimitMiddleware
+from adaptive_disclosure_gateway.api.limits import (
+    ASGIApp,
+    Message,
+    Receive,
+    RequestBodySizeLimitMiddleware,
+    Scope,
+    Send,
+)
 from adaptive_disclosure_gateway.application.contracts import (
+    DemoVaultExplorerDisabledError,
     DisclosureApplicationRequest,
     DisclosureStrategy,
     ExportRefusedError,
@@ -96,6 +104,63 @@ from adaptive_disclosure_gateway.application.restore_handle import (
     RestoreUnavailableError,
 )
 from adaptive_disclosure_gateway.application.service import DisclosureApplicationService
+from adaptive_disclosure_gateway.application.vault_explorer import VaultExplorerReferenceError
+
+VAULT_EXPLORER_PATH = "/demo/vault-explorer"
+
+
+_NO_STORE_HEADERS = ((b"cache-control", b"no-store"), (b"pragma", b"no-cache"))
+_NO_STORE_HEADER_NAMES = frozenset(name for name, _value in _NO_STORE_HEADERS)
+
+
+class _NoStoreOnVaultExplorerASGIMiddleware:
+    """Force ``Cache-Control: no-store`` / ``Pragma: no-cache`` on EVERY
+    response from :data:`VAULT_EXPLORER_PATH`, regardless of status code
+    (T29 / issue #72).
+
+    Deliberately a pure ASGI middleware, not a ``BaseHTTPMiddleware``
+    subclass: ``BaseHTTPMiddleware`` reconstructs the whole response (it
+    consumes the inner ASGI ``send`` into a buffered/streamed response object
+    and replays it), which forwards every request through an extra layer of
+    buffering for every route on this API just to touch headers on one path.
+    This wraps ``send`` only for requests to ``VAULT_EXPLORER_PATH`` and lets
+    everything else pass straight through untouched -- the path check below
+    is the only branch, exactly as before.
+
+    The header set is a response hook rather than being set inside the route
+    handler and each individual exception handler on purpose: a route
+    handler only runs for the 200 case, and the 404/400/413/422 paths are
+    produced by exception handlers and other middleware (in particular
+    ``RequestBodySizeLimitMiddleware``) shared with -- or, for 422,
+    identical to -- every other route on this API. Setting the header in
+    exactly one path-scoped place means a future new failure mode for this
+    route (another exception type, a different status) inherits the header
+    for free instead of depending on someone remembering to add it again.
+    Registered outermost (see ``create_app``) so a 413 produced by
+    ``RequestBodySizeLimitMiddleware`` upstream of the route handler still
+    carries the headers.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope.get("type") != "http" or scope.get("path") != VAULT_EXPLORER_PATH:
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_no_store(message: Message) -> None:
+            if message.get("type") == "http.response.start":
+                existing = message.get("headers", [])
+                kept = [
+                    (name, value)
+                    for name, value in existing
+                    if name.lower() not in _NO_STORE_HEADER_NAMES
+                ]
+                message = {**message, "headers": [*kept, *_NO_STORE_HEADERS]}
+            await send(message)
+
+        await self.app(scope, receive, send_with_no_store)
 
 
 def _build_default_service() -> DisclosureApplicationService:
@@ -224,6 +289,8 @@ def create_app(
         allow_headers=["*"],
     )
 
+    app.add_middleware(_NoStoreOnVaultExplorerASGIMiddleware)
+
     @app.exception_handler(RequestValidationError)
     async def _handle_validation_error(
         _request: Request, exc: RequestValidationError
@@ -268,6 +335,31 @@ def create_app(
         # failed provider call, these are refusals to run the request, not
         # results of running it.
         return _error_response(exc, status_code=400)
+
+    @app.exception_handler(VaultExplorerReferenceError)
+    async def _handle_vault_explorer_reference_error(
+        _request: Request, exc: Exception
+    ) -> JSONResponse:
+        # T29 / issue #72. One fixed message for every rejection reason
+        # (malformed, tampered, expired, wrong-process key) -- see
+        # ``application/vault_explorer.py``'s own docstring for why. Never
+        # echoes the submitted token.
+        return _error_response(exc, status_code=400)
+
+    @app.exception_handler(DemoVaultExplorerDisabledError)
+    async def _handle_demo_vault_explorer_disabled(
+        _request: Request, _exc: Exception
+    ) -> JSONResponse:
+        # T29 / issue #72. Deliberately NOT ``_error_response`` (which would
+        # use ``type(exc).__name__`` == "DemoVaultExplorerDisabledError"):
+        # the disabled-feature body is a fixed, minimal 404 that reveals
+        # nothing about why -- indistinguishable from the route not existing
+        # at all, matching every other disabled-by-default demo surface's
+        # posture of not advertising its own existence.
+        return JSONResponse(
+            status_code=404,
+            content={"detail": "not found", "kind": "DemoVaultExplorerDisabled"},
+        )
 
     @app.exception_handler(ExampleNotFoundError)
     async def _handle_example_not_found(_request: Request, exc: Exception) -> JSONResponse:
@@ -526,6 +618,23 @@ def create_app(
         service = _get_service(request)
         restored = service.restore(text=body.text, restore_handle=body.restore_handle)
         content = schemas.RestoreResponse.from_domain(restored).model_dump()
+        return JSONResponse(status_code=200, content=content)
+
+    # --- demo vault explorer (T29 / issue #72) ---------------------------------
+    #
+    # Local, debug-only surface: opens a sealed reference a prior preview
+    # issued and resolves its entries against this service's own vault.
+    # Disabled -> 404 (DemoVaultExplorerDisabledError, handled above);
+    # malformed/tampered/expired/foreign-process token -> 400
+    # (VaultExplorerReferenceError, handled above). Every response from this
+    # route additionally carries Cache-Control: no-store / Pragma: no-cache
+    # via ``_NoStoreOnVaultExplorerMiddleware`` above, on every status code.
+
+    @app.post(VAULT_EXPLORER_PATH, response_model=None)
+    def explore_vault(body: schemas.VaultExplorerRequestBody, request: Request) -> JSONResponse:
+        service = _get_service(request)
+        view = service.explore_vault(body.token)
+        content = schemas.VaultExplorerResponse.from_domain(view).model_dump()
         return JSONResponse(status_code=200, content=content)
 
     return app

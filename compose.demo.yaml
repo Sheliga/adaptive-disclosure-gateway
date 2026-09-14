@@ -78,6 +78,18 @@ services:
       # environment for advisor evaluation -- never on a public,
       # unauthenticated hosted URL.
       ADG_ENABLE_DEMO_TRANSPARENCY: ${ADG_ENABLE_DEMO_TRANSPARENCY:-}
+      # T29 / issue #72. Server-side opt-in for the local demo vault
+      # explorer -- a demo/debug-only surface that reveals ORIGINAL values
+      # (not just that pseudonymization happened) to whoever can reach the
+      # web origin, for one decision's own reversible entries. Independent
+      # of ADG_ENABLE_DEMO_TRANSPARENCY above: enabling one must never
+      # enable or require the other. Deliberately OPTIONAL (`:-`, not
+      # `:?`): unset keeps every preview's `vault_explorer_token` null and
+      # POST /demo/vault-explorer answering a fixed 404, exactly like the
+      # transparency flag's own off-by-default posture. Enable only in a
+      # controlled environment for advisor evaluation -- never on a public,
+      # unauthenticated hosted URL.
+      ADG_ENABLE_DEMO_VAULT_EXPLORER: ${ADG_ENABLE_DEMO_VAULT_EXPLORER:-}
       # Engineering limits/CORS. Safe repository defaults apply when unset;
       # CORS can stay empty because the browser only ever calls the web
       # origin (docs/advisor-demo.md's architectural boundary).
@@ -135,6 +147,12 @@ services:
       # TestWebExportRestoreIsGated in tests/test_demo_deployment_config.py,
       # which pins that the gate is checked before any proxy call.
       ADG_ENABLE_DEMO_TRANSPARENCY: ${ADG_ENABLE_DEMO_TRANSPARENCY:-}
+      # T29 / issue #72. Mirrors the api service's own variable above --
+      # not yet proxied by any web route in this backend-only stage (there
+      # is no web UI slice for it here), carried through so a later web
+      # slice does not need a second compose change. Same optional,
+      # off-by-default posture, independent of ADG_ENABLE_DEMO_TRANSPARENCY.
+      ADG_ENABLE_DEMO_VAULT_EXPLORER: ${ADG_ENABLE_DEMO_VAULT_EXPLORER:-}
     # Loopback-only: bound to 127.0.0.1 specifically, not every host
     # interface. Without an explicit host IP, compose publishes on ALL
     # interfaces including a public one, which would let a caller reach the

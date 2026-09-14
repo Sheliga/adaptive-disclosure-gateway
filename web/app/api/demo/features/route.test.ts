@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { DEMO_TRANSPARENCY_ENV_VAR } from "@/lib/demoTransparency";
+import { DEMO_VAULT_EXPLORER_ENV_VAR } from "@/lib/demoVaultExplorer";
 
 import { dynamic, GET } from "./route";
 
@@ -23,36 +24,70 @@ describe("GET /api/demo/features", () => {
 
   it("reports demo_transparency_enabled: false when the flag is unset", async () => {
     delete process.env[DEMO_TRANSPARENCY_ENV_VAR];
+    delete process.env[DEMO_VAULT_EXPLORER_ENV_VAR];
 
     const response = await GET();
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ demo_transparency_enabled: false });
+    expect(await response.json()).toEqual({
+      demo_transparency_enabled: false,
+      demo_vault_explorer_enabled: false,
+    });
   });
 
   it("reports demo_transparency_enabled: true when the flag is exactly \"1\"", async () => {
     process.env[DEMO_TRANSPARENCY_ENV_VAR] = "1";
+    delete process.env[DEMO_VAULT_EXPLORER_ENV_VAR];
 
     const response = await GET();
 
-    expect(await response.json()).toEqual({ demo_transparency_enabled: true });
+    expect(await response.json()).toEqual({
+      demo_transparency_enabled: true,
+      demo_vault_explorer_enabled: false,
+    });
   });
 
   it("reports false for a near-miss value like \"true\"", async () => {
     process.env[DEMO_TRANSPARENCY_ENV_VAR] = "true";
+    delete process.env[DEMO_VAULT_EXPLORER_ENV_VAR];
 
     const response = await GET();
 
-    expect(await response.json()).toEqual({ demo_transparency_enabled: false });
+    expect(await response.json()).toEqual({
+      demo_transparency_enabled: false,
+      demo_vault_explorer_enabled: false,
+    });
   });
 
-  it("never returns any field beyond demo_transparency_enabled", async () => {
+  it("never returns any field beyond demo_transparency_enabled and demo_vault_explorer_enabled", async () => {
     process.env[DEMO_TRANSPARENCY_ENV_VAR] = "1";
 
     const response = await GET();
     const body = await response.json();
 
-    expect(Object.keys(body)).toEqual(["demo_transparency_enabled"]);
+    expect(Object.keys(body).sort()).toEqual(
+      ["demo_transparency_enabled", "demo_vault_explorer_enabled"].sort(),
+    );
+  });
+
+  it("reports demo_vault_explorer_enabled: false when the flag is unset", async () => {
+    delete process.env[DEMO_VAULT_EXPLORER_ENV_VAR];
+
+    const response = await GET();
+
+    expect((await response.json()).demo_vault_explorer_enabled).toBe(false);
+  });
+
+  it("reports demo_vault_explorer_enabled: true when the flag is exactly \"1\", independently of demo_transparency", async () => {
+    delete process.env[DEMO_TRANSPARENCY_ENV_VAR];
+    process.env[DEMO_VAULT_EXPLORER_ENV_VAR] = "1";
+
+    const response = await GET();
+
+    expect(await response.json()).toEqual({
+      demo_transparency_enabled: false,
+      demo_vault_explorer_enabled: true,
+    });
   });
 });
 

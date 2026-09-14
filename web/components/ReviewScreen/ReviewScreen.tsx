@@ -41,6 +41,7 @@ import { initialComposeState, type ComposeState } from "@/lib/flow";
 import { CategoryOutcomeRow } from "../CategoryOutcomeRow/CategoryOutcomeRow";
 import { DisclosureInspector } from "../DisclosureInspector/DisclosureInspector";
 import { ExportRestorePanel } from "../ExportRestorePanel/ExportRestorePanel";
+import { VaultExplorerPanel } from "../VaultExplorerPanel/VaultExplorerPanel";
 import styles from "./ReviewScreen.module.css";
 
 export interface ReviewScreenProps {
@@ -57,6 +58,19 @@ export interface ReviewScreenProps {
   compose?: ComposeState;
   /** T28 / issue #70. See this module's docstring. Defaults to `false` (disabled) so existing callers/tests are unaffected. */
   demoTransparencyEnabled?: boolean;
+  /**
+   * T29 / issue #72. Same posture as `demoTransparencyEnabled`: a UX
+   * convenience fetched once, up front, by `GuidedFlow` via
+   * `getDemoFeatures` -- any failure there is already treated as disabled
+   * before it ever reaches this prop. When `true`, `VaultExplorerPanel` is
+   * rendered below the T27 inspector regardless of `preview.summary.status`
+   * -- unlike `ExportRestorePanel`, a blocked decision still legitimately
+   * carries a `null` `vault_explorer_token` (see that field's own
+   * docstring), which the panel itself renders as an "unavailable" note
+   * rather than needing this screen to decide that. Defaults to `false`
+   * (disabled) so existing callers/tests are unaffected.
+   */
+  demoVaultExplorerEnabled?: boolean;
 }
 
 export function ReviewScreen({
@@ -66,6 +80,7 @@ export function ReviewScreen({
   onCancel,
   compose = initialComposeState,
   demoTransparencyEnabled = false,
+  demoVaultExplorerEnabled = false,
 }: ReviewScreenProps) {
   const copy = useCopy();
   const [payloadOpen, setPayloadOpen] = useState(false);
@@ -147,6 +162,8 @@ export function ReviewScreen({
       )}
 
       {demoTransparencyEnabled && !isBlocked && <ExportRestorePanel compose={compose} />}
+
+      {demoVaultExplorerEnabled && <VaultExplorerPanel token={preview.vault_explorer_token} />}
 
       {executeError && (
         <p role="alert" className={styles.error}>
