@@ -740,3 +740,82 @@ class TestWebExportRestoreIsGated:
             f'{features_route} must declare `export const dynamic = "force-dynamic";` -- '
             "otherwise next build may prerender it and bake the build-time env into the image"
         )
+
+
+class TestWebVaultExplorerIsGated:
+    """T29 / issue #72, mirroring ``TestWebExportRestoreIsGated`` above: the
+    vault explorer route.ts proxies ``POST /demo/vault-explorer`` only behind
+    the server-side ``ADG_ENABLE_DEMO_VAULT_EXPLORER`` gate
+    (``web/lib/demoVaultExplorer.ts``), which defaults to disabled. Same
+    static, repository-wide posture for the same reason: it also reaches
+    code that has not been written yet.
+    """
+
+    def test_vault_explorer_route_exists(self) -> None:
+        route_file = _WEB_ROOT / "app" / "api" / "demo" / "vault-explorer" / "route.ts"
+        assert route_file.is_file(), f"expected {route_file} to exist"
+
+    def test_vault_explorer_route_checks_the_gate_before_any_proxy_call(self) -> None:
+        route_file = _WEB_ROOT / "app" / "api" / "demo" / "vault-explorer" / "route.ts"
+        text = route_file.read_text(encoding="utf-8")
+
+        assert "@/lib/demoVaultExplorer" in text, (
+            f"{route_file} must import the gate from @/lib/demoVaultExplorer"
+        )
+        gate_call_index = text.find("isDemoVaultExplorerEnabled(")
+        assert gate_call_index != -1, f"{route_file} must call isDemoVaultExplorerEnabled(...)"
+
+        proxy_call_indices = [
+            index
+            for marker in ("proxyMultipartPost(", "proxyJsonPost(", "proxyGet(")
+            if (index := text.find(marker)) != -1
+        ]
+        assert proxy_call_indices, f"{route_file} must forward to a proxy* call when enabled"
+        assert gate_call_index < min(proxy_call_indices), (
+            f"{route_file} must check isDemoVaultExplorerEnabled(...) BEFORE calling any "
+            "proxy* function -- a disabled gate must make zero upstream calls"
+        )
+
+    def test_only_the_route_and_the_client_reference_the_path(self) -> None:
+        api_dir = _WEB_ROOT / "app" / "api"
+        allowed = {
+            (api_dir / "demo" / "vault-explorer" / "route.ts").resolve(),
+            (_WEB_ROOT / "lib" / "api.ts").resolve(),
+        }
+        offenders = []
+        for path in _web_source_files():
+            if path.name.endswith((".test.ts", ".test.tsx")):
+                continue
+            if path.resolve() in allowed:
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            if "/demo/vault-explorer" in text:
+                offenders.append(path)
+        assert not offenders, (
+            "only the vault explorer route handler and lib/api.ts may reference "
+            f"/demo/vault-explorer outside tests: {offenders!r}"
+        )
+
+    def test_no_file_references_next_public_demo_vault_explorer(self) -> None:
+        forbidden = ("NEXT_PUBLIC_ADG_ENABLE_DEMO_VAULT_EXPLORER",)
+        offenders = []
+        for path in _web_source_files():
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            if any(name in text for name in forbidden):
+                offenders.append(path)
+        assert not offenders, f"no file under web/ may reference {forbidden!r}: {offenders!r}"
+
+    def test_vault_explorer_route_declares_force_dynamic(self) -> None:
+        route_file = _WEB_ROOT / "app" / "api" / "demo" / "vault-explorer" / "route.ts"
+        assert route_file.is_file(), f"expected {route_file} to exist"
+        text = route_file.read_text(encoding="utf-8")
+        assert re.search(r'export const dynamic = ["\']force-dynamic["\'];', text), (
+            f'{route_file} must declare `export const dynamic = "force-dynamic";` -- '
+            "otherwise next build may prerender it and bake the build-time env into the image"
+        )
