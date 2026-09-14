@@ -92,6 +92,7 @@ def build_service(
     *,
     examples_directory: Path | None = EXAMPLES_DIR,
     demo_transparency_enabled: bool = False,
+    demo_vault_explorer_enabled: bool = False,
     **context_overrides,
 ) -> DisclosureApplicationService:
     return DisclosureApplicationService(
@@ -100,6 +101,7 @@ def build_service(
         default_context=default_context(**context_overrides),
         examples_directory=examples_directory,
         demo_transparency_enabled=demo_transparency_enabled,
+        demo_vault_explorer_enabled=demo_vault_explorer_enabled,
     )
 
 

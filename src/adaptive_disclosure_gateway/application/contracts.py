@@ -377,6 +377,16 @@ class DisclosurePreview:
     populated only by ``preview``/``preview_document`` when that flag is on,
     never by ``export``/``execute``/``execute_document``/
     ``compare_strategies`` -- see ``service.py``'s own docstring.
+
+    ``vault_explorer_token`` (T29 / issue #72) is ``None`` unless the demo
+    vault explorer surface (gated by ``ADG_ENABLE_DEMO_VAULT_EXPLORER`` --
+    independent of the transparency flag above) is enabled AND this
+    decision is ``"allowed"``. It is an opaque, sealed reference (see
+    ``application/vault_explorer.py``) a caller sends back unchanged to
+    ``DisclosureApplicationService.explore_vault`` -- never a mapping, a
+    scope key, or anything else that would let the token itself carry a
+    sensitive value. Populated only by ``preview``/``preview_document``,
+    exactly like ``inspection``.
     """
 
     summary: DisclosureSummary
@@ -387,6 +397,7 @@ class DisclosurePreview:
     governance: SafeGovernanceView
     provider_mode: ProviderMode
     inspection: DisclosureInspection | None = None
+    vault_explorer_token: str | None = None
 
 
 @dataclass(frozen=True)
@@ -420,6 +431,16 @@ class UnsafeControlExecutionError(Exception):
 
     Its message names the treatment class and the surface only -- never the
     document, the task or the payload.
+    """
+
+
+class DemoVaultExplorerDisabledError(Exception):
+    """Raised by ``DisclosureApplicationService.explore_vault`` when the demo
+    vault explorer surface (``ADG_ENABLE_DEMO_VAULT_EXPLORER``, T29 / issue
+    #72) is not enabled for this service -- checked and raised BEFORE the
+    submitted token is opened at all, so a disabled deployment never even
+    attempts to decrypt caller-supplied bytes. Its message names the surface
+    only, never the token.
     """
 
 
