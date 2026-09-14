@@ -590,8 +590,7 @@ const ptBR = {
     subtitle: "Fronteira de confiança local",
     disclaimer:
       "Esta visão existe apenas para fins de demonstração e avaliação. Um produto final não exporia estes mapeamentos desta forma.",
-    toggleOpenLabel: "Abrir o Vault Explorer",
-    toggleCloseLabel: "Fechar o Vault Explorer",
+    toggleLabel: "Ver o Vault Explorer (cofre local)",
     unavailableForDecision:
       "O Vault Explorer não está disponível para esta decisão (nenhuma referência foi emitida).",
     loadingLabel: "Carregando entradas do cofre local...",
@@ -607,6 +606,7 @@ const ptBR = {
     showOriginalsToggle: "Mostrar valores originais",
     hideOriginalsToggle: "Ocultar valores originais",
     maskedValuePlaceholder: "••••••••",
+    notAvailablePlaceholder: "—",
   },
 
   errors: {

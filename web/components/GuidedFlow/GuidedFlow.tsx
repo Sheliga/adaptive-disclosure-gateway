@@ -94,6 +94,11 @@ function GuidedFlowShell() {
   // ever forwarded upstream. Any failure or invalid body from
   // getDemoFeatures is treated as disabled, same posture as `health`.
   const [demoTransparencyEnabled, setDemoTransparencyEnabled] = useState(false);
+  // T29 / issue #72. Same posture, read from the SAME single features
+  // fetch below rather than a second request -- see
+  // `lib/demoVaultExplorer.ts`'s own gate, which is what actually decides
+  // whether the vault explorer route ever forwards a request upstream.
+  const [demoVaultExplorerEnabled, setDemoVaultExplorerEnabled] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -102,6 +107,7 @@ function GuidedFlowShell() {
         return;
       }
       setDemoTransparencyEnabled(result.ok && result.data.demo_transparency_enabled);
+      setDemoVaultExplorerEnabled(result.ok && result.data.demo_vault_explorer_enabled);
     });
     return () => {
       cancelled = true;
@@ -328,6 +334,7 @@ function GuidedFlowShell() {
             onCancel={() => dispatch({ type: "CANCEL_REVIEW" })}
             compose={state.compose}
             demoTransparencyEnabled={demoTransparencyEnabled}
+            demoVaultExplorerEnabled={demoVaultExplorerEnabled}
           />
         )}
 
@@ -345,6 +352,8 @@ function GuidedFlowShell() {
             onRestart={() => dispatch({ type: "RESTART" })}
             onCompareStrategies={() => handleRequestComparison(state.compose)}
             onViewTechnicalDetails={() => dispatch({ type: "OPEN_TECHNICAL_DETAILS" })}
+            demoVaultExplorerEnabled={demoVaultExplorerEnabled}
+            vaultExplorerToken={state.preview.vault_explorer_token}
           />
         )}
 

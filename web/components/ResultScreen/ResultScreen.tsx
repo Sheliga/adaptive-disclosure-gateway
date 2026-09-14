@@ -26,6 +26,7 @@ import type { ExecuteResponse } from "@/lib/contracts";
 import { describeCategoryOutcome } from "@/lib/outcomes";
 import { describeProviderMode, type ProviderModeState } from "@/lib/providerMode";
 
+import { VaultExplorerPanel } from "../VaultExplorerPanel/VaultExplorerPanel";
 import styles from "./ResultScreen.module.css";
 
 export interface ResultScreenProps {
@@ -46,6 +47,22 @@ export interface ResultScreenProps {
    * to explain what actually ran regardless of the outcome.
    */
   onViewTechnicalDetails: () => void;
+  /**
+   * T29 / issue #72, same posture as `ReviewScreen`'s prop of the same
+   * name: a UX convenience fetched once, up front, by `GuidedFlow` via
+   * `getDemoFeatures`. Defaults to `false` (disabled) so existing
+   * callers/tests are unaffected.
+   */
+  demoVaultExplorerEnabled?: boolean;
+  /**
+   * The SAME preview's `vault_explorer_token` this execution's confirmed
+   * review carried -- `ExecuteResponse` itself has no such field (only the
+   * preview step ever issues a token), so this is threaded through
+   * separately rather than added to `ExecuteResponse`. `null` when the
+   * flag is off, when the caller has no preview to hand (existing
+   * callers/tests), or when the decision had no explorable reference.
+   */
+  vaultExplorerToken?: string | null;
 }
 
 export function ResultScreen({
@@ -55,6 +72,8 @@ export function ResultScreen({
   onRestart,
   onCompareStrategies,
   onViewTechnicalDetails,
+  demoVaultExplorerEnabled = false,
+  vaultExplorerToken = null,
 }: ResultScreenProps) {
   const copy = useCopy();
   const isBlocked = execute.summary.status === "blocked";
@@ -128,6 +147,8 @@ export function ResultScreen({
           </ul>
         )}
       </div>
+
+      {demoVaultExplorerEnabled && <VaultExplorerPanel token={vaultExplorerToken} />}
 
       {compareError && (
         <p role="alert" className={styles.error}>

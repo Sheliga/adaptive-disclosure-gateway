@@ -427,8 +427,7 @@ export const en: AppCopy = {
     subtitle: "Local trust boundary",
     disclaimer:
       "This view exists only for demonstration and evaluation purposes. A final product would not expose these mappings this way.",
-    toggleOpenLabel: "Open the Vault Explorer",
-    toggleCloseLabel: "Close the Vault Explorer",
+    toggleLabel: "View the Vault Explorer (local vault)",
     unavailableForDecision: "The Vault Explorer is not available for this decision (no reference was issued).",
     loadingLabel: "Loading local vault entries...",
     scopeLabel: "Scope:",
@@ -443,6 +442,7 @@ export const en: AppCopy = {
     showOriginalsToggle: "Show original values",
     hideOriginalsToggle: "Hide original values",
     maskedValuePlaceholder: "••••••••",
+    notAvailablePlaceholder: "—",
   },
 
   errors: {

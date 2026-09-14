@@ -858,3 +858,77 @@ describe("GuidedFlow -- demo transparency feature flag (T28)", () => {
     expect(mockedGetDemoFeatures).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * T29 / issue #72: `demo_vault_explorer_enabled` is read from the SAME
+ * single `getDemoFeatures` fetch above, never a second request, and gates
+ * `VaultExplorerPanel` on both Revisão and Resultado. Every OTHER test in
+ * this file relies on the `beforeEach` default (`demo_vault_explorer_enabled:
+ * false`) and is therefore itself a "disabled" regression test; these are
+ * the explicit "request fails" and "enabled" cases, on both screens.
+ */
+describe("GuidedFlow -- demo vault explorer feature flag (T29)", () => {
+  it("renders no Vault Explorer panel on Revisão when the flag is disabled (default), even with a non-null token", async () => {
+    mockedPreviewDisclosure.mockResolvedValue({
+      ok: true,
+      data: { ...previewResponse(), vault_explorer_token: "vx1.token" },
+    });
+
+    await goToReview();
+
+    expect(screen.queryByText(copy.vaultExplorerPanel.heading)).not.toBeInTheDocument();
+  });
+
+  it("renders no Vault Explorer panel when the features request itself fails", async () => {
+    mockedGetDemoFeatures.mockResolvedValue({
+      ok: false,
+      status: 500,
+      error: { message: copy.errors.generic, kind: null, fields: null },
+    });
+    mockedPreviewDisclosure.mockResolvedValue({
+      ok: true,
+      data: { ...previewResponse(), vault_explorer_token: "vx1.token" },
+    });
+
+    await goToReview();
+
+    expect(screen.queryByText(copy.vaultExplorerPanel.heading)).not.toBeInTheDocument();
+  });
+
+  it("renders the Vault Explorer panel on Revisão and Resultado when the flag is enabled, sharing the same token", async () => {
+    mockedGetDemoFeatures.mockResolvedValue({
+      ok: true,
+      data: { demo_transparency_enabled: false, demo_vault_explorer_enabled: true },
+    });
+    mockedPreviewDisclosure.mockResolvedValue({
+      ok: true,
+      data: { ...previewResponse(), vault_explorer_token: "vx1.shared-token" },
+    });
+    mockedExecuteDisclosure.mockResolvedValue({ ok: true, data: executeResponse() });
+
+    await goToReview();
+    expect(await screen.findByText(copy.vaultExplorerPanel.heading)).toBeInTheDocument();
+    expect(screen.getByText(copy.vaultExplorerPanel.toggleLabel)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+    await screen.findByRole("heading", { name: copy.result.heading });
+
+    expect(screen.getByText(copy.vaultExplorerPanel.heading)).toBeInTheDocument();
+    expect(screen.getByText(copy.vaultExplorerPanel.toggleLabel)).toBeInTheDocument();
+  });
+
+  it("renders the panel's unavailable note on Resultado when the flag is enabled but the token is null", async () => {
+    mockedGetDemoFeatures.mockResolvedValue({
+      ok: true,
+      data: { demo_transparency_enabled: false, demo_vault_explorer_enabled: true },
+    });
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+    mockedExecuteDisclosure.mockResolvedValue({ ok: true, data: executeResponse() });
+
+    await goToReview();
+    await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+    await screen.findByRole("heading", { name: copy.result.heading });
+
+    expect(screen.getByText(copy.vaultExplorerPanel.unavailableForDecision)).toBeInTheDocument();
+  });
+});
