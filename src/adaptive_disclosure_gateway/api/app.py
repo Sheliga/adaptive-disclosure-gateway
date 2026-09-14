@@ -71,11 +71,15 @@ from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
+from starlette.responses import Response as StarletteResponse
 
 from adaptive_disclosure_gateway.api import schemas
 from adaptive_disclosure_gateway.api import settings as api_settings
 from adaptive_disclosure_gateway.api.limits import RequestBodySizeLimitMiddleware
 from adaptive_disclosure_gateway.application.contracts import (
+    DemoVaultExplorerDisabledError,
     DisclosureApplicationRequest,
     DisclosureStrategy,
     ExportRefusedError,
@@ -96,6 +100,34 @@ from adaptive_disclosure_gateway.application.restore_handle import (
     RestoreUnavailableError,
 )
 from adaptive_disclosure_gateway.application.service import DisclosureApplicationService
+from adaptive_disclosure_gateway.application.vault_explorer import VaultExplorerReferenceError
+
+VAULT_EXPLORER_PATH = "/demo/vault-explorer"
+
+
+class _NoStoreOnVaultExplorerMiddleware(BaseHTTPMiddleware):
+    """Force ``Cache-Control: no-store`` / ``Pragma: no-cache`` on EVERY
+    response from :data:`VAULT_EXPLORER_PATH`, regardless of status code
+    (T29 / issue #72).
+
+    This is a response hook rather than a header set inside the route
+    handler and each individual exception handler on purpose: a route
+    handler only runs for the 200 case, and the 404/400/422 paths are
+    produced by exception handlers shared with (or, for 422, identical to)
+    every other route on this API. Setting the header in exactly one
+    path-scoped place means a future new failure mode for this route
+    (another exception type, a different status) inherits the header for
+    free instead of depending on someone remembering to add it again.
+    Every other route is untouched: the path check below is the only
+    branch.
+    """
+
+    async def dispatch(self, request: StarletteRequest, call_next) -> StarletteResponse:
+        response = await call_next(request)
+        if request.url.path == VAULT_EXPLORER_PATH:
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["Pragma"] = "no-cache"
+        return response
 
 
 def _build_default_service() -> DisclosureApplicationService:
@@ -224,6 +256,8 @@ def create_app(
         allow_headers=["*"],
     )
 
+    app.add_middleware(_NoStoreOnVaultExplorerMiddleware)
+
     @app.exception_handler(RequestValidationError)
     async def _handle_validation_error(
         _request: Request, exc: RequestValidationError
@@ -268,6 +302,31 @@ def create_app(
         # failed provider call, these are refusals to run the request, not
         # results of running it.
         return _error_response(exc, status_code=400)
+
+    @app.exception_handler(VaultExplorerReferenceError)
+    async def _handle_vault_explorer_reference_error(
+        _request: Request, exc: Exception
+    ) -> JSONResponse:
+        # T29 / issue #72. One fixed message for every rejection reason
+        # (malformed, tampered, expired, wrong-process key) -- see
+        # ``application/vault_explorer.py``'s own docstring for why. Never
+        # echoes the submitted token.
+        return _error_response(exc, status_code=400)
+
+    @app.exception_handler(DemoVaultExplorerDisabledError)
+    async def _handle_demo_vault_explorer_disabled(
+        _request: Request, _exc: Exception
+    ) -> JSONResponse:
+        # T29 / issue #72. Deliberately NOT ``_error_response`` (which would
+        # use ``type(exc).__name__`` == "DemoVaultExplorerDisabledError"):
+        # the disabled-feature body is a fixed, minimal 404 that reveals
+        # nothing about why -- indistinguishable from the route not existing
+        # at all, matching every other disabled-by-default demo surface's
+        # posture of not advertising its own existence.
+        return JSONResponse(
+            status_code=404,
+            content={"detail": "not found", "kind": "DemoVaultExplorerDisabled"},
+        )
 
     @app.exception_handler(ExampleNotFoundError)
     async def _handle_example_not_found(_request: Request, exc: Exception) -> JSONResponse:
@@ -526,6 +585,23 @@ def create_app(
         service = _get_service(request)
         restored = service.restore(text=body.text, restore_handle=body.restore_handle)
         content = schemas.RestoreResponse.from_domain(restored).model_dump()
+        return JSONResponse(status_code=200, content=content)
+
+    # --- demo vault explorer (T29 / issue #72) ---------------------------------
+    #
+    # Local, debug-only surface: opens a sealed reference a prior preview
+    # issued and resolves its entries against this service's own vault.
+    # Disabled -> 404 (DemoVaultExplorerDisabledError, handled above);
+    # malformed/tampered/expired/foreign-process token -> 400
+    # (VaultExplorerReferenceError, handled above). Every response from this
+    # route additionally carries Cache-Control: no-store / Pragma: no-cache
+    # via ``_NoStoreOnVaultExplorerMiddleware`` above, on every status code.
+
+    @app.post(VAULT_EXPLORER_PATH, response_model=None)
+    def explore_vault(body: schemas.VaultExplorerRequestBody, request: Request) -> JSONResponse:
+        service = _get_service(request)
+        view = service.explore_vault(body.token)
+        content = schemas.VaultExplorerResponse.from_domain(view).model_dump()
         return JSONResponse(status_code=200, content=content)
 
     return app
