@@ -251,6 +251,30 @@ class TestApiServiceSecurity:
             f"the whole stack for an optional feature); got {value!r}"
         )
 
+    def test_api_service_carries_the_optional_demo_vault_explorer_variable(self) -> None:
+        """T29 / issue #72. Independent of ``ADG_ENABLE_DEMO_TRANSPARENCY``
+        above (a separate opt-in), but the same OPTIONAL posture: unset must
+        not block startup of the whole stack, it must simply keep
+        ``PreviewResponse.vault_explorer_token`` null and
+        ``POST /demo/vault-explorer`` answering a fixed 404.
+        """
+        api = _service(_load_compose(), "api")
+        env = _environment_mapping(api)
+        name = "ADG_ENABLE_DEMO_VAULT_EXPLORER"
+        assert name in env, f"api service must carry {name}"
+        value = env[name]
+        assert value.startswith("${") and value.endswith("}"), (
+            f"{name} on the api service must be a compose interpolation; got {value!r}"
+        )
+        assert ":-" in value, (
+            f"{name} must use the OPTIONAL interpolation form ('${{{name}:-}}'), "
+            f"not a required ('${{{name}:?...}}') one; got {value!r}"
+        )
+        assert ":?" not in value, (
+            f"{name} must not be a required interpolation (that would block startup of "
+            f"the whole stack for an optional feature); got {value!r}"
+        )
+
     def test_provider_selection_is_a_required_interpolation(self) -> None:
         """``ADG_PROVIDER`` must be explicitly required (``${ADG_PROVIDER:?...}``)
         so the demo stack never silently launches with an unintended
@@ -298,6 +322,24 @@ class TestWebServiceSecurity:
         web = _service(_load_compose(), "web")
         env = _environment_mapping(web)
         name = "ADG_ENABLE_DEMO_TRANSPARENCY"
+        assert name in env, f"web service must carry {name}"
+        value = env[name]
+        assert value.startswith("${") and value.endswith("}"), (
+            f"{name} on the web service must be a compose interpolation; got {value!r}"
+        )
+        assert ":-" in value and ":?" not in value, (
+            f"{name} must use the OPTIONAL interpolation form; got {value!r}"
+        )
+        assert not name.startswith("NEXT_PUBLIC_")
+
+    def test_web_service_carries_the_optional_demo_vault_explorer_variable(self) -> None:
+        """T29 / issue #72. Mirrors the api service's own pin above; not yet
+        proxied by any web route in this backend-only stage, but carried
+        through so a later web slice does not need a second compose change.
+        """
+        web = _service(_load_compose(), "web")
+        env = _environment_mapping(web)
+        name = "ADG_ENABLE_DEMO_VAULT_EXPLORER"
         assert name in env, f"web service must carry {name}"
         value = env[name]
         assert value.startswith("${") and value.endswith("}"), (
@@ -443,6 +485,21 @@ class TestDockerfiles:
                     f"ADG_ENABLE_DEMO_TRANSPARENCY must not be a build-time ENV/ARG: {stripped!r}"
                 )
 
+    def test_api_dockerfile_does_not_bake_demo_vault_explorer_at_build_time(self) -> None:
+        """T29 / issue #72. Mirrors the demo-transparency pin above: must be
+        read at container RUNTIME via compose interpolation, never fixed as
+        a build-time ENV/ARG.
+        """
+        text = _API_DOCKERFILE_PATH.read_text(encoding="utf-8")
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith(
+                ("ENV ADG_ENABLE_DEMO_VAULT_EXPLORER", "ARG ADG_ENABLE_DEMO_VAULT_EXPLORER")
+            ):
+                pytest.fail(
+                    f"ADG_ENABLE_DEMO_VAULT_EXPLORER must not be a build-time ENV/ARG: {stripped!r}"
+                )
+
     def test_api_dockerfile_healthcheck_targets_ready_not_health(self) -> None:
         """T25 review finding 2: the image's own ``HEALTHCHECK`` -- used
         whenever the image runs outside ``compose.demo.yaml`` too -- must
@@ -508,6 +565,17 @@ class TestDockerfiles:
             ):
                 pytest.fail(
                     f"ADG_ENABLE_DEMO_TRANSPARENCY must not be a build-time ENV/ARG: {stripped!r}"
+                )
+
+    def test_web_dockerfile_does_not_bake_demo_vault_explorer_at_build_time(self) -> None:
+        text = _WEB_DOCKERFILE_PATH.read_text(encoding="utf-8")
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith(
+                ("ENV ADG_ENABLE_DEMO_VAULT_EXPLORER", "ARG ADG_ENABLE_DEMO_VAULT_EXPLORER")
+            ):
+                pytest.fail(
+                    f"ADG_ENABLE_DEMO_VAULT_EXPLORER must not be a build-time ENV/ARG: {stripped!r}"
                 )
 
     def test_web_dockerfile_does_not_bake_api_base_url_at_build_time(self) -> None:
