@@ -345,6 +345,36 @@ def test_vault_explorer_span_attributes_never_leak_sensitive_values(recorded_spa
     )
 
 
+# --- no-store headers are scoped to the vault explorer path only -----------------
+
+
+def test_413_on_vault_explorer_still_carries_no_store_headers():
+    """The no-store headers must be applied by a middleware that sits
+    outside ``RequestBodySizeLimitMiddleware`` on this path -- a 413
+    produced upstream of the route handler must still be uncacheable.
+    """
+    client = build_client(
+        build_service(RecordingProvider(), demo_vault_explorer_enabled=True),
+        max_upload_bytes=8,
+    )
+
+    response = _explore(client, "vx1." + ("A" * 40))
+
+    assert response.status_code == 413
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["pragma"] == "no-cache"
+
+
+def test_unrelated_route_carries_no_no_store_header():
+    client = build_client(build_service(RecordingProvider(), demo_vault_explorer_enabled=True))
+
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    assert "cache-control" not in response.headers
+    assert "pragma" not in response.headers
+
+
 def test_no_leak_across_preview_explore_execute(recorded_spans, caplog):
     """End-to-end adversarial pass: preview -> explore -> execute, with the
     vault explorer enabled. Checks caplog (DEBUG), span attributes, and raw

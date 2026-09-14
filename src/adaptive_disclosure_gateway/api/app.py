@@ -71,13 +71,17 @@ from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request as StarletteRequest
-from starlette.responses import Response as StarletteResponse
 
 from adaptive_disclosure_gateway.api import schemas
 from adaptive_disclosure_gateway.api import settings as api_settings
-from adaptive_disclosure_gateway.api.limits import RequestBodySizeLimitMiddleware
+from adaptive_disclosure_gateway.api.limits import (
+    ASGIApp,
+    Message,
+    Receive,
+    RequestBodySizeLimitMiddleware,
+    Scope,
+    Send,
+)
 from adaptive_disclosure_gateway.application.contracts import (
     DemoVaultExplorerDisabledError,
     DisclosureApplicationRequest,
@@ -105,29 +109,58 @@ from adaptive_disclosure_gateway.application.vault_explorer import VaultExplorer
 VAULT_EXPLORER_PATH = "/demo/vault-explorer"
 
 
-class _NoStoreOnVaultExplorerMiddleware(BaseHTTPMiddleware):
+_NO_STORE_HEADERS = ((b"cache-control", b"no-store"), (b"pragma", b"no-cache"))
+_NO_STORE_HEADER_NAMES = frozenset(name for name, _value in _NO_STORE_HEADERS)
+
+
+class _NoStoreOnVaultExplorerASGIMiddleware:
     """Force ``Cache-Control: no-store`` / ``Pragma: no-cache`` on EVERY
     response from :data:`VAULT_EXPLORER_PATH`, regardless of status code
     (T29 / issue #72).
 
-    This is a response hook rather than a header set inside the route
+    Deliberately a pure ASGI middleware, not a ``BaseHTTPMiddleware``
+    subclass: ``BaseHTTPMiddleware`` reconstructs the whole response (it
+    consumes the inner ASGI ``send`` into a buffered/streamed response object
+    and replays it), which forwards every request through an extra layer of
+    buffering for every route on this API just to touch headers on one path.
+    This wraps ``send`` only for requests to ``VAULT_EXPLORER_PATH`` and lets
+    everything else pass straight through untouched -- the path check below
+    is the only branch, exactly as before.
+
+    The header set is a response hook rather than being set inside the route
     handler and each individual exception handler on purpose: a route
-    handler only runs for the 200 case, and the 404/400/422 paths are
-    produced by exception handlers shared with (or, for 422, identical to)
-    every other route on this API. Setting the header in exactly one
-    path-scoped place means a future new failure mode for this route
-    (another exception type, a different status) inherits the header for
-    free instead of depending on someone remembering to add it again.
-    Every other route is untouched: the path check below is the only
-    branch.
+    handler only runs for the 200 case, and the 404/400/413/422 paths are
+    produced by exception handlers and other middleware (in particular
+    ``RequestBodySizeLimitMiddleware``) shared with -- or, for 422,
+    identical to -- every other route on this API. Setting the header in
+    exactly one path-scoped place means a future new failure mode for this
+    route (another exception type, a different status) inherits the header
+    for free instead of depending on someone remembering to add it again.
+    Registered outermost (see ``create_app``) so a 413 produced by
+    ``RequestBodySizeLimitMiddleware`` upstream of the route handler still
+    carries the headers.
     """
 
-    async def dispatch(self, request: StarletteRequest, call_next) -> StarletteResponse:
-        response = await call_next(request)
-        if request.url.path == VAULT_EXPLORER_PATH:
-            response.headers["Cache-Control"] = "no-store"
-            response.headers["Pragma"] = "no-cache"
-        return response
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope.get("type") != "http" or scope.get("path") != VAULT_EXPLORER_PATH:
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_no_store(message: Message) -> None:
+            if message.get("type") == "http.response.start":
+                existing = message.get("headers", [])
+                kept = [
+                    (name, value)
+                    for name, value in existing
+                    if name.lower() not in _NO_STORE_HEADER_NAMES
+                ]
+                message = {**message, "headers": [*kept, *_NO_STORE_HEADERS]}
+            await send(message)
+
+        await self.app(scope, receive, send_with_no_store)
 
 
 def _build_default_service() -> DisclosureApplicationService:
@@ -256,7 +289,7 @@ def create_app(
         allow_headers=["*"],
     )
 
-    app.add_middleware(_NoStoreOnVaultExplorerMiddleware)
+    app.add_middleware(_NoStoreOnVaultExplorerASGIMiddleware)
 
     @app.exception_handler(RequestValidationError)
     async def _handle_validation_error(
