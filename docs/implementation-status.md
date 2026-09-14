@@ -1,6 +1,16 @@
 # Implementation status
 
-Last updated: 2026-09-12 — Issue #56 (Contracts domain extensions) **merged into `develop` via PR #59** (merge commit `5a67c30daab68d06bbd16d1cf06433de97245910`), which freezes the Contracts categories, policies, generalization strategies and relation semantics; T24 / Issue #37 (Contracts v1 corpus + frozen oracle) is now **in validation** in an open PR to `develop`. T12 / Issue #9 Docling ingestion merged into `develop` via PR #55 (merge commit `776e683a49818db35021bb62315dfc1ed7fb00ab`, validated feature head `3c93f3297515c99c6fccd4c5e705f1e77cfada78`, real Docling 2.126.0 PDF/DOCX/XLSX validation); T23 post-pilot protocol remains merged into `develop` via PR #53; T21 fourth slice (pt-BR / English localization) completed and integrated into `master` via PRs #51/#52 — T21/Issue #29 remains open for the remaining deliberately out-of-scope items.
+Last updated: 2026-09-13 — T29 / Issue #72 (local Vault Explorer for demo/debug) is now **in
+validation** in an open PR to `develop`. Issue #56 (Contracts domain extensions) **merged into
+`develop` via PR #59** (merge commit `5a67c30daab68d06bbd16d1cf06433de97245910`), which freezes
+the Contracts categories, policies, generalization strategies and relation semantics; T24 / Issue
+#37 (Contracts v1 corpus + frozen oracle) is now **in validation** in an open PR to `develop`.
+T12 / Issue #9 Docling ingestion merged into `develop` via PR #55 (merge commit
+`776e683a49818db35021bb62315dfc1ed7fb00ab`, validated feature head
+`3c93f3297515c99c6fccd4c5e705f1e77cfada78`, real Docling 2.126.0 PDF/DOCX/XLSX validation); T23
+post-pilot protocol remains merged into `develop` via PR #53; T21 fourth slice (pt-BR / English
+localization) completed and integrated into `master` via PRs #51/#52 — T21/Issue #29 remains open
+for the remaining deliberately out-of-scope items.
 
 This file tracks the current engineering/research state and execution order. Architectural decisions belong in ADRs; experimental definitions belong in `docs/experimental-design.md`; factual pilot results belong in `docs/milestone-2-pilot.md`; the frozen confirmatory-analysis protocol belongs in `docs/research/`; the parallel advisor-facing application plan belongs in `docs/advisor-demo.md`; historical PR/Issue descriptions remain in GitHub.
 
@@ -657,10 +667,70 @@ cycle from the browser instead of the CLI.
   paste-text export path to proxy). The restore handle lives only in React state for the
   lifetime of the tab -- never `localStorage`/`sessionStorage`, never a URL parameter, never
   logged.
-- Not in this PR: a Vault Explorer or any endpoint listing/dumping the pseudonym → original
-  mapping; persistence of exported/restored content; any change to T26's API/CLI behavior or
-  to B2 — Reversible Pseudonymization semantics; enabling this on a public unauthenticated URL
-  (the flag exists precisely so the hosted demo can keep it off).
+- Not in this PR: a Vault Explorer (delivered separately by T29 / Issue #72 below) or any
+  endpoint listing/dumping the pseudonym → original mapping; persistence of exported/restored
+  content; any change to T26's API/CLI behavior or to B2 — Reversible Pseudonymization
+  semantics; enabling this on a public unauthenticated URL (the flag exists precisely so the
+  hosted demo can keep it off).
+
+### T29 / Issue #72 — local Vault Explorer for demo/debug
+
+Status: **in validation (open PR to `develop`)**.
+
+Adds a gated, demo-only surface that lets an operator confirm, for one specific preview, exactly
+which vault entries back its reversible pseudonymization and that local reconstruction resolves
+them -- the one thing neither T27's inspector (shows what changed, never touches the vault) nor
+T28's export/restore (proves the durable handle mechanism works, scoped to one sealed handle) by
+itself demonstrates.
+
+- Gated by its own `ADG_ENABLE_DEMO_VAULT_EXPLORER` flag (`application/settings.py`,
+  `web/lib/demoVaultExplorer.ts`), parsed byte-identically to `ADG_ENABLE_DEMO_TRANSPARENCY`
+  (set AND stripped value exactly `"1"`) but fully independent of it -- enabling one never
+  enables or requires the other. Must be set on both `api` and `web`; default off on both.
+- `application/vault_explorer.py` (`VaultExplorerSealer`): on an allowed preview,
+  `issue_reference` seals an opaque `vx1.…` AES-256-GCM reference over that decision's own
+  distinct PSEUDONYMIZE `(pseudonym, category)` pairs -- never the originals, which are looked
+  up fresh from the live vault only inside `explore` -- plus the resolved `PseudonymScope` and
+  its partition key, each pseudonym re-verified against the vault at issuance time. Returns
+  `None` (never raises) for a blocked decision, a resolved `PseudonymScope.ORGANIZATION`, a
+  missing scope key, or any entry that fails re-verification. The sealing key is a fresh random
+  32-byte value generated once per process -- never derived from `ADG_RESTORE_HANDLE_SECRET` or
+  `ADG_PREVIEW_CONFIRMATION_SECRET` -- so a reference from one process is unconditionally
+  rejected by any other, and a restart invalidates every outstanding token. Fixed 900-second
+  (15-minute) TTL, not configurable. This module is the only application/api-layer code besides
+  the existing execute path allowed to call `Vault.reconstruct`, pinned by
+  `tests/test_vault_explorer_import_isolation.py`.
+- `PreviewResponse.vault_explorer_token: str | None` -- additive, nullable; `null` when the flag
+  is off, the decision is blocked, or the resolved scope is ORGANIZATION. Issued from the same
+  decision `preview()` already computed, never a second one.
+- `POST /demo/vault-explorer` (JSON `{token}` -> `{contract_version, scope, entry_count,
+  entries: [{category, pseudonym, original | null, present}]}`) resolves each entry via a point
+  lookup (`vault.reconstruct(scope, key, pseudonym)`) only -- no enumeration, no change to
+  `vault/`. Fixed 404 (`DemoVaultExplorerDisabled`) when the flag is off; fixed 400
+  (`VaultExplorerReferenceError`, one message for every rejection reason) for a malformed,
+  tampered, expired, or foreign-process token. Every response from this path -- any status --
+  carries `Cache-Control: no-store` / `Pragma: no-cache` via a dedicated path-scoped pure ASGI
+  middleware (`_NoStoreOnVaultExplorerASGIMiddleware`), not a route-local header, so a future new
+  failure mode on this path inherits the header automatically.
+- Web: `lib/demoVaultExplorer.ts` (server-only gate, never `NEXT_PUBLIC_*`),
+  `app/api/demo/vault-explorer/route.ts` (`force-dynamic`, checks the flag before any upstream
+  call, disabled and forwarded responses both carry `no-store`), `GET /api/demo/features` gains
+  `demo_vault_explorer_enabled`, and a collapsed-by-default `VaultExplorerPanel` on both the
+  Review and Result screens -- fetches only on open, masks originals until an explicit toggle,
+  and discards fetched entries on close.
+- No-leak: the only OTel spans this feature opens (`vault_explorer.issue`,
+  `vault_explorer.explore`) carry counts only (`entry_count`, `present_count`); every parser that
+  could otherwise echo attacker- or plaintext-controlled bytes into its own exception message is
+  broken from its exception with `raise ... from None`.
+- Not in this PR: any change to B0–B4 treatment semantics, the frozen HR/Contracts corpora, the
+  T10 oracle, T26's restore-handle mechanism itself, or `vault/`'s own protocol; any list-all or
+  enumeration capability; any change to `ADG_ENABLE_DEMO_TRANSPARENCY`'s own behavior.
+- Known limitations: a single-process sealing key means references issued by one `api` worker
+  fail closed on every other worker or after a load-balancer hop (unusable, not unsafe); the
+  15-minute TTL is fixed, not configurable; the demo's default SESSION scope uses a shared
+  configured `session_id` (`demo-session`), so enabling this flag on any shared/hosted deployment
+  reveals originals of submitted content to whoever can reach the web origin -- keep it off
+  outside a controlled local environment, a constraint the application cannot enforce by itself.
 
 ### Demo completion criterion
 
@@ -730,3 +800,4 @@ This ordering is internal to the demo track and does not reorder the scientific 
 - T21 Next.js UI: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/29
 - T25 demo containers/deploy: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/42
 - T26 deferred restore handles: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/67
+- T29 local Vault Explorer: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/72
