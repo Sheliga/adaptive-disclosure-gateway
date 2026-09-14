@@ -33,6 +33,7 @@ function preview(
   categories: CategoryDisclosureSummary[],
   status: "allowed" | "blocked" = "allowed",
   inspection: DisclosureInspection | null = null,
+  vaultExplorerToken: string | null = null,
 ): PreviewResponse {
   return {
     contract_version: "t20-application-api-v1",
@@ -56,6 +57,7 @@ function preview(
     },
     provider_mode: { provider_class: "FakeProvider" },
     inspection,
+    vault_explorer_token: vaultExplorerToken,
   };
 }
 

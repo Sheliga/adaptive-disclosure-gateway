@@ -407,6 +407,44 @@ export const en: AppCopy = {
     clearButton: "Clear",
   },
 
+  vaultScopes: {
+    unrecognized: "Unrecognized scope",
+    technicalIdLabel: "Technical identifier:",
+    labels: {
+      request: "A single request",
+      document: "One document",
+      session: "One session",
+    } as Record<string, string>,
+    explanations: {
+      request: "This pseudonym can only be reversed within the same request that created it.",
+      document: "This pseudonym can be reversed in any request about the same document.",
+      session: "This pseudonym can be reversed in any request from the same session.",
+    } as Record<string, string>,
+  },
+
+  vaultExplorerPanel: {
+    heading: "Vault Explorer — Demonstration",
+    subtitle: "Local trust boundary",
+    disclaimer:
+      "This view exists only for demonstration and evaluation purposes. A final product would not expose these mappings this way.",
+    toggleOpenLabel: "Open the Vault Explorer",
+    toggleCloseLabel: "Close the Vault Explorer",
+    unavailableForDecision: "The Vault Explorer is not available for this decision (no reference was issued).",
+    loadingLabel: "Loading local vault entries...",
+    scopeLabel: "Scope:",
+    entryCountLabel: "reversible entries",
+    zeroEntriesMessage:
+      "This decision left no reversible local state: the treatment removed or generalized the sensitive data instead of pseudonymizing it.",
+    categoryLabel: "Category:",
+    pseudonymLabel: "What the external service received:",
+    originalLabel: "What stayed inside the local boundary:",
+    presentLabel: "Still held locally",
+    notPresentLabel: "No longer available locally",
+    showOriginalsToggle: "Show original values",
+    hideOriginalsToggle: "Hide original values",
+    maskedValuePlaceholder: "••••••••",
+  },
+
   errors: {
     generic: "The operation could not be completed. Please try again.",
     upstreamUnreachable: "Could not reach the service right now. Please try again shortly.",
@@ -421,6 +459,9 @@ export const en: AppCopy = {
     restoreUnavailable: "Local restore is not available on this deployment right now.",
     restoreHandleInvalid: "This restore handle is not valid.",
     restoreHandleExpired: "This restore handle has expired. Generate a new export.",
+    demoVaultExplorerDisabled: "This demonstration feature is not enabled on this deployment.",
+    vaultExplorerReferenceInvalid:
+      "This local vault reference is no longer valid or has expired. Run a new review before continuing.",
   },
 
   sectionHeadings: {

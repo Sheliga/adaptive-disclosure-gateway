@@ -60,6 +60,9 @@ const VALIDATED_CONTRACT_INTERFACES = [
   // POST /documents/export / POST /documents/restore (T26/#67, T28/#70)
   "ExportResponse",
   "RestoreResponse",
+  // POST /demo/vault-explorer (T29 / issue #72)
+  "VaultExplorerResponse",
+  "VaultExplorerEntry",
   // GET /api/demo/features (web-only)
   "DemoFeaturesResponse",
 ] as const;
@@ -75,6 +78,7 @@ const TOP_LEVEL_RESPONSE_GUARDS = [
   "isCompareResponse",
   "isExportResponse",
   "isRestoreResponse",
+  "isVaultExplorerResponse",
 ] as const;
 
 function declaredFieldsOf(source: string, interfaceName: string): string[] {
@@ -206,6 +210,8 @@ describe("T27/T28 wire field sets stay synchronized with application/wire.py", (
     ["DisclosureInspectionModel", "DisclosureInspection"],
     ["ExportResponse", "ExportResponse"],
     ["RestoreResponse", "RestoreResponse"],
+    ["VaultExplorerEntryModel", "VaultExplorerEntry"],
+    ["VaultExplorerResponse", "VaultExplorerResponse"],
   ])("%s (Python) and %s (TS) declare the exact same field set", (pythonClass, tsInterface) => {
     const pythonFields = readPythonModelFields(readWireSource(), pythonClass);
     const tsFields = readTsInterfaceFields(tsInterface);

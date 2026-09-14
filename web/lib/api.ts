@@ -48,6 +48,7 @@ import type {
   HealthResponse,
   PreviewResponse,
   RestoreResponse,
+  VaultExplorerResponse,
 } from "./contracts";
 import type { AppCopy } from "./copy";
 import { copy as defaultCopy } from "./copy";
@@ -62,6 +63,7 @@ import {
   isHealthResponse,
   isPreviewResponse,
   isRestoreResponse,
+  isVaultExplorerResponse,
   type ResponseGuard,
 } from "./responseGuards";
 
@@ -156,6 +158,12 @@ async function toDisplayError(response: Response, appCopy: AppCopy): Promise<Dis
       RestoreUnavailableError: appCopy.errors.restoreUnavailable,
       RestoreHandleInvalidError: appCopy.errors.restoreHandleInvalid,
       RestoreHandleExpiredError: appCopy.errors.restoreHandleExpired,
+      // T29 / issue #72: the demo vault explorer gate and reference-token
+      // refusal kinds -- same posture as every kind above, a fixed, safe
+      // `detail` already (CLAUDE.md's no-leak invariant), replaced with this
+      // app's own copy for consistent phrasing/locale.
+      DemoVaultExplorerDisabled: appCopy.errors.demoVaultExplorerDisabled,
+      VaultExplorerReferenceError: appCopy.errors.vaultExplorerReferenceInvalid,
     };
     return { message: known[parsed.kind] ?? parsed.detail, kind: parsed.kind, fields: null };
   }
@@ -359,6 +367,30 @@ export function restoreText(
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
+    },
+    appCopy,
+  );
+}
+
+/**
+ * T29 / issue #72. `token` is the opaque `vault_explorer_token` a preview
+ * issued (`PreviewResponse.vault_explorer_token`); this function forwards it
+ * unchanged in the JSON body, never in a URL or query string -- see
+ * `app/api/demo/vault-explorer/route.ts`, the gated proxy this calls.
+ * Neither this function nor anything it calls inspects, decodes, or logs
+ * the token.
+ */
+export function exploreVault(
+  token: string,
+  appCopy: AppCopy = defaultCopy,
+): Promise<ApiResult<VaultExplorerResponse>> {
+  return requestJson(
+    "/api/demo/vault-explorer",
+    isVaultExplorerResponse,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token }),
     },
     appCopy,
   );

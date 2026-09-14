@@ -97,6 +97,8 @@ import {
   type RestoreResponse,
   type SafeGovernanceView,
   type StrategyComparisonEntry,
+  type VaultExplorerEntry,
+  type VaultExplorerResponse,
 } from "./contracts";
 
 /** A runtime check that also narrows -- the shape `lib/api.ts` consumes. */
@@ -334,7 +336,8 @@ export const isPreviewResponse: ResponseGuard<PreviewResponse> = (
   isString(value.strategy) &&
   isSafeGovernanceView(value.governance) &&
   isProviderMode(value.provider_mode) &&
-  isDisclosureInspectionField(value.inspection, value.external_payload);
+  isDisclosureInspectionField(value.inspection, value.external_payload) &&
+  isStringOrNull(value.vault_explorer_token);
 
 export const isDocumentPreviewResponse: ResponseGuard<DocumentPreviewResponse> = (
   value: unknown,
@@ -464,6 +467,51 @@ export const isRestoreResponse: ResponseGuard<RestoreResponse> = (
   isNumber(value.restored_count) &&
   isNumber(value.unresolved_count);
 
+// --- demo vault explorer (T29 / issue #72) -----------------------------------
+//
+// `isVaultExplorerResponse` checks TWO cross-field invariants a per-entry
+// guard could not express on its own, mirroring `isDisclosureInspectionField`
+// above: `entry_count` must equal the actual length of `entries` (never
+// trusted as a caller-supplied count that could disagree with the array),
+// and `scope === null` must imply `entries` is empty (a null scope means
+// "this decision pseudonymized nothing", never "entries exist but their
+// scope is unknown"). Each entry's own `present === (original !== null)` is
+// checked per-entry: a "present" entry with no original, or an absent one
+// that still carries a value, would silently misreport what the local
+// vault currently holds.
+
+function isVaultExplorerEntry(value: unknown): value is VaultExplorerEntry {
+  return (
+    isRecord(value) &&
+    isString(value.category) &&
+    isString(value.pseudonym) &&
+    isStringOrNull(value.original) &&
+    isBoolean(value.present) &&
+    value.present === (value.original !== null)
+  );
+}
+
+export const isVaultExplorerResponse: ResponseGuard<VaultExplorerResponse> = (
+  value: unknown,
+): value is VaultExplorerResponse => {
+  if (
+    !isRecord(value) ||
+    !declaresKnownContractVersion(value) ||
+    !isStringOrNull(value.scope) ||
+    !isNumber(value.entry_count) ||
+    !arrayOf(isVaultExplorerEntry)(value.entries)
+  ) {
+    return false;
+  }
+  if (value.entry_count !== value.entries.length) {
+    return false;
+  }
+  if (value.scope === null && value.entries.length !== 0) {
+    return false;
+  }
+  return true;
+};
+
 // --- GET /api/demo/features (web-only) ---------------------------------------
 //
 // No `declaresKnownContractVersion` here -- this response has no
@@ -473,4 +521,7 @@ export const isRestoreResponse: ResponseGuard<RestoreResponse> = (
 
 export const isDemoFeaturesResponse: ResponseGuard<DemoFeaturesResponse> = (
   value: unknown,
-): value is DemoFeaturesResponse => isRecord(value) && isBoolean(value.demo_transparency_enabled);
+): value is DemoFeaturesResponse =>
+  isRecord(value) &&
+  isBoolean(value.demo_transparency_enabled) &&
+  isBoolean(value.demo_vault_explorer_enabled);

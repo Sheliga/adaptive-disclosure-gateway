@@ -9,6 +9,7 @@ import {
   DISCLOSURE_SUMMARY_STATUSES,
   KNOWN_DISCLOSURE_OUTCOMES,
   KNOWN_INSPECTION_ACTIONS,
+  KNOWN_VAULT_SCOPES,
 } from "./contracts";
 
 /**
@@ -375,5 +376,57 @@ describe("CANONICAL_COMPARISON_TREATMENTS stays synchronized with Python's resol
     const pythonTreatments = readPythonCanonicalComparisonTreatmentCodes();
 
     expect(CANONICAL_COMPARISON_TREATMENTS).toEqual(pythonTreatments);
+  });
+});
+
+/**
+ * T29 / issue #72 drift test: `KNOWN_VAULT_SCOPES` must be a SUBSET of
+ * `domain.py`'s `PseudonymScope` member values -- checked in one direction
+ * only, deliberately. The vault explorer's own contract excludes
+ * `"organization"` on purpose (`PreviewResponse.vault_explorer_token` is
+ * never issued for that scope), so this test must not fail merely because
+ * Python declares a scope this UI does not expect to ever see from this
+ * endpoint; it exists to catch the OTHER drift -- a scope this UI treats as
+ * known that Python does not actually declare, or a real request/document/
+ * session member renamed on the Python side without this file noticing.
+ */
+function readPythonPseudonymScopeValues(): string[] {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const domainPath = path.resolve(here, "..", "..", "src", "adaptive_disclosure_gateway", "domain.py");
+  const source = readFileSync(domainPath, "utf-8");
+
+  const classMatch = source.match(/class PseudonymScope\(StrEnum\):[\s\S]*?(?=\nclass |$)/);
+  if (!classMatch) {
+    throw new Error(
+      "could not locate `class PseudonymScope(StrEnum):` block in domain.py -- " +
+        "has it been renamed or moved?",
+    );
+  }
+  const values = [...classMatch[0].matchAll(/=\s*"([a-z_]+)"/g)].map((match) => match[1]);
+  if (values.length === 0) {
+    throw new Error(
+      "found the PseudonymScope block but extracted zero string values -- regex likely stale",
+    );
+  }
+  return values;
+}
+
+describe("KNOWN_VAULT_SCOPES stays synchronized with Python's PseudonymScope", () => {
+  it("every known scope is a real PseudonymScope member", () => {
+    const pythonValues = readPythonPseudonymScopeValues();
+
+    for (const value of KNOWN_VAULT_SCOPES) {
+      expect(pythonValues).toContain(value);
+    }
+  });
+
+  it("deliberately excludes organization -- the explorer never returns that scope", () => {
+    const pythonValues = readPythonPseudonymScopeValues();
+    expect(pythonValues).toContain("organization");
+    expect(KNOWN_VAULT_SCOPES).not.toContain("organization");
+  });
+
+  it("is exactly request, document, session", () => {
+    expect([...KNOWN_VAULT_SCOPES].sort()).toEqual(["document", "request", "session"]);
   });
 });

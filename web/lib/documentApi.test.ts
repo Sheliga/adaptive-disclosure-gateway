@@ -29,6 +29,7 @@ function preview(): DocumentPreviewResponse {
     governance,
     provider_mode: { provider_class: "FakeProvider" },
     inspection: null,
+    vault_explorer_token: null,
     confirmation_token: "opaque",
   };
 }
