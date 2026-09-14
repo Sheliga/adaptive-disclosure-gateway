@@ -61,6 +61,8 @@ from adaptive_disclosure_gateway.application.wire import (
     StrategiesResponse,
     StrategyComparisonEntryModel,
     StrategyInfoModel,
+    VaultExplorerEntryModel,
+    VaultExplorerResponse,
 )
 from adaptive_disclosure_gateway.domain import PseudonymScope
 
@@ -97,6 +99,9 @@ __all__ = [
     "StrategyInfoModel",
     "ValidationErrorItem",
     "ValidationErrorResponse",
+    "VaultExplorerEntryModel",
+    "VaultExplorerRequestBody",
+    "VaultExplorerResponse",
 ]
 
 
@@ -165,6 +170,21 @@ class RestoreRequestBody(BaseModel):
 
     text: str
     restore_handle: str
+
+
+class VaultExplorerRequestBody(BaseModel):
+    """The JSON body for ``POST /demo/vault-explorer`` (T29 / issue #72):
+    the sealed token a prior ``preview``/``documents/preview`` response
+    issued, and nothing else -- in particular no scope, session or document
+    identifier. A scope identifier must never be accepted from the client
+    as authorization (the same rule governing every other governance
+    override on this API); the token alone determines what may be shown,
+    and it is always carried as a JSON body field, never a query parameter.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    token: str
 
 
 # --- document-upload vocabulary ---------------------------------------------

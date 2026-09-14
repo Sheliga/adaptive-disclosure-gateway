@@ -33,6 +33,10 @@ the demo transparency flag is off (the historical, unmodified behavior for
 every existing caller) and populated only when a deployer opts in -- so it
 does not bump ``CONTRACT_VERSION`` either, for the same reason
 ``ExportResponse``/``RestoreResponse`` below did not.
+``PreviewResponse.vault_explorer_token`` (T29 / issue #72) is the same
+shape of change again: additive, nullable, ``null`` unless
+``ADG_ENABLE_DEMO_VAULT_EXPLORER`` is set for this deployment -- so it does
+not bump ``CONTRACT_VERSION`` either.
 
 Every enum-valued field below is serialized as its frozen string value
 (``Treatment``/``DisclosureStrategy``/``PseudonymScope`` are all
@@ -89,6 +93,7 @@ from adaptive_disclosure_gateway.application.contracts import (
 )
 from adaptive_disclosure_gateway.application.examples import ExampleSummary
 from adaptive_disclosure_gateway.application.service import ServiceHealth, ServiceReadiness
+from adaptive_disclosure_gateway.application.vault_explorer import VaultExplorerView
 from adaptive_disclosure_gateway.audit import ProviderStage, ReconstructionStage
 
 CONTRACT_VERSION = "t20-application-api-v1"
@@ -397,6 +402,7 @@ class PreviewResponse(BaseModel):
     governance: SafeGovernanceViewModel
     provider_mode: ProviderModeModel
     inspection: DisclosureInspectionModel | None = None
+    vault_explorer_token: str | None = None
 
     @classmethod
     def from_domain(cls, preview: DisclosurePreview) -> PreviewResponse:
@@ -414,6 +420,7 @@ class PreviewResponse(BaseModel):
                 if preview.inspection is not None
                 else None
             ),
+            vault_explorer_token=preview.vault_explorer_token,
         )
 
 
@@ -633,6 +640,51 @@ class RestoreResponse(BaseModel):
             restored_text=restore.restored_text,
             restored_count=restore.restored_count,
             unresolved_count=restore.unresolved_count,
+        )
+
+
+# --- POST /demo/vault-explorer ---------------------------------------------------
+#
+# T29 / issue #72. Additive, like the export/restore shapes above: a new
+# response shape, not a change to any existing one, so CONTRACT_VERSION is
+# not bumped. Deliberately small and closed -- no scope key, no session/
+# document/request identifier, nothing beyond category/pseudonym/original/
+# present for each reversible entry the sealed token names.
+
+
+class VaultExplorerEntryModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    category: str
+    pseudonym: str
+    original: str | None
+    present: bool
+
+
+class VaultExplorerResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: str
+    scope: str | None
+    entry_count: int
+    entries: list[VaultExplorerEntryModel]
+
+    @classmethod
+    def from_domain(cls, view: VaultExplorerView) -> VaultExplorerResponse:
+        entries = [
+            VaultExplorerEntryModel(
+                category=entry.category,
+                pseudonym=entry.pseudonym,
+                original=entry.original,
+                present=entry.present,
+            )
+            for entry in view.entries
+        ]
+        return cls(
+            contract_version=CONTRACT_VERSION,
+            scope=view.scope,
+            entry_count=len(entries),
+            entries=entries,
         )
 
 
