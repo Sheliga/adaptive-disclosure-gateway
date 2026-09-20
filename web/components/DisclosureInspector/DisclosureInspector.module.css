@@ -1,0 +1,107 @@
+.details {
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-top: 0.75rem;
+}
+
+.disclaimer {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.legend ul {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.legendGlyph {
+  margin-right: 0.35rem;
+}
+
+.columns {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+
+@media (min-width: 640px) {
+  .columns {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  padding: 0.75rem;
+  font-size: 0.9rem;
+}
+
+.segment {
+  border: none;
+  background: var(--tone-sent-surface);
+  color: inherit;
+  font: inherit;
+  white-space: pre-wrap;
+  padding: 0;
+  cursor: pointer;
+}
+
+.segment::before {
+  content: attr(data-ordinal);
+  font-size: 0.7rem;
+  vertical-align: super;
+  margin-right: 0.1rem;
+  opacity: 0.8;
+}
+
+.segmentSelected {
+  outline: 2px solid var(--accent);
+}
+
+.removedSegment {
+  background: var(--tone-blocked-surface);
+  font-style: italic;
+}
+
+.untouched {
+  white-space: pre-wrap;
+}
+
+.detailPanel {
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+}
+
+.excerpt {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.position {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.detailValue {
+  font-weight: 600;
+}
+
+.explanation {
+  margin: 0.15rem 0 0;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}

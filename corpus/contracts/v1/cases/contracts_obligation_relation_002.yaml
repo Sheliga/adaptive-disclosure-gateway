@@ -1,0 +1,93 @@
+input:
+  sample_id: contracts_obligation_relation_002
+  task_family: obligation_relation_preservation
+  text: |
+    CONTRACT
+    Contracting party: Planalto Servicos Educacionais Ltda
+    Representative: Aline Peixoto Barros
+    CPF: 311.422.533-64
+    Contracted party: Estuario Consultoria SA
+    Obligation: Contracted party must deliver the final report to Contracting party by the deadline
+    Penalty: R$ 15000.00
+    Deadline: 2026-12-11
+  task: >-
+    State which contracted party owes the final report to which
+    contracting party, name the legal representative who signed for the
+    contracting party so the signature register can be updated, and report
+    the delivery deadline. The penalty amount is not needed.
+  domain: contracts
+  purpose: compliance_review
+  requester_role: compliance_officer
+  policy_version: contracts-v1
+
+oracle:
+  sample_id: contracts_obligation_relation_002
+  # The mirror image of contracts_obligation_relation_001: the obligation
+  # runs the other way (the CONTRACTED party owes the CONTRACTING party), so
+  # a treatment that preserved 'some relation' by always binding the first-
+  # named party to the obligor role would satisfy one case and fail the
+  # other.
+  #
+  # `representative_name` is `required` here -- the signature register needs
+  # the natural person's name -- with PSEUDONYMIZE as the only acceptable
+  # action and an explicit reconstruction expectation: the literal name may
+  # reappear only in the reconstructed output returned to the authorized
+  # requester, never in the payload sent to the provider.
+  expected_spans:
+    - category: party_name
+      value: 'Planalto Servicos Educacionais Ltda'
+      start: 28
+      end: 63
+      task_necessity: required
+      expected_actions: [pseudonymize]
+    - category: representative_name
+      value: 'Aline Peixoto Barros'
+      start: 80
+      end: 100
+      task_necessity: required
+      expected_actions: [pseudonymize]
+    - category: cpf
+      value: '311.422.533-64'
+      start: 106
+      end: 120
+      task_necessity: not_required
+      expected_actions: [remove]
+    - category: party_name
+      value: 'Estuario Consultoria SA'
+      start: 139
+      end: 162
+      task_necessity: required
+      expected_actions: [pseudonymize]
+    - category: penalty_amount
+      value: 'R$ 15000.00'
+      start: 268
+      end: 279
+      task_necessity: not_required
+      expected_actions: [remove, generalize]
+    - category: deadline
+      value: '2026-12-11'
+      start: 290
+      end: 300
+      task_necessity: required
+      expected_actions: [preserve]
+  expected_block_request: false
+  expected_answer: >-
+    After authorized pseudonym reconstruction, the response states that
+    the contracted party owes the final report to the contracting party,
+    names the legal representative who signed for the contracting party,
+    'Aline Peixoto Barros', and reports the delivery deadline
+    (2026-12-11). The payload sent to the provider carries only stable,
+    distinct pseudonyms for the party and representative names; the
+    literal names reappear solely in the reconstructed output returned to
+    the authorized requester.
+  answer_depends_on_categories: [party_name, representative_name, deadline]
+  reconstruction:
+    - category: party_name
+      expected_reconstructable: true
+    - category: representative_name
+      expected_reconstructable: true
+  obligation_relations:
+    - obligor_role: Contracted party
+      obligee_role: Contracting party
+      obligation: must deliver the final report by the deadline
+      depends_on_categories: [deadline]

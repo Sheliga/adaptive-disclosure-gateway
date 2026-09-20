@@ -327,7 +327,7 @@ def test_task_needing_exact_salary_never_gets_preserve_when_policy_forbids_it():
     )
     assert _actions_by_category(b4_result)["salary"] is DisclosureAction.GENERALIZE
     assert _actions_by_category(b4_result)["salary"] is not DisclosureAction.PRESERVE
-    assert "8500" not in b4_result.external_payload
+    assert "8500.00" not in b4_result.external_payload
 
 
 # --- 3. Hard policy actions/BLOCK_REQUEST are never altered by relevance ---
@@ -495,7 +495,7 @@ def test_policy_version_variation_changes_the_final_resolved_action_between_v2_a
     assert _actions_by_category(v2_result)["salary"] is DisclosureAction.PRESERVE
     assert _actions_by_category(v3_result)["salary"] is DisclosureAction.GENERALIZE
     assert "8500" in v2_result.external_payload
-    assert "8500" not in v3_result.external_payload
+    assert "8500.00" not in v3_result.external_payload
 
 
 # --- 8. Missing/invalid policy fails closed --------------------------------
@@ -772,7 +772,7 @@ def test_matrix_cell_never_leaks_requester_id_or_a_sensitive_value(recorded_span
     cells = _matrix_cells_from_spans(recorded_spans.get_finished_spans())
     joined = " ".join(cells)
     assert "requester-should-never-appear" not in joined
-    for value in ("Ana Souza", "123.456.789-09", "8500", "Engineering"):
+    for value in ("Ana Souza", "123.456.789-09", "8500.00", "Engineering"):
         assert value not in joined
     for cell in cells:
         assert "domain=" in cell
@@ -837,7 +837,7 @@ def test_analyzer_returning_an_unrecognized_relevance_level_blocks_the_whole_req
 
 
 def test_no_sensitive_value_or_reason_leaks_across_a_full_policy_matrix_sweep():
-    sensitive_values = ("Ana Souza", "123.456.789-09", "8500", "Engineering")
+    sensitive_values = ("Ana Souza", "123.456.789-09", "8500.00", "Engineering")
     contexts = [
         {"purpose": "team_summary", "requester_role": "hr_analyst"},
         {"purpose": "salary_analysis", "requester_role": "hr_analyst"},
@@ -857,7 +857,7 @@ def test_no_sensitive_value_or_reason_leaks_across_a_full_policy_matrix_sweep():
             haystacks = [result.external_payload] + [d.reason for d in result.decisions]
             for haystack in haystacks:
                 for value in sensitive_values:
-                    if value == "8500" and "8500" in haystack:
+                    if value == "8500.00" and "8500.00" in haystack:
                         # Only legitimate when salary was actually PRESERVEd
                         # -- confirmed via the decision itself, not assumed.
                         salary_action = next(

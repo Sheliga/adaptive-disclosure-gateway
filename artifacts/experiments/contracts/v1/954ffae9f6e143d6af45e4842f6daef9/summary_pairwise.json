@@ -1,0 +1,65 @@
+{
+  "experiment_run_id": "954ffae9f6e143d6af45e4842f6daef9",
+  "pairwise": {
+    "b0_to_b1": {
+      "case_count": 12,
+      "conformant_rate_from": 0.08333333333333333,
+      "conformant_rate_to": 0.8472222222222222,
+      "from_treatment": "b0",
+      "mean_payload_bytes_from": 252.75,
+      "mean_payload_bytes_to": 181.2,
+      "mean_treatment_ms_from": 0.060325,
+      "mean_treatment_ms_to": 0.72645,
+      "to_treatment": "b1",
+      "unnecessary_disclosure_rate_from": 1.0,
+      "unnecessary_disclosure_rate_to": 0.25,
+      "utility_answerable_rate_from": 1.0,
+      "utility_answerable_rate_to": 0.6
+    },
+    "b1_to_b2": {
+      "case_count": 12,
+      "conformant_rate_from": 0.8472222222222222,
+      "conformant_rate_to": 0.7361111111111112,
+      "from_treatment": "b1",
+      "mean_payload_bytes_from": 181.2,
+      "mean_payload_bytes_to": 350.0,
+      "mean_treatment_ms_from": 0.72645,
+      "mean_treatment_ms_to": 0.393575,
+      "to_treatment": "b2",
+      "unnecessary_disclosure_rate_from": 0.25,
+      "unnecessary_disclosure_rate_to": 0.8269230769230769,
+      "utility_answerable_rate_from": 0.6,
+      "utility_answerable_rate_to": 0.8
+    },
+    "b2_to_b3": {
+      "case_count": 12,
+      "conformant_rate_from": 0.7361111111111112,
+      "conformant_rate_to": 0.9305555555555556,
+      "from_treatment": "b2",
+      "mean_payload_bytes_from": 350.0,
+      "mean_payload_bytes_to": 191.3,
+      "mean_treatment_ms_from": 0.393575,
+      "mean_treatment_ms_to": 1.5689083333333333,
+      "to_treatment": "b3",
+      "unnecessary_disclosure_rate_from": 0.8269230769230769,
+      "unnecessary_disclosure_rate_to": 0.0,
+      "utility_answerable_rate_from": 0.8,
+      "utility_answerable_rate_to": 1.0
+    },
+    "b3_to_b4": {
+      "case_count": 12,
+      "conformant_rate_from": 0.9305555555555556,
+      "conformant_rate_to": 0.9166666666666666,
+      "from_treatment": "b3",
+      "mean_payload_bytes_from": 191.3,
+      "mean_payload_bytes_to": 284.8,
+      "mean_treatment_ms_from": 1.5689083333333333,
+      "mean_treatment_ms_to": 1.3793666666666666,
+      "to_treatment": "b4",
+      "unnecessary_disclosure_rate_from": 0.0,
+      "unnecessary_disclosure_rate_to": 0.4423076923076923,
+      "utility_answerable_rate_from": 1.0,
+      "utility_answerable_rate_to": 1.0
+    }
+  }
+}

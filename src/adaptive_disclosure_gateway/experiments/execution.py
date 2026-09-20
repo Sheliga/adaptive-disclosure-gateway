@@ -28,7 +28,7 @@ from adaptive_disclosure_gateway.detection import Detector
 from adaptive_disclosure_gateway.domain import Treatment
 from adaptive_disclosure_gateway.pipeline import ExecutionResult, ReconstructingTreatment
 from adaptive_disclosure_gateway.policies import PolicyRepository
-from adaptive_disclosure_gateway.providers import Provider
+from adaptive_disclosure_gateway.providers import Provider, caller_timeout_for_provider
 from adaptive_disclosure_gateway.task_analysis import TaskAnalyzer
 from adaptive_disclosure_gateway.vault import InMemoryVault, Vault
 
@@ -190,6 +190,17 @@ def execute_case(
         else TimingProviderDelegate(base_provider)
     )
 
+    # PR #62 review, blocker 2: the caller-side wall-clock deadline must
+    # genuinely exceed a real provider's native transport timeout, not rely
+    # on run_case_with_span_capture's own default (30s) regardless of what
+    # the injected provider's native timeout is (60s for AnthropicProvider's
+    # default configuration). Derived from base_provider -- the provider as
+    # the caller supplied it, before TimingProviderDelegate wraps it -- so a
+    # provider exposing native_timeout_seconds (AnthropicProvider) drives its
+    # own deadline; FakeProvider and every provider that predates this
+    # attribute get the unchanged default.
+    case_timeout = caller_timeout_for_provider(base_provider)
+
     recording_detector = RecordingDetector(detector if detector is not None else Detector())
 
     (exec_result, spans), resource_metrics = measure_resources(
@@ -199,6 +210,7 @@ def execute_case(
             request,
             timing_provider,
             detector=recording_detector,
+            timeout=case_timeout,
             capture_raw_values_for_controlled_experiment=(
                 capture_raw_values_for_controlled_experiment
             ),

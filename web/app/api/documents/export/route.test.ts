@@ -1,0 +1,97 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { DEMO_TRANSPARENCY_ENV_VAR } from "@/lib/demoTransparency";
+
+import { POST } from "./route";
+
+const ORIGINAL_ENV = { ...process.env };
+
+afterEach(() => {
+  process.env = { ...ORIGINAL_ENV };
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
+function multipartRequest(): Request {
+  const boundary = "----synthetic-boundary";
+  return new Request("http://web.test/api/documents/export", {
+    method: "POST",
+    headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+    body: `--${boundary}\r\nsynthetic multipart bytes\r\n--${boundary}--`,
+  });
+}
+
+describe("POST /api/documents/export -- gated behind ADG_ENABLE_DEMO_TRANSPARENCY", () => {
+  const disabledValues: (string | undefined)[] = [undefined, "", " ", "0", "true", "yes", "2"];
+
+  it.each(disabledValues)(
+    "returns the fixed 404 and never calls fetch when the flag is %j",
+    async (value) => {
+      if (value === undefined) {
+        delete process.env[DEMO_TRANSPARENCY_ENV_VAR];
+      } else {
+        process.env[DEMO_TRANSPARENCY_ENV_VAR] = value;
+      }
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      const response = await POST(multipartRequest());
+
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({ detail: "not found", kind: "DemoTransparencyDisabled" });
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["1", " 1 ", "1 ", " 1"])(
+    "forwards to upstream POST /documents/export when the flag is %j",
+    async (value) => {
+      process.env[DEMO_TRANSPARENCY_ENV_VAR] = value;
+      process.env.ADG_API_BASE_URL = "http://upstream.test";
+      const upstreamBody = JSON.stringify({ contract_version: "t20-application-api-v1", ok: true });
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(upstreamBody, { status: 200, headers: { "content-type": "application/json" } }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const response = await POST(multipartRequest());
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0][0]).toBe("http://upstream.test/documents/export");
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe(upstreamBody);
+    },
+  );
+
+  it("mirrors an upstream 400 (ExportRefusedError) status and body unchanged", async () => {
+    process.env[DEMO_TRANSPARENCY_ENV_VAR] = "1";
+    const upstreamBody = JSON.stringify({ detail: "export refused", kind: "ExportRefusedError" });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(upstreamBody, { status: 400, headers: { "content-type": "application/json" } }),
+      ),
+    );
+
+    const response = await POST(multipartRequest());
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe(upstreamBody);
+  });
+
+  it("mirrors an upstream 503 (RestoreUnavailableError -- no secret configured) status and body unchanged", async () => {
+    process.env[DEMO_TRANSPARENCY_ENV_VAR] = "1";
+    const upstreamBody = JSON.stringify({ detail: "restore is not available", kind: "RestoreUnavailableError" });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(upstreamBody, { status: 503, headers: { "content-type": "application/json" } }),
+      ),
+    );
+
+    const response = await POST(multipartRequest());
+
+    expect(response.status).toBe(503);
+    expect(await response.text()).toBe(upstreamBody);
+  });
+});

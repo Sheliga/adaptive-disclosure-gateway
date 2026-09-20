@@ -1,0 +1,104 @@
+input:
+  sample_id: contracts_obligation_relation_001
+  task_family: obligation_relation_preservation
+  text: |
+    CONTRACT
+    Contracting party: Cerrado Servicos Ambientais Ltda
+    CNPJ: 10.203.040/0001-50
+    Contracted party: Maritimo Engenharia SA
+    CNPJ: 20.304.050/0001-60
+    Obligation: Contracting party must pay Contracted party the contract value by the deadline
+    Contract value: R$ 640000.00
+    Deadline: 2026-10-05
+    Approved payment ceiling for this obligation: R$ 700000.00
+  task: >-
+    State which contracting party owes payment to which contracted party
+    under this agreement, keeping a consistent reference for each company
+    so the two are never confused, and report the contract value owed
+    against the approved payment ceiling and the payment deadline. Do not
+    disclose the registration numbers.
+  domain: contracts
+  purpose: contract_summary
+  requester_role: contract_manager
+  policy_version: contracts-v1
+  requested_pseudonym_scope: request
+  request_id: req-contracts-1011
+
+oracle:
+  sample_id: contracts_obligation_relation_001
+  # The obligation is phrased BY ROLE, which is the only shape
+  # docs/contracts-policy-matrix.md proves relation preservation for. The
+  # `Obligation:` line reuses the same two words the document already uses
+  # as detector labels, carries no detected span of its own (`obligation`
+  # has no detection rule, by design), and restates neither the amount nor
+  # the date inline -- restating them there would put literal figures
+  # outside every detection rule and leak them in every treatment. The
+  # corpus is authored around the frozen coreference limitation rather than
+  # against it: no party is ever named in unlabeled prose.
+  #
+  # Both party names are `required` with PSEUDONYMIZE as the only acceptable
+  # action -- the Contracts analogue of hr_team_summary_004. PRESERVE is not
+  # authorized by `contracts-v1`; REMOVE destroys exactly what the task
+  # needs, because two removed parties are indistinguishable from each other
+  # and the obligation stops saying who owes whom. Utility is reached only
+  # by the pair pseudonymize + authorized reconstruction, which is the
+  # B1->B2 gap this domain makes unusually visible.
+  expected_spans:
+    - category: party_name
+      value: 'Cerrado Servicos Ambientais Ltda'
+      start: 28
+      end: 60
+      task_necessity: required
+      expected_actions: [pseudonymize]
+    - category: cnpj
+      value: '10.203.040/0001-50'
+      start: 67
+      end: 85
+      task_necessity: not_required
+      expected_actions: [remove]
+    - category: party_name
+      value: 'Maritimo Engenharia SA'
+      start: 104
+      end: 126
+      task_necessity: required
+      expected_actions: [pseudonymize]
+    - category: cnpj
+      value: '20.304.050/0001-60'
+      start: 133
+      end: 151
+      task_necessity: not_required
+      expected_actions: [remove]
+    # R$ 640000.00 bins to R$ 600000-650000, entirely below the R$ 700000.00
+    # approved payment ceiling, so the band decides the comparison the
+    # answer states.
+    - category: contract_value
+      value: 'R$ 640000.00'
+      start: 259
+      end: 271
+      task_necessity: required
+      expected_actions: [generalize]
+    # A payment deadline the obligation falls due on: enforceable only to
+    # the day, so PRESERVE alone is acceptable.
+    - category: deadline
+      value: '2026-10-05'
+      start: 282
+      end: 292
+      task_necessity: required
+      expected_actions: [preserve]
+  expected_block_request: false
+  expected_answer: >-
+    The response states that the contracting party owes payment to the
+    contracted party, keeping the two companies distinguished by stable,
+    distinct references rather than by name; reports that the contract
+    value (R$ 640000.00) is below the approved payment ceiling for this
+    obligation (R$ 700000.00); and reports the payment deadline
+    (2026-10-05).
+  answer_depends_on_categories: [party_name, contract_value, deadline]
+  reconstruction:
+    - category: party_name
+      expected_reconstructable: true
+  obligation_relations:
+    - obligor_role: Contracting party
+      obligee_role: Contracted party
+      obligation: must pay the contract value by the deadline
+      depends_on_categories: [contract_value, deadline]

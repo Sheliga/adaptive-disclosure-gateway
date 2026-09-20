@@ -1,14 +1,28 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { compareStrategies, executeDisclosure, getExamples, getHealth, previewDisclosure } from "./api";
+import {
+  compareStrategies,
+  executeDisclosure,
+  exploreVault,
+  exportDocument,
+  getDemoFeatures,
+  getExamples,
+  getHealth,
+  previewDisclosure,
+  restoreText,
+} from "./api";
 import { CONTRACT_VERSION } from "./contracts";
 import type {
   CategoryDisclosureSummary,
   CompareResponse,
+  DemoFeaturesResponse,
   ExamplesResponse,
   ExecuteResponse,
+  ExportResponse,
   HealthResponse,
   PreviewResponse,
+  RestoreResponse,
+  VaultExplorerResponse,
 } from "./contracts";
 import { copy } from "./copy";
 
@@ -90,6 +104,8 @@ function previewBody(): PreviewResponse {
       requested_pseudonym_scope: "session",
     },
     provider_mode: { provider_class: "FakeProvider" },
+    inspection: null,
+    vault_explorer_token: null,
   };
 }
 
@@ -588,6 +604,127 @@ describe("200 response validation — preview fails closed on a broken contract"
   });
 });
 
+/**
+ * T27 / issue #69: `PreviewResponse.inspection` invariants. These are the
+ * regressions for the exact defect `isDisclosureInspectionField`
+ * (`lib/responseGuards.ts`) exists to catch: a body that LOOKS like a valid
+ * inspection at a glance but violates one of the cross-field guarantees
+ * `application/inspection.py` is supposed to provide.
+ */
+describe("200 response validation — inspection fails closed on a broken invariant", () => {
+  function previewWithInspection(inspection: unknown): Draft {
+    const draft = draftOf(previewBody());
+    draft["inspection"] = inspection;
+    return draft;
+  }
+
+  it("accepts inspection: null (the historical, flag-off shape)", async () => {
+    stub200(previewWithInspection(null));
+
+    expect((await previewDisclosure({ text: "x" })).ok).toBe(true);
+  });
+
+  it("accepts a fully valid available inspection whose disclosed segments join back to external_payload", async () => {
+    const draft = previewWithInspection({
+      available: true,
+      unavailable_reason: null,
+      segments: [{ action: null, category: null, original: "x", disclosed: "x" }],
+    });
+    draft["external_payload"] = "x";
+    stub200(draft);
+
+    expect((await previewDisclosure({ text: "x" })).ok).toBe(true);
+  });
+
+  it("accepts a valid blocked/unavailable inspection with empty segments", async () => {
+    stub200(
+      previewWithInspection({ available: false, unavailable_reason: "blocked", segments: [] }),
+    );
+
+    expect((await previewDisclosure({ text: "x" })).ok).toBe(true);
+  });
+
+  it("rejects when the joined disclosed segments do NOT equal external_payload", async () => {
+    // The single most important invariant: a body claiming available:true
+    // while its segments describe a DIFFERENT disclosed text than what the
+    // rest of this same response says was actually sent.
+    const draft = previewWithInspection({
+      available: true,
+      unavailable_reason: null,
+      segments: [{ action: null, category: null, original: "x", disclosed: "not-what-was-sent" }],
+    });
+    draft["external_payload"] = "conteudo transformado";
+    stub200(draft);
+
+    expect((await previewDisclosure({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects available:true with a non-null unavailable_reason", async () => {
+    const draft = previewWithInspection({
+      available: true,
+      unavailable_reason: "blocked",
+      segments: [],
+    });
+    stub200(draft);
+
+    expect((await previewDisclosure({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects available:false with non-empty segments", async () => {
+    stub200(
+      previewWithInspection({
+        available: false,
+        unavailable_reason: "alignment_failed",
+        segments: [{ action: null, category: null, original: "x", disclosed: "x" }],
+      }),
+    );
+
+    expect((await previewDisclosure({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects available:false with a non-string unavailable_reason", async () => {
+    stub200(previewWithInspection({ available: false, unavailable_reason: null, segments: [] }));
+
+    expect((await previewDisclosure({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a segment whose action is null but category is not (must be null together)", async () => {
+    const draft = previewWithInspection({
+      available: true,
+      unavailable_reason: null,
+      segments: [{ action: null, category: "employee_name", original: "x", disclosed: "x" }],
+    });
+    draft["external_payload"] = "x";
+    stub200(draft);
+
+    expect((await previewDisclosure({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a segment whose category is null but action is not (must be null together)", async () => {
+    const draft = previewWithInspection({
+      available: true,
+      unavailable_reason: null,
+      segments: [{ action: "remove", category: null, original: "x", disclosed: "" }],
+    });
+    draft["external_payload"] = "";
+    stub200(draft);
+
+    expect((await previewDisclosure({ text: "x" })).ok).toBe(false);
+  });
+
+  it("rejects a segment missing the original/disclosed string fields", async () => {
+    const draft = previewWithInspection({
+      available: true,
+      unavailable_reason: null,
+      segments: [{ action: null, category: null, disclosed: "x" }],
+    });
+    draft["external_payload"] = "x";
+    stub200(draft);
+
+    expect((await previewDisclosure({ text: "x" })).ok).toBe(false);
+  });
+});
+
 describe("200 response validation — execute fails closed on a broken contract", () => {
   it("accepts an execute body that satisfies the whole contract", async () => {
     const body = executeBody();
@@ -988,5 +1125,465 @@ describe("200 response validation — examples and health", () => {
     stub200(draft);
 
     expect((await getHealth()).ok).toBe(false);
+  });
+});
+
+/**
+ * T28 / issue #70: getDemoFeatures, exportDocument, restoreText.
+ */
+
+function demoFeaturesBody(enabled: boolean, vaultExplorerEnabled = false): DemoFeaturesResponse {
+  return { demo_transparency_enabled: enabled, demo_vault_explorer_enabled: vaultExplorerEnabled };
+}
+
+function exportBody(): ExportResponse {
+  return {
+    contract_version: CONTRACT_VERSION,
+    external_payload: "conteudo divulgado com PSEUDO-abc123",
+    restore_handle: "opaque.restore.handle",
+    expires_at: 1_800_000_000,
+    restorable_count: 1,
+    treatment: "b2",
+    strategy: "b2",
+    governance: previewBody().governance,
+  };
+}
+
+function restoreBody(): RestoreResponse {
+  return {
+    contract_version: CONTRACT_VERSION,
+    restored_text: "conteudo restaurado com Maria Oliveira",
+    restored_count: 1,
+    unresolved_count: 0,
+  };
+}
+
+function vaultExplorerBody(): VaultExplorerResponse {
+  return {
+    contract_version: CONTRACT_VERSION,
+    scope: "session",
+    entry_count: 1,
+    entries: [
+      { category: "employee_name", pseudonym: "PSEUDO-a1b2", original: "Ana Souza", present: true },
+    ],
+  };
+}
+
+describe("getDemoFeatures — calls the local proxy route and validates the body", () => {
+  it("returns ok:true for a fully valid body", async () => {
+    const payload = demoFeaturesBody(true);
+    stub200(payload);
+
+    const result = await getDemoFeatures();
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data).toEqual(payload);
+    }
+  });
+
+  it("calls /api/demo/features, never the upstream API directly", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getDemoFeatures();
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/demo/features");
+  });
+
+  it("rejects a 200 whose demo_transparency_enabled is not a real boolean", async () => {
+    stub200({ demo_transparency_enabled: "true" });
+
+    expect((await getDemoFeatures()).ok).toBe(false);
+  });
+
+  it("treats a 404 (disabled) the same fail-closed way as any other error", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ detail: "not found", kind: "DemoTransparencyDisabled" }), {
+          status: 404,
+        }),
+      ),
+    );
+
+    const result = await getDemoFeatures();
+
+    expect(result.ok).toBe(false);
+  });
+});
+
+describe("exportDocument — request shape and 200 validation", () => {
+  it("posts FormData to /api/documents/export without setting Content-Type manually", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json(exportBody()));
+    vi.stubGlobal("fetch", fetchMock);
+    const form = new FormData();
+
+    const result = await exportDocument(form);
+
+    expect(result.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/documents/export",
+      expect.objectContaining({ method: "POST", body: form }),
+    );
+    expect(fetchMock.mock.calls[0][1].headers).toBeUndefined();
+  });
+
+  it("accepts a fully valid ExportResponse", async () => {
+    const body = exportBody();
+    stub200(body);
+
+    const result = await exportDocument(new FormData());
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data).toEqual(body);
+    }
+  });
+
+  it("rejects a 200 missing restore_handle", async () => {
+    const draft = draftOf(exportBody());
+    delete draft["restore_handle"];
+    stub200(draft);
+
+    expect((await exportDocument(new FormData())).ok).toBe(false);
+  });
+
+  it("rejects a 200 whose expires_at is not a number", async () => {
+    const draft = draftOf(exportBody());
+    draft["expires_at"] = "1800000000";
+    stub200(draft);
+
+    expect((await exportDocument(new FormData())).ok).toBe(false);
+  });
+
+  it("maps a 400 ExportRefusedError to its own copy message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ detail: "export refused", kind: "ExportRefusedError" }), {
+          status: 400,
+        }),
+      ),
+    );
+
+    const result = await exportDocument(new FormData());
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe("ExportRefusedError");
+      expect(result.error.message).toBe(copy.errors.exportRefused);
+    }
+  });
+
+  it("maps a 503 RestoreUnavailableError (no secret configured) to its own copy message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ detail: "restore is not available", kind: "RestoreUnavailableError" }), {
+          status: 503,
+        }),
+      ),
+    );
+
+    const result = await exportDocument(new FormData());
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toBe(copy.errors.restoreUnavailable);
+    }
+  });
+
+  it("maps a 404 DemoTransparencyDisabled to its own copy message, never a generic fallback", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ detail: "not found", kind: "DemoTransparencyDisabled" }), {
+          status: 404,
+        }),
+      ),
+    );
+
+    const result = await exportDocument(new FormData());
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe("DemoTransparencyDisabled");
+      expect(result.error.message).toBe(copy.errors.demoTransparencyDisabled);
+    }
+  });
+});
+
+describe("restoreText — request shape and 200 validation", () => {
+  it("POSTs {text, restore_handle} as JSON to /api/documents/restore", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json(restoreBody()));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await restoreText({ text: "PSEUDO-abc123", restore_handle: "opaque.handle" });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/documents/restore");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({ text: "PSEUDO-abc123", restore_handle: "opaque.handle" });
+  });
+
+  it("accepts a fully valid RestoreResponse", async () => {
+    const body = restoreBody();
+    stub200(body);
+
+    const result = await restoreText({ text: "x", restore_handle: "h" });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data).toEqual(body);
+    }
+  });
+
+  it("accepts a foreign-handle result (restored_count: 0, unresolved_count > 0)", async () => {
+    const draft = draftOf(restoreBody());
+    draft["restored_count"] = 0;
+    draft["unresolved_count"] = 3;
+    stub200(draft);
+
+    const result = await restoreText({ text: "x", restore_handle: "h" });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.restored_count).toBe(0);
+      expect(result.data.unresolved_count).toBe(3);
+    }
+  });
+
+  it("rejects a 200 whose restored_text is not a string", async () => {
+    const draft = draftOf(restoreBody());
+    draft["restored_text"] = null;
+    stub200(draft);
+
+    expect((await restoreText({ text: "x", restore_handle: "h" })).ok).toBe(false);
+  });
+
+  it("maps a 400 RestoreHandleInvalidError to its own copy message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ detail: "restore handle is invalid", kind: "RestoreHandleInvalidError" }), {
+          status: 400,
+        }),
+      ),
+    );
+
+    const result = await restoreText({ text: "x", restore_handle: "h" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toBe(copy.errors.restoreHandleInvalid);
+    }
+  });
+
+  it("maps a 400 RestoreHandleExpiredError to its own copy message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ detail: "restore handle has expired", kind: "RestoreHandleExpiredError" }), {
+          status: 400,
+        }),
+      ),
+    );
+
+    const result = await restoreText({ text: "x", restore_handle: "h" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toBe(copy.errors.restoreHandleExpired);
+    }
+  });
+
+  it("maps a 503 RestoreUnavailableError to its own copy message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ detail: "restore is not available", kind: "RestoreUnavailableError" }), {
+          status: 503,
+        }),
+      ),
+    );
+
+    const result = await restoreText({ text: "x", restore_handle: "h" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toBe(copy.errors.restoreUnavailable);
+    }
+  });
+
+  it("never echoes the request text/handle in a rejected/error result", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ detail: "restore handle is invalid", kind: "RestoreHandleInvalidError" }), {
+          status: 400,
+        }),
+      ),
+    );
+
+    const result = await restoreText({
+      text: "PSEUDO-marker SESSION_SECRET_MARKER",
+      restore_handle: "opaque.handle.SESSION_SECRET_MARKER",
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(JSON.stringify(result.error)).not.toContain("SESSION_SECRET_MARKER");
+    }
+  });
+});
+
+/**
+ * T29 / issue #72: exploreVault.
+ */
+describe("exploreVault — request shape and 200 validation", () => {
+  it("POSTs {token} as JSON to /api/demo/vault-explorer, token only in the body", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json(vaultExplorerBody()));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await exploreVault("vx1.SECRET_TOKEN_VALUE");
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/demo/vault-explorer");
+    expect(url).not.toContain("SECRET_TOKEN_VALUE");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({ token: "vx1.SECRET_TOKEN_VALUE" });
+  });
+
+  it("accepts a fully valid VaultExplorerResponse", async () => {
+    const body = vaultExplorerBody();
+    stub200(body);
+
+    const result = await exploreVault("vx1.token");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data).toEqual(body);
+    }
+  });
+
+  it("accepts a zero-entry response with scope: null (B0/B1)", async () => {
+    stub200({ contract_version: CONTRACT_VERSION, scope: null, entry_count: 0, entries: [] });
+
+    const result = await exploreVault("vx1.token");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.scope).toBeNull();
+      expect(result.data.entries).toEqual([]);
+    }
+  });
+
+  it("rejects a 200 whose entry_count disagrees with entries.length", async () => {
+    const draft = draftOf(vaultExplorerBody());
+    draft["entry_count"] = 5;
+    stub200(draft);
+
+    expect((await exploreVault("vx1.token")).ok).toBe(false);
+  });
+
+  it("rejects a 200 with scope: null but a non-empty entries array", async () => {
+    const draft = draftOf(vaultExplorerBody());
+    draft["scope"] = null;
+    stub200(draft);
+
+    expect((await exploreVault("vx1.token")).ok).toBe(false);
+  });
+
+  it("rejects a 200 whose present entry disagrees with its own original", async () => {
+    const draft = draftOf(vaultExplorerBody());
+    firstEntry(draft)["present"] = false;
+    stub200(draft);
+
+    expect((await exploreVault("vx1.token")).ok).toBe(false);
+  });
+
+  it("rejects a 200 whose absent entry still carries an original", async () => {
+    const draft = draftOf(vaultExplorerBody());
+    firstEntry(draft)["present"] = true;
+    firstEntry(draft)["original"] = null;
+    stub200(draft);
+
+    expect((await exploreVault("vx1.token")).ok).toBe(false);
+  });
+
+  it("accepts a present:false entry with original: null (evicted from the local vault)", async () => {
+    const draft = draftOf(vaultExplorerBody());
+    firstEntry(draft)["present"] = false;
+    firstEntry(draft)["original"] = null;
+    stub200(draft);
+
+    const result = await exploreVault("vx1.token");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.entries[0].present).toBe(false);
+      expect(result.data.entries[0].original).toBeNull();
+    }
+  });
+
+  it("maps a 400 VaultExplorerReferenceError to its own copy message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            detail: "vault explorer reference is invalid, malformed, expired, or was not issued by this process",
+            kind: "VaultExplorerReferenceError",
+          }),
+          { status: 400 },
+        ),
+      ),
+    );
+
+    const result = await exploreVault("vx1.bad");
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toBe(copy.errors.vaultExplorerReferenceInvalid);
+    }
+  });
+
+  it("maps a 404 DemoVaultExplorerDisabled to its own copy message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ detail: "not found", kind: "DemoVaultExplorerDisabled" }), { status: 404 }),
+      ),
+    );
+
+    const result = await exploreVault("vx1.token");
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toBe(copy.errors.demoVaultExplorerDisabled);
+    }
+  });
+
+  it("never echoes the token, a pseudonym, or an original in a rejected/error result", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            detail: "vault explorer reference is invalid, malformed, expired, or was not issued by this process",
+            kind: "VaultExplorerReferenceError",
+          }),
+          { status: 400 },
+        ),
+      ),
+    );
+
+    const result = await exploreVault("vx1.SESSION_SECRET_TOKEN");
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(JSON.stringify(result.error)).not.toContain("SESSION_SECRET_TOKEN");
+    }
   });
 });

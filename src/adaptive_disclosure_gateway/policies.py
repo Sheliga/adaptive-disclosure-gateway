@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from adaptive_disclosure_gateway.domain import (
     DisclosureAction,
@@ -21,7 +21,29 @@ _SCOPE_RANK = {
 }
 
 
+# Every policy model below forbids unknown keys (issue #56). The default
+# pydantic behaviour -- silently dropping them -- is the fail-OPEN direction
+# for a governance document: `configs/policies/contracts-v1.yaml` shipped a
+# top-level `semantic_constraints:` block declaring `preserve_party_roles`
+# and `preserve_obligation_assignment`, neither of which this module has
+# ever heard of, and it loaded without complaint. A reviewer reading that
+# YAML would conclude two guarantees were enforced when nothing enforced
+# them.
+#
+# Rejecting the key instead makes `PolicyRepository.from_directory` record a
+# load error, and `decide()`/`resolve_pseudonym_scope()`/
+# `is_reconstruction_authorized()` already treat an unloadable document
+# exactly like a missing one: BLOCK_REQUEST, the narrowest pseudonym scope,
+# and no reconstruction. So a typo or an unimplemented governance knob costs
+# availability for that policy version, never silent permissiveness. Pinned
+# by tests/test_policy_engine.py's unknown-key tests, including the
+# companion test asserting every shipped YAML still loads.
+_FORBID_UNKNOWN_KEYS = ConfigDict(extra="forbid")
+
+
 class PolicyOverride(BaseModel):
+    model_config = _FORBID_UNKNOWN_KEYS
+
     action: DisclosureAction
     purpose: str | None = None
     requester_role: str | None = None
@@ -38,6 +60,8 @@ class PolicyOverride(BaseModel):
 
 
 class PolicyRule(BaseModel):
+    model_config = _FORBID_UNKNOWN_KEYS
+
     default: DisclosureAction
     allowed_actions: list[DisclosureAction] = Field(default_factory=list)
     purpose_actions: dict[str, list[DisclosureAction]] = Field(default_factory=dict)
@@ -45,12 +69,16 @@ class PolicyRule(BaseModel):
 
 
 class PseudonymScopePolicy(BaseModel):
+    model_config = _FORBID_UNKNOWN_KEYS
+
     default: PseudonymScope = PseudonymScope.SESSION
     role_max: dict[str, PseudonymScope] = Field(default_factory=dict)
     user_max: dict[str, PseudonymScope] = Field(default_factory=dict)
 
 
 class PolicyDocument(BaseModel):
+    model_config = _FORBID_UNKNOWN_KEYS
+
     version: str
     domain: str
     rules: dict[str, PolicyRule]

@@ -71,13 +71,35 @@ export const en: AppCopy = {
     pasteLabel: "Paste the text you want to test",
     pastePlaceholder: "Paste the content you want to test here.",
     uploadFieldLabel: "Choose a file",
-    uploadDropHint: "Drag a .txt or .md file here, or choose a file.",
-    uploadUnsupportedType: "Only .txt or .md files are accepted.",
+    uploadDropHint: "Drag a PDF, DOCX, TXT, or MD contract here, or choose a file.",
+    uploadUnsupportedType: "Only PDF, DOCX, TXT, or MD files are accepted.",
     uploadReadError: "Could not read the selected file.",
     removeFile: "Remove file",
     fileNameLabel: "File name",
     fileTypeLabel: "Type",
     fileSizeLabel: "Size",
+    documentTypeLabel: "Document type",
+    documentTypesLoading: "Loading document types...",
+    documentTypesLoadError: "Could not load document types.",
+    analysisModeLabel: "Analysis type",
+    documentTypeLabels: {
+      contract: "Contract",
+      hr_record: "HR record",
+    },
+    analysisModeLabels: {
+      contract_summary: "Contract summary",
+      financial_audit: "Financial audit",
+      compliance_review: "Compliance review",
+      team_summary: "Team summary",
+      salary_analysis: "Salary analysis",
+      compensation_review: "Compensation review",
+    },
+    fileTypeLabels: {
+      pdf: "PDF document",
+      docx: "Word document",
+      txt: "Plain text",
+      md: "Markdown",
+    },
     taskLabel: "What do you want the model to do with this content?",
     taskPlaceholder: "E.g.: Summarize the main points of this document.",
     taskHintForExample: "Leave blank to use the task suggested by the chosen example.",
@@ -115,11 +137,13 @@ export const en: AppCopy = {
 
   provider: {
     deterministicDemoLabel: "Deterministic demonstration provider — not a real model.",
+    externalModelLabel: "External model configured.",
     modeUnverifiedLabel: "Provider mode could not be verified.",
   },
 
   processingStages: {
     readingFile: "Reading the file",
+    analyzingDocument: "Analyzing the document",
     detectingSensitiveData: "Detecting sensitive data",
     applyingDisclosurePolicy: "Applying disclosure policy",
     consultingModel: "Consulting the model",
@@ -242,6 +266,13 @@ export const en: AppCopy = {
       salary: "Salary",
       department: "Department",
       medical_data: "Medical data",
+      party_name: "Contract party",
+      representative_name: "Representative",
+      cnpj: "Company registration (CNPJ)",
+      contract_value: "Contract value",
+      penalty_amount: "Penalty amount",
+      deadline: "Deadline",
+      bank_account: "Bank account",
     },
   },
 
@@ -291,10 +322,146 @@ export const en: AppCopy = {
     tryAgain: "Try again",
   },
 
+  inspectionActions: {
+    preserve: {
+      label: "Preserved",
+      explanation: "This segment was kept unchanged in this disclosure.",
+    },
+    pseudonymize: {
+      label: "Pseudonymized",
+      explanation: "This segment was replaced with a local pseudonym.",
+    },
+    generalize: {
+      label: "Generalized",
+      explanation: "This segment was replaced with a less specific version before being sent.",
+    },
+    remove: {
+      label: "Removed",
+      explanation: "This segment was removed and is not present in the disclosed version.",
+    },
+    untouched: {
+      label: "Unchanged",
+      explanation: "This segment was not identified as sensitive and remains the same.",
+    },
+    unknown: {
+      label: "Unrecognized action",
+      explanation:
+        "The system returned an action this version of the interface does not recognize. For safety, it is not treated as any of the known actions.",
+    },
+    removedMarker: "[removed segment]",
+  },
+
+  disclosureInspector: {
+    toggleLabel: "View side-by-side comparison (original vs. disclosed)",
+    heading: "Comparison: original vs. disclosed",
+    originalColumnHeading: "Original",
+    disclosedColumnHeading: "Disclosed",
+    legendHeading: "Action legend",
+    disclaimer:
+      "This transparency view exists for evaluation and research purposes. A final product would significantly restrict this feature. There is no vault explorer: this view shows only this document's own transformations.",
+    unavailableBlockedHeading: "Comparison not available",
+    unavailableBlockedExplanation:
+      "The request was blocked by the disclosure policy, so there is no disclosed version to compare.",
+    unavailableAlignmentFailedHeading: "Comparison not available for this decision",
+    unavailableAlignmentFailedExplanation:
+      "The alignment between the original and disclosed text could not be safely verified for this decision. The exact payload remains available above.",
+    detailPanelHeading: "Selected segment detail",
+    detailActionLabel: "Action:",
+    detailCategoryLabel: "Category:",
+    detailTreatmentLabel: "Treatment:",
+    detailStrategyLabel: "Strategy:",
+    detailReasonLabel: "Reason:",
+    detailReasonUnavailable: "Reason not available for this category.",
+    detailOriginalLabel: "Original:",
+    detailDisclosedLabel: "Disclosed:",
+    detailPositionLabel: "Item {n} of {total}",
+    noSelectionHint: "Select a highlighted segment to see its details.",
+  },
+
+  exportRestorePanel: {
+    heading: "Export and restore (demonstration)",
+    disclaimer:
+      "This feature exists to demonstrate the full export/restore cycle for evaluation purposes. A final product would restrict or remove this surface.",
+    uploadOnlyNote: "HTTP export is available only for the file-upload flow in this demonstration.",
+    exportButton: "Export",
+    exportedPayloadHeading: "Exported disclosed representation",
+    restorableCountLabel: "restorable items",
+    expiresAtLabel: "Expires at:",
+    treatmentLabel: "Treatment:",
+    strategyLabel: "Strategy:",
+    handleHeading: "Restore handle",
+    handleHiddenNotice: "The handle is kept only on this screen, never saved automatically.",
+    copyHandleButton: "Copy handle",
+    copyHandleSuccess: "Handle copied.",
+    downloadHandleButton: "Download handle (.txt)",
+    importHandleLabel: "Import handle from a file",
+    simulateResponseHeading: "Simulate external response",
+    simulateResponseHint:
+      "Edit the text below as if it were a response received from outside the gateway, keeping the pseudonyms you want to restore.",
+    restoreButton: "Restore locally",
+    restoredResultHeading: "Restore result",
+    restoredCountLabel: "pseudonyms restored",
+    unresolvedCountLabel: "tokens not recognized by this handle",
+    unresolvedExplanation:
+      "Unresolved tokens look like pseudonyms but do not belong to this restore handle's scope; they remain unchanged in the restored text.",
+    clearButton: "Clear",
+  },
+
+  vaultScopes: {
+    unrecognized: "Unrecognized scope",
+    technicalIdLabel: "Technical identifier:",
+    labels: {
+      request: "A single request",
+      document: "One document",
+      session: "One session",
+    } as Record<string, string>,
+    explanations: {
+      request: "This pseudonym can only be reversed within the same request that created it.",
+      document: "This pseudonym can be reversed in any request about the same document.",
+      session: "This pseudonym can be reversed in any request from the same session.",
+    } as Record<string, string>,
+  },
+
+  vaultExplorerPanel: {
+    heading: "Vault Explorer — Demonstration",
+    subtitle: "Local trust boundary",
+    disclaimer:
+      "This view exists only for demonstration and evaluation purposes. A final product would not expose these mappings this way.",
+    toggleLabel: "View the Vault Explorer (local vault)",
+    unavailableForDecision: "The Vault Explorer is not available for this decision (no reference was issued).",
+    loadingLabel: "Loading local vault entries...",
+    scopeLabel: "Scope:",
+    entryCountLabel: "reversible entries",
+    zeroEntriesMessage:
+      "This decision left no reversible local state: the treatment removed or generalized the sensitive data instead of pseudonymizing it.",
+    categoryLabel: "Category:",
+    pseudonymLabel: "What the external service received:",
+    originalLabel: "What stayed inside the local boundary:",
+    presentLabel: "Still held locally",
+    notPresentLabel: "No longer available locally",
+    showOriginalsToggle: "Show original values",
+    hideOriginalsToggle: "Hide original values",
+    maskedValuePlaceholder: "••••••••",
+    notAvailablePlaceholder: "—",
+  },
+
   errors: {
     generic: "The operation could not be completed. Please try again.",
     upstreamUnreachable: "Could not reach the service right now. Please try again shortly.",
     validationFailed: "The submitted data is not valid. Please review and try again.",
+    fileTooLarge: "The file exceeds the limit accepted by the service.",
+    documentParsing: "This document could not be processed. Check its format and try again.",
+    invalidAnalysisMode: "That analysis type is not accepted for the selected document.",
+    previewExpired: "This review is no longer valid. Run a new review before sending.",
+    comparisonUnavailableForUpload: "Comparison is not yet available for structured documents.",
+    demoTransparencyDisabled: "This demonstration feature is not enabled on this deployment.",
+    exportRefused: "The export could not be generated for this content.",
+    restoreUnavailable: "Local restore is not available on this deployment right now.",
+    restoreHandleInvalid: "This restore handle is not valid.",
+    restoreHandleExpired: "This restore handle has expired. Generate a new export.",
+    demoVaultExplorerDisabled: "This demonstration feature is not enabled on this deployment.",
+    vaultExplorerReferenceInvalid:
+      "This local vault reference is no longer valid or has expired. Run a new review before continuing.",
   },
 
   sectionHeadings: {

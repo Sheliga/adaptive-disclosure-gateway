@@ -1,8 +1,18 @@
 # Implementation status
 
-Last updated: 2026-09-10 — T21 fourth slice (pt-BR / English localization) in validation.
+Last updated: 2026-09-13 — T29 / Issue #72 (local Vault Explorer for demo/debug) is now **in
+validation** in an open PR to `develop`. Issue #56 (Contracts domain extensions) **merged into
+`develop` via PR #59** (merge commit `5a67c30daab68d06bbd16d1cf06433de97245910`), which freezes
+the Contracts categories, policies, generalization strategies and relation semantics; T24 / Issue
+#37 (Contracts v1 corpus + frozen oracle) is now **in validation** in an open PR to `develop`.
+T12 / Issue #9 Docling ingestion merged into `develop` via PR #55 (merge commit
+`776e683a49818db35021bb62315dfc1ed7fb00ab`, validated feature head
+`3c93f3297515c99c6fccd4c5e705f1e77cfada78`, real Docling 2.126.0 PDF/DOCX/XLSX validation); T23
+post-pilot protocol remains merged into `develop` via PR #53; T21 fourth slice (pt-BR / English
+localization) completed and integrated into `master` via PRs #51/#52 — T21/Issue #29 remains open
+for the remaining deliberately out-of-scope items.
 
-This file tracks the current engineering/research state and execution order. Architectural decisions belong in ADRs; experimental definitions belong in `docs/experimental-design.md`; factual pilot results belong in `docs/milestone-2-pilot.md`; the parallel advisor-facing application plan belongs in `docs/advisor-demo.md`; historical PR/Issue descriptions remain in GitHub.
+This file tracks the current engineering/research state and execution order. Architectural decisions belong in ADRs; experimental definitions belong in `docs/experimental-design.md`; factual pilot results belong in `docs/milestone-2-pilot.md`; the frozen confirmatory-analysis protocol belongs in `docs/research/`; the parallel advisor-facing application plan belongs in `docs/advisor-demo.md`; historical PR/Issue descriptions remain in GitHub.
 
 ## Current phase
 
@@ -32,11 +42,13 @@ Milestone tracker: Issue #32.
 ### Frozen implementation / evaluation state
 
 - `corpus/hr/v1/`: 13 controlled HR cases; frozen/versioned.
+- `corpus/contracts/v1/`: 12 controlled Contracts cases; frozen/versioned; run classification `pilot_development`, decided before any result existed (T24 / Issue #37, in validation).
+- corpus case-file schema: `corpus-case-schema-v2` (per-domain category/task-family registries plus the oracle's `obligation_relations`; additive, `corpus/hr/v1` files unchanged).
 - B3 frozen implementation commit: `31bce08b7ea6a5c905f7a20bbb4bb99a05682bab`.
 - B4 frozen implementation commit: `5abea8514fa10ac64b9bc3714bbfd3f18682f713`.
 - B4 retains B3's task-aware baseline and adds contextual policy constraints.
 - HR contextual matrix: `hr-v2` / `hr-v3`; original corpus cases remain on frozen `hr-v1`.
-- experiment schema: `t10-experiment-runner-v2`.
+- experiment schema: `t10-experiment-runner-v3` (bumped by T22 / Issue #30: `ProviderCallMetrics` gained four provider-reported token-usage fields). The M2 HR and Contracts v1 artifacts on disk remain correctly labeled `t10-experiment-runner-v2` and were not rewritten.
 - artifact bundle schema: `t10-pilot-artifact-bundle-v2`.
 - final M2 pilot artifact: `artifacts/experiments/hr/v1/13198a3b95bd49b88a62f591f3da1224/`.
 
@@ -77,13 +89,14 @@ Do not describe M2 as proof that B4 outperforms other treatments.
 
 ## Post-pilot findings that now drive planning
 
-Three methodological findings must be carried forward without retroactively changing M2:
+Three methodological findings were carried forward without retroactively changing M2, and are
+now addressed by the protocol merged into `develop` via PR #53:
 
-1. **Binary unnecessary disclosure penalizes pseudonymization.** The current primary binary rate counts `PSEUDONYMIZE` as transmitted. That is valid as a binary transmission fact, but can make B2 appear worse than B1 despite a lower representation exposure. Ordered exposure levels are already retained and the primary/secondary metric interpretation must be frozen before authoritative analysis.
-2. **The main HR B3→B4 pairwise uses `hr-v1`.** Contextual governance effects from `purpose`, `requester_role`, `provider_class` and `policy_version` are identified in targeted `hr-v2/hr-v3` matrix comparisons rather than the main frozen-corpus pairwise run.
-3. **FakeProvider is not evidence about a real provider.** It remains appropriate for deterministic TDD/pilot reproducibility but cannot support authoritative utility/token/cost or genuine provider-class behavior claims.
+1. **Binary unnecessary disclosure penalizes pseudonymization.** The binary rate counts `PSEUDONYMIZE` as transmitted, which can make B2 appear worse than B1 despite a lower representation exposure. **Candidate resolution:** preserve the binary rate unchanged as secondary and use an ordinal/cumulative primary family. With `N = S + B + U`, the binary rate is `T/N`, while the first threshold is `T/S`; reports include coverage `S/N` and explicit blocked/unscorable counts rather than claiming unconditional recoverability (protocol §4).
+2. **The main HR B3→B4 pairwise uses `hr-v1`.** Contextual governance effects from `purpose`, `requester_role`, `provider_class` and `policy_version` are identified in targeted `hr-v2/hr-v3` matrix comparisons rather than the main frozen-corpus pairwise run. **Resolved:** the five `hr-v2`/`hr-v3` matrix cells are frozen as the primary B3→B4 comparison; the `hr-v1` pairwise is frozen as secondary/historical (protocol §8).
+3. **FakeProvider is not evidence about a real provider.** It remains appropriate for deterministic TDD/pilot reproducibility but cannot support authoritative utility/token/cost or genuine provider-class behavior claims. **Resolved:** valid/invalid uses and the required provenance fields for an authoritative run are frozen, with an explicit no-silent-fallback rule (protocol §9).
 
-The known B3 case `hr_salary_analysis_003/salary` remains intentionally visible: B3 selects `GENERALIZE` while the oracle accepts only `PRESERVE`. It is not tuned away.
+The known B3 case `hr_salary_analysis_003/salary` remains intentionally visible: B3 selects `GENERALIZE` while the oracle accepts only `PRESERVE`. It is not tuned away (protocol §12; re-verified at T23 freeze time — 55/56 spans converged).
 
 ## Milestone 3 — active
 
@@ -91,64 +104,282 @@ Tracker: Issue #38 — **Post-pilot protocol freeze and confirmatory-readiness**
 
 ### Required research path
 
+Scientific order (frozen by T23, protocol §14 — corrects Issue #36's earlier follow-up comment,
+which had placed T24 immediately after T23):
+
+```
+T23 → T12 → Contracts domain extensions → T24 → next B0–B4 batch
+```
+
+T22 (real provider) proceeds **in parallel** with T12/Contracts/T24: it gates authoritative
+utility/token/cost claims (protocol §9), not the Contracts corpus/oracle freeze itself.
+
 #### T23 / Issue #36 — freeze post-pilot methodology
 
-Status: **next methodological gate**.
+Status: **merged into `develop` via PR #53**.
+`docs/research/post-pilot-protocol-v1.md` (`protocol_id: post-pilot-v1`) retains
+`status: FROZEN` and its immutable candidate date. It is the current post-pilot protocol
+baseline for the M3 path on `develop`; `master` remains behind until the final feature
+integration PR.
 
-Freeze before confirmatory analysis:
+Frozen before any confirmatory analysis:
 
-- primary/secondary exposure and unnecessary-disclosure metrics;
-- interpretation of `PSEUDONYMIZE` relative to representation exposure;
-- utility-loss and performance/overhead interpretation thresholds;
-- primary B3→B4 contextual comparison procedure;
-- `hr-v1` pilot vs `hr-v2/hr-v3` reporting relationship;
-- provider/model/configuration requirements;
-- development vs held-out/confirmatory labeling;
-- statistical/descriptive analysis plan.
+- primary (ordinal/cumulative) and secondary (binary, preserved unchanged) exposure/
+  unnecessary-disclosure metrics, both computable from existing runner output; the primary
+  metric is exact per-level proportions plus the exceedance distribution
+  (`P(exposure >= PSEUDONYMIZE)`, `P(exposure >= GENERALIZE)`, `P(exposure >= PRESERVE)`),
+  never a mean of ranks. The binary secondary metric shares the first threshold's numerator but
+  uses all `NOT_REQUIRED` spans as its denominator; ordinal coverage and blocked/unscorable
+  counts make the difference explicit —
+  a mean of `level_rank` may still be reported, but only as an explicitly-caveated secondary
+  descriptive statistic, never as the primary metric;
+- interpretation of `PSEUDONYMIZE` relative to representation exposure — the primary metric
+  reads the existing ordered ladder (`REMOVE < PSEUDONYMIZE < GENERALIZE < PRESERVE`,
+  `experiments/scoring/exposure.py`) rather than redefining it, and preserves that ladder's
+  ordinal (not interval) semantics;
+- utility-loss and performance/overhead **interpretation rules** (no numeric threshold could
+  be justified from pilot-scale evidence without reverse-engineering it from that evidence, so
+  none was invented — see the protocol's §6.4/§7.5);
+- primary B3→B4 contextual comparison procedure — the five `hr-v2`/`hr-v3` matrix cells
+  (`purpose_salary`, `requester_role_salary`, `requester_role_department`,
+  `provider_class_employee_name`, `policy_version_compensation_review`) are frozen as primary;
+  the main `hr-v1` pairwise is frozen as secondary/historical (protocol §8);
+- provider/model/configuration requirements for an authoritative run, plus the no-silent-
+  fallback rule (protocol §9);
+- development vs held-out/confirmatory labeling, including the Contracts transition gate
+  (protocol §1–§2, with T12 stabilization required before the Contracts *confirmatory* freeze
+  and T22 proceeding in parallel to both);
+- statistical/descriptive analysis plan — paired, descriptive-only at current sample size, no
+  significance ritual the corpus size cannot support, and no specific inferential method
+  (bootstrap or otherwise) pre-selected for any future round (protocol §10).
 
-T23 must not tune B3/B4, frozen HR policies, the frozen corpus or M2 artifacts to improve pilot numbers.
+T23 did not tune B3/B4, frozen HR policies, the frozen corpus or M2 artifacts to improve pilot
+numbers. Two small support additions back the document: a closed protocol-id registry and
+validator (`experiments/post_pilot_protocol.py`) whose runner/manifest integration is deferred,
+and a regression test pinning that the M2 binary metric
+still counts `PSEUDONYMIZE` as transmitted (`tests/test_post_pilot_protocol.py`). The
+ordinal/cumulative primary metric's aggregation is specified formally in the protocol but its
+implementation in `experiments/aggregation.py` is explicitly deferred to the task that executes
+the next confirmatory batch; the runner today reports only the binary rate via
+`TreatmentSummary`, plus separate existing rank-based logic
+(`aggregation._exposure_rank_sum`) used only for the secondary/historical B3→B4 pairwise's
+`exposure_direction`. That legacy rank sum assumes uniform spacing and is not a confirmatory
+ordinal claim or this primary metric.
 
 #### T22 / Issue #30 — real provider
 
-Status: **promoted after M2; may proceed in parallel with T23**.
+Status: **implemented; in validation in an open PR to `develop`**.
 
-Implement at least one real provider behind the existing narrow `Provider` protocol. Required before authoritative claims about:
+An Anthropic Messages API adapter (`providers/anthropic_api.py`, `AnthropicProvider`) now
+implements the existing narrow `Provider` protocol, behind a new optional `anthropic`
+dependency extra. Operational reference: [`docs/provider-configuration.md`](provider-configuration.md).
 
-- actual LLM task utility;
-- provider tokens;
-- external API cost;
-- genuine provider/provider-class behavior.
+Delivered:
 
-Provider/model/scaffolding/decoding configuration must be frozen under the T23 protocol before confirmatory comparison.
+- one real adapter on the unchanged `ProviderRequest(payload, task)` boundary, invoked only
+  through `invoke_provider`;
+- opt-in selection (`ADG_PROVIDER=anthropic`); **`FakeProvider` remains the default
+  everywhere** — TDD, CI, offline development, deterministic regression and the
+  pilot/development corpora are unaffected. **Fixed under review:** any other non-empty,
+  unrecognized value (e.g. a typo) now raises `ProviderConfigurationError` instead of
+  silently falling back to `FakeProvider`;
+- native transport timeout on the SDK client, with the caller-side deadline
+  (`invoke_provider`'s `timeout`) now **derived from it** on the real-provider path
+  (`providers.caller_timeout_for_provider`, native timeout + a fixed, documented grace) rather
+  than defaulting independently. **Fixed under review:** the default caller-side deadline
+  (30s) was previously shorter than the default native transport timeout (60s) on the
+  scientific/runner path (`execute_case`/`run_pilot`), so the caller could give up before the
+  transport did; the live integration test's manual `+10s` workaround is now the shared,
+  versioned helper every real-provider caller uses;
+- a model-id allowlist (`settings.SUPPORTED_ANTHROPIC_MODEL_IDS`, currently just
+  `claude-opus-5`, the default). **Fixed under review:** `AnthropicProviderConfig` previously
+  accepted any `model_id` string, which would have let an unvalidated model silently inherit
+  this adapter's "no sampling parameters" provenance claim; a model id outside the allowlist
+  now raises `ProviderConfigurationError` at construction;
+- `base_url` override **forbidden**. **Fixed under review:** a `base_url_overridden` boolean
+  was insufficient provenance (two batches could both say `true` and still have hit different
+  backends); any non-`None` `base_url` (including via `ADG_ANTHROPIC_BASE_URL`) now raises
+  `ProviderConfigurationError` at construction, and `configuration_record()` states the fixed
+  `base_url_policy` instead of a flag;
+- no retry (`max_retries=0` pinned by test — the SDK retries twice by default) and no
+  fallback of any kind, including the server-side `fallbacks` parameter, which is
+  deliberately not enabled because a silent model switch would break the frozen-configuration
+  requirement;
+- real usage metadata (`input_tokens`, `output_tokens`, cache token counts) carried into the
+  runner schema, `None` under FakeProvider so "usage unavailable" stays distinguishable from
+  zero;
+- `model_snapshot` recorded from the serving model or as the explicit
+  `model_snapshot_unavailable` sentinel — never synthesized;
+- a freezable configuration record (`AnthropicProvider.configuration_record()`) covering the
+  protocol §9.3 fields, shaped for `artifacts.write_pilot_artifacts(reproducibility=...)`;
+- runner integration through an optional `provider` argument on `run_pilot` /
+  `run_case_for_treatment` — the smallest point that lets one controlled batch use one
+  provider configuration.
+
+Known limitation, recorded rather than worked around: `temperature`/`top_p`/`top_k` were
+removed on current models and return HTTP 400, so **bit-exact decoding determinism is not
+configurable**. `decoding_config` records `temperature: null` plus
+`sampling_parameters_supported: false` rather than a fabricated `temperature: 0.0`; what is
+frozen is `max_tokens`, thinking mode and `output_config.effort`.
+
+Deliberately not delivered: no cost/pricing table (a report says *cost unavailable*), no
+change to scientific scoring, and no reinterpretation of the FakeProvider
+information-sufficiency proxy as real-response utility — protocol §6.3/§9.2 keep those
+distinct, and resolving that is a later methodological step, not part of T22.
+
+Live smoke test: **pending** — no credential was available in the implementing environment.
+Every adapter path is validated offline against a fake SDK client, and the drift tests run
+against the really installed SDK (`anthropic` 1.5.0) without network or credential.
+
+Provider/model/scaffolding/decoding configuration must still be frozen under the T23 protocol
+before confirmatory comparison; T22 delivers the readiness, not the freeze.
 
 T22 is also consumed by the advisor-facing demo when available. FakeProvider remains sufficient to build/test the demo shell, but a real-provider mode is preferred before sharing the demo broadly with prospective advisors.
 
 #### T12 / Issue #9 — Docling ingestion
 
-Status: **gate released after M2; may proceed in parallel**.
+Status: **merged into `develop` via PR #55** (merge commit
+`776e683a49818db35021bb62315dfc1ed7fb00ab`, validated feature head
+`3c93f3297515c99c6fccd4c5e705f1e77cfada78`, real Docling 2.126.0 PDF/DOCX/XLSX validation).
+Issue #9 is closed.
 
 Docling is ingestion infrastructure only. Keep a normalized internal document representation independent from Docling APIs and keep parser behavior constant across B0–B4.
 
-Direct normalized text remains the canonical parser-independent control path.
+Direct normalized text remains the canonical parser-independent control path. The T12 slice
+extends the existing `NormalizedContent` ingestion boundary so direct text, UTF-8 text files
+and Docling-backed document files all reach the core as project-owned canonical text with
+parser/ingestion provenance.
+
+**Delivered:** a generic, parser-independent ingestion/normalization boundary — canonical
+`NormalizedContent.text`, project-owned `NormalizedBlock` / `ParsedDocument`, text/heading/table
+structure with offsets where reliable, a replaceable `DocumentParser`, Docling isolated in
+`application/ingestion.py`, uniform size limits with early rejection, no-leak-sanitized parser
+exceptions, and the same normalized representation reused across B0–B4. The boundary also emits
+`parser_name` / `parser_version` / `ingestion_version` provenance on `NormalizedContent`;
+recording these fields for a comparable scientific batch is already governed by
+`docs/research/post-pilot-protocol-v1.md` §13.2's `parser_ingestion_version` requirement, owned
+by the task that runs that batch (T24 / Issue #37), not by T12 itself.
+
+**Deliberately NOT delivered:** Contracts-specific semantic interpretation — party/role,
+obligations, deadlines, penalties, amounts and the relation-preserving requirements later
+scoring needs. That scope was split out to Issue #56 (Contracts domain extensions); T24 / Issue
+#37 continues to own the Contracts corpus/oracle and the evaluation evidence.
+
+#### Issue #56 — Contracts domain extensions
+
+Status: **complete** — merged into `develop` via PR #59, merge commit
+`5a67c30daab68d06bbd16d1cf06433de97245910`.
+
+Freezes the minimum development-time Contracts domain support needed before the T24 corpus is
+inspected at treatment-result level. `NormalizedContent.text` remains canonical and parser
+behavior remains constant across B0–B4; Issue #56 does not create or freeze the Contracts v1
+corpus itself — that remains T24.
+
+**Freeze artifact:** [`docs/contracts-policy-matrix.md`](contracts-policy-matrix.md), alongside
+`configs/policies/contracts-v1.yaml`. This follows the project's existing freeze pattern (a
+policy `version:` string plus a prose matrix), the same one `docs/hr-policy-matrix.md` uses for
+the HR pilot. It is authoritative for the frozen Contracts category set, detector behaviour,
+policy actions, B3 action spaces, generalization strategies, relation semantics and the known
+limitations T24 must build its corpus around.
+
+Frozen category set (eight, of which `cnpj` and `cpf` were reused unchanged): `party_name`,
+`representative_name`, `cnpj`, `cpf`, `bank_account`, `contract_value`, `penalty_amount`,
+`deadline`. `obligation` and `confidential_clause` were deliberately dropped rather than
+implemented — see the matrix for why. Obligation *assignment* is preserved structurally by the
+detector's role-in-label / identity-in-value split plus the vault's per-value pseudonym
+stability; no relation model was added.
+
+Also fixed here: every policy model now rejects unknown keys, so an unimplemented governance
+knob can no longer be silently dropped from a policy YAML (it fails the document closed
+instead).
+
+**Known non-semantic T24 change (now delivered):** `corpus/models.py` hardcoded an HR-only
+category `Literal`, so a Contracts corpus could not be expressed. That was corpus schema work
+owned by T24 / Issue #37, not treatment semantics, and was deliberately not implemented by
+Issue #56. T24 delivered it as per-domain registries (`corpus-case-schema-v2`).
 
 #### T24 / Issue #37 — Contracts v1 validation corpus
 
-Status: **new second-domain evaluation task; depends methodologically on T23**.
+Status: **in validation** — implemented and under review in a PR to `develop`.
 
-T24 is deliberately separate from T12:
+T24 is deliberately separate from both T12 and Issue #56 — the three-way split:
 
-- T12 = document ingestion/normalization infrastructure;
+- T12 = document ingestion/normalization infrastructure (generic, parser-independent, merged);
+- Issue #56 = development-time Contracts domain support (categories/policies/generalization strategies);
 - T24 = frozen Contracts corpus/oracle and evaluation evidence.
 
-If Contracts requires new categories/policies/generalization strategies, those extensions must be frozen before a held-out corpus is inspected at treatment-result level, or the resulting run must remain development evidence.
+If Contracts requires new categories/policies/generalization strategies, those extensions must be frozen (Issue #56) before a held-out corpus is inspected at treatment-result level, or the resulting run must remain development evidence.
+
+**Delivered:** `corpus/contracts/v1/` — 12 synthetic cases across six task families, with
+`SCHEMA.md` and `README.md` mirroring the HR corpus's structure and freeze rule; the
+per-domain corpus schema extension (`corpus-case-schema-v2`); the oracle's new
+`obligation_relations` field recording "who owes what to whom" in role terms, scoring-only and
+pinned isolated both structurally and behaviorally; `scripts/run_contracts_v1_pilot.py`; and a
+controlled B0–B4 execution over the corpus with `FakeProvider`, whose artifacts and freeze
+record live under `artifacts/experiments/contracts/v1/`.
+
+**Run classification: `pilot_development`**, decided by the project owner before the corpus
+existed and before any B0–B4 Contracts result had been produced or inspected. This corpus is
+therefore **not confirmatory evidence**. `contracts/v1` was subsequently authored, run under
+B0–B4 and **inspected** — its results were read to validate end-to-end execution and to derive
+the findings below. Per `docs/research/post-pilot-protocol-v1.md` §1 (the same rule that makes
+`corpus/hr/v1` permanently `pilot_development`), held-out status turns on a dataset's *history*
+relative to the treatments/metrics being judged, not on whether its files are currently
+immutable — so `contracts/v1` is **permanently ineligible** for `held_out_confirmatory`. The
+corpus and oracle are frozen and versioned regardless; that freeze preserves reproducibility
+and lets it keep serving as development, regression, documentation and pilot evidence, but it
+does not confer held-out eligibility. A future confirmatory Contracts round requires a newly
+authored, independently frozen corpus not previously inspected against the evaluated
+treatments/metrics.
+
+**Post-hoc wording correction (no result changed).** The committed run manifest's
+`reproducibility.run_classification_note` string
+(`artifacts/experiments/contracts/v1/954ffae9f6e143d6af45e4842f6daef9/manifest.json`)
+originally implied this corpus could still become a future held-out artifact; that wording was
+corrected in this same PR to state the permanent-ineligibility position above. Only the note
+string changed — the run id, every timestamp, every count, every result and
+`run_classification` itself (still `pilot_development`) are byte-identical to the original run;
+nothing was re-executed.
+
+**Follow-up, documentation only (not implemented here).** Finding 1 below (the GENERALIZE
+decidability gap) needs a *methodological* revision, not a retune of this corpus: a future
+`post-pilot-v2` could define utility decidability per generalization type (e.g. a date-aware
+rule alongside the existing numeric-band rule). Only after such a protocol revision should a
+new, confirmatory-eligible Contracts corpus be authored — per the permanent-ineligibility
+position above, it could not reuse `contracts/v1`. Neither `post-pilot-v2` nor a Contracts v2
+corpus is created by this PR.
+
+**Nothing frozen by Issue #56 changed**: no category, detector rule, policy document, B3 action
+space, generalization strategy or treatment definition was touched, and no metric frozen by
+`post-pilot-v1` was added or redefined.
+
+**Findings recorded, not fixed** (see `corpus/contracts/v1/README.md`):
+
+- `experiments/scoring/utility.py`'s GENERALIZE decidability rule is numeric-band-specific, so a
+  month-coarsened deadline (`2026-02`) is parsed as a numeric band and scored `answerable`. The
+  conformance oracle catches the same loss; the utility dimension reads it optimistically.
+  Changing it is a metric change frozen by `post-pilot-v1` and needs a protocol version.
+- `contracts-v1` preserves `deadline` unconditionally, so B4 is nonconformant on the six spans
+  where the task does not need it — the documented, identifiable B3→B4 cell in the
+  under-studied direction.
+- B2's task- and policy-independent map pseudonymizes `cnpj`/`cpf` where `contracts-v1` and the
+  oracle both require REMOVE; a measured property of B2 meeting a domain whose identifiers are
+  publicly resolvable, and part of the gap B4 closes.
+- Detection is 72/72 with no false positives, a property of the corpus's labeled-line format,
+  not evidence about detector quality — the same threat to validity `corpus/hr/v1` records.
+- All of the above was measured against `FakeProvider`; no real-LLM utility, token or cost claim
+  is supported until T22 / Issue #30 lands.
 
 ### Milestone 3 closure criterion
 
 M3 closes when:
 
-1. post-pilot metrics/thresholds/comparison/provider rules are frozen;
+1. post-pilot metrics/thresholds/comparison/provider rules are frozen on `develop` via PR #53,
+   `docs/research/post-pilot-protocol-v1.md`;
 2. a real provider is available behind the shared boundary;
-3. structured Contracts ingestion is available without becoming a treatment variable;
+3. structured Contracts ingestion is available without becoming a treatment variable ✅ (T12,
+   merged via PR #55 — the ingestion/normalization boundary itself; Contracts-specific semantic
+   interpretation is tracked separately by Issue #56 and by T24 / Issue #37, not by this criterion);
 4. Contracts v1 corpus/oracle is frozen with its run classification decided before result inspection;
 5. the next B0–B4 batch can start without post-result treatment/policy/metric tuning.
 
@@ -193,7 +424,7 @@ browser -> Next.js -> HTTP API -> Python application/core -> B0–B4 -> provider
 
 ### T20 / Issue #28 — application boundary + CLI/HTTP/MCP
 
-Status: **first vertical slice in review (PR open) / non-blocking for M3**.
+Status: **T20 demo integration: in validation** (PR open against `develop`). The earlier vertical slices (application boundary, HTTP API, CLI, comparison surface) are merged; the demo-integration slice described under *Demo-integration slice* below is the one under review.
 
 For the advisor demo, HTTP API is the first required adapter. CLI and MCP should share the same application service but do not need to block the first hosted URL.
 
@@ -227,17 +458,39 @@ This is an **explanatory surface, not an evaluation surface**: it never touches 
 | CLI | delivered |
 | MCP | pending |
 
+#### Demo-integration slice — in validation
+
+The gate Issue #41 calls *Gate A*: connect capabilities that already existed into one contract-analysis flow.
+
+```text
+multipart HTTP upload -> T12 normalized ingestion -> NormalizedContent
+  -> Contracts governance preset (domain=contracts, policy_version=contracts-v1)
+  -> B4 — Policy-governed preview -> server-signed confirmation
+  -> confirmed execute (re-uploaded, re-verified) -> configured provider
+  -> local reconstruction
+```
+
+- `POST /documents/preview` and `POST /documents/execute` — `multipart/form-data` routes taking `file`, `task`, `document_type`, optional `analysis_mode` and optional `strategy`. PDF/DOCX/TXT/MD (and XLSX, which rides the same T12 path) reach the ingestion boundary as bytes; the response schemas are the existing `PreviewResponse`/`ExecuteResponse`, unchanged. `GET /documents/types` exposes the caller-facing vocabulary so a UI never hardcodes it.
+- `application/presets.py` — the server-owned allowlist that turns `(document_type, analysis_mode)` into a `GovernanceOverrides`. `document_type` is required on every upload, so an uploaded contract can never fall through to the deployer's HR default; an unregistered document type or an unlisted analysis mode is refused. A preset never sets `provider_class` or any lifecycle identifier.
+- `DisclosureApplicationService.build_document_request` — the one entry point an upload adapter uses; it has no `governance` parameter, so an adapter cannot supply a domain/policy version/purpose of its own. The service also takes an injectable `document_parser`, keeping the T12 adapter replaceable and the test suite offline.
+- `api/limits.py` — a pure ASGI request-body ceiling (`ADG_MAX_UPLOAD_BYTES`, default 8 MiB) enforced before any route or body parser runs, on both the declared `Content-Length` and the streamed byte count. It is deliberately below `ingestion.MAX_INPUT_BYTES` (10 MiB) so the HTTP boundary is the binding one for an upload.
+- `application/settings.build_default_service` — now builds the provider through `providers.build_provider_from_env`, and derives the default `GovernanceContext.provider_class` from that provider. `ADG_PROVIDER=anthropic` therefore works in a deployment without hand-injecting a custom service, with `provider_class = external_llm`; `FakeProvider` stays the default and an unrecognized value fails closed.
+- `application/preview_confirmation.py` — the server-signed proof binding one execute to the preview a reviewer approved. Added during review of this slice, which found that `/documents/preview` and `/documents/execute` were two unrelated requests: a client could preview under `recommended`/B4 and execute the same upload under `strategy=b0`, so what reached the provider need not have been what was reviewed. `/documents/execute` now requires the token the matching preview issued, re-computes the approved state from the re-uploaded request, and refuses any divergence before the provider call. HMAC-SHA256 (standard library), stateless — no database, cache, session or stored document — keyed by `ADG_PREVIEW_CONFIRMATION_SECRET`, which a deployment wired to an external provider must configure or it refuses to start. Bound: normalized document, task, document type, resolved analysis mode, resolved governance, strategy/treatment, provider class and the external payload; content is bound as *keyed* digests, so the token itself discloses nothing.
+- B0 — Direct is not executable against a provider outside the trust boundary through `/documents/execute`, and fails closed before the provider call. A product/demo-surface rule only: B0's experimental semantics, its role as the unsafe control, and its visibility in preview and comparison are unchanged, and the T10 runner never passes through this surface.
+
+Uploads stay ephemeral: bytes are read into memory, handed to ingestion and never written to disk.
+
 #### Deliberately still out
 
-MCP adapter, multipart/binary upload, execute-based/utility-aware B0–B4 comparison, real-provider mode (T22 / Issue #30), authentication and rate limiting.
+MCP adapter, execute-based/utility-aware B0–B4 comparison, image/OCR ingestion, authentication and rate limiting, generic provider/model selection.
 
 #### Scientific state unchanged
 
-This slice adds no treatment, policy, corpus, oracle or metric semantics. B0–B4, the frozen HR corpus, `hr-v1`/`hr-v2`/`hr-v3`, the M2 artifacts and every experimental metric are untouched; the application layer never reaches the oracle, and the T10 scoring modules are not imported by it.
+This slice adds no treatment, policy, corpus, oracle or metric semantics. B0–B4, the frozen HR corpus, `hr-v1`/`hr-v2`/`hr-v3`, `contracts-v1`, the M2 artifacts and every experimental metric are untouched; the application layer never reaches the oracle, and the T10 scoring modules are not imported by it. The demo-integration slice added no policy rule, no detector rule and no corpus material — its Contracts fixtures are the existing synthetic development fixtures under `tests/`, and nothing under `corpus/` was read or modified.
 
 ### T21 / Issue #29 — Next.js advisor-facing UI
 
-Status: **fourth vertical slice in validation (PR open) / non-blocking for M3**. T21 is NOT complete — see "Deliberately not in the fourth slice" below.
+Status: **fourth vertical slice completed and integrated into `master`** (PR #51 into `develop`, then PR #52 `develop` → `master`) / non-blocking for M3. T21/Issue #29 is **not** complete and stays open — see "Deliberately not in the fourth slice" below.
 
 The UI lets a reviewer select a prepared HR example or controlled text, see what crosses the trust boundary before anything is sent, receive the locally reconstructed answer, see the same content compared across all five B0–B4 strategies as a preview-only teaching surface, inspect a safe technical/operational view of the SAME execution already shown on Resultado, and — as of the fourth slice — do all of that in either pt-BR or English. It consumes T20's real HTTP API — there is no fixture phase.
 
@@ -317,11 +570,11 @@ The primary path never requires knowing B0–B4: the UI simply omits `strategy`,
 
 #### Deliberately not in the third slice
 
-The English locale, `Histórico`, `Experimentos`, `Configurações`, remaining navigation polish, T12 structured-document ingestion (PDF/DOCX/XLSX), T22 real provider, and T25 deploy.
+The English locale, `Histórico`, `Experimentos`, `Configurações`, remaining navigation polish, T20's still-pending multipart/binary upload wiring to the now-merged T12 ingestion boundary (PDF/DOCX/XLSX), T22 real provider, and T25 deploy.
 
 #### Deliberately not in the fourth slice
 
-`Histórico`, `Experimentos`, the full `Configurações` area, remaining navigation polish, locale-aware number/date/byte formatting (kept deliberately simple/out of scope for this slice), T12 structured-document ingestion (PDF/DOCX/XLSX), T22 real provider, and T25 deploy. **T21/Issue #29 stays open** pending these.
+`Histórico`, `Experimentos`, the full `Configurações` area, remaining navigation polish, locale-aware number/date/byte formatting (kept deliberately simple/out of scope for this slice), T20's still-pending multipart/binary upload wiring to the now-merged T12 ingestion boundary (PDF/DOCX/XLSX), T22 real provider, and T25 deploy. **T21/Issue #29 stays open** pending these.
 
 #### Scientific state unchanged
 
@@ -329,24 +582,155 @@ The UI adds no treatment, policy, corpus, oracle or metric semantics. It renders
 
 ### T25 / Issue #42 — containerized demo/deploy infrastructure
 
-Status: **backlog / follows functional API+UI integration / non-blocking for M3**.
+Status: **in validation via PR (feat/t25-advisor-demo-deployment -> develop)**. Hosted URL and
+live Anthropic smoke through that URL are **pending** -- neither T25 nor the Demo Track (#41)
+is complete until both exist.
 
-The current root `compose.yaml` is a development/test harness rather than deploy infrastructure: it mounts the repository and runs tests. T25 owns a distinct deployment-oriented topology.
+The current root `compose.yaml` is a development/test harness rather than deploy infrastructure: it mounts the repository and runs tests. T25 owns a distinct deployment-oriented topology, delivered as `compose.demo.yaml` plus `docker/api.Dockerfile` and `web/Dockerfile`.
 
-Required demo infrastructure includes:
+Delivered in this PR:
 
-- Python API image on the supported Python 3.13 runtime;
-- Next.js image;
-- demo/deploy compose/profile distinct from test compose;
-- service networking;
-- health/readiness checks;
-- explicit CORS/API-origin handling;
-- server-side-only provider secrets;
-- one-command local startup;
-- documented simple hosted container deployment suitable for sharing a URL;
-- core/application version provenance.
+- Python API image (`docker/api.Dockerfile`) on Python 3.13.13, multi-stage, CPU-only torch wheels, a build-time Docling model-cache prewarm step, non-root runtime user;
+- Next.js image (`web/Dockerfile`) using `output: "standalone"`, multi-stage, non-root runtime user;
+- `compose.demo.yaml`: `api` (internal-only, no published port, no volume) and `web` (one published port, depends on `api` being healthy) on a dedicated network, plus an opt-in `tls` profile (Caddy reverse proxy, the stack's only volume);
+- health/readiness checks on both services;
+- `ADG_PROVIDER` is a required compose interpolation (no silent default either way); every Anthropic/secret variable reaches `api` only, as an interpolation, never a literal;
+- `.dockerignore` (root and `web/`) excluding `.env`/`.env.*`, `.git`, `.venv`, `node_modules`, `.next` and the repository's own never-commit paths (`local-data/`, `/vault/`, `artifacts/private/`);
+- `tests/test_demo_deployment_config.py` pins the security-relevant shape of the above statically (no Docker required to run it);
+- an opt-in E2E smoke test (`tests/test_demo_smoke_e2e.py`, gated on `ADG_DEMO_SMOKE_BASE_URL`) drives the web origin's `/api/documents/{types,preview,execute}` with synthetic PDF/DOCX contracts.
 
 The target is a small research-demo deployment, not desktop distribution, installers, multi-tenant SaaS or production-scale orchestration.
+
+### T26 / Issue #67 — export the disclosed representation with sealed restore handles
+
+Status: **in validation** (open PR to `develop`, reconciled with T25 / Issue #42's merged demo deployment; not demo-critical, not on the scientific critical path).
+
+Lets a caller take a disclosed representation of a document (the same `external_payload` `POST /documents/preview` already returns) outside the gateway and, later, restore its pseudonyms locally through an explicit, sealed restore handle. Design decisions in `docs/adr/0002-deferred-restore-handles.md`.
+
+- `application/restore_handle.py`: stateless AES-256-GCM (via `cryptography`) sealed envelope, key derived with HKDF-SHA256 from `ADG_RESTORE_HANDLE_SECRET`, domain-separated from the preview-confirmation secret. No server-side retention — a handle carries only the `(pseudonym -> original)` entries present in one export, `v`/`iat`/`exp`, padded to a fixed bucket so its length does not reveal exact original lengths.
+- `DisclosureApplicationService.export`/`.restore`: `export` runs the same decision phase `preview` runs (never the provider) and refuses a `BLOCK_REQUEST` outcome; `restore` replaces only the pseudonyms a handle recognizes in arbitrary submitted text, reporting `restored_count`/`unresolved_count`, never the mapping.
+- No ephemeral-key mode (unlike preview confirmation): an unset `ADG_RESTORE_HANDLE_SECRET` still starts the service and leaves every other route working, but export/restore themselves fail closed (`RestoreUnavailableError`, HTTP 503, non-zero CLI exit).
+- HTTP: `POST /documents/export` (multipart, same fields as `/documents/preview`), `POST /documents/restore` (JSON `{text, restore_handle}`). CLI: `adg export`, `adg restore` (handle/text read from a file or stdin, never a plain argv value).
+- Not in this PR: any web proxy route or UI (T25 keeps the API internal-only behind the web proxy; export/restore are API/CLI-only until a later UI slice -- see T28 / Issue #70 below, which adds a gated web route and UI action for this same mechanism), PDF/DOCX re-rendering, any change to B2 — Reversible Pseudonymization / B3 — Task-aware / B4 — Policy-governed semantics.
+- Reconciled with T25's merged `compose.demo.yaml`: `ADG_RESTORE_HANDLE_SECRET` and `ADG_RESTORE_HANDLE_TTL_SECONDS` reach the `api` service only, both as OPTIONAL interpolations (unset = export/restore disabled with 503, no effect on any other route); `web` carries neither, and a static test pins that the hosted demo has no proxy route or reference to either path (ADR-0002). `docker/api-constraints.txt` was regenerated for `cryptography` as part of this reconciliation. `GET /ready`'s readiness check (T25) does not consult the restore-handle secret, pinned by regression tests added during reconciliation.
+
+### T27 / Issue #69 — transformation inspector for the demo
+
+Status: **in validation (open PR to `develop`, feat/t27-t28-demo-transparency)**.
+
+Adds a gated, additive `inspection` field to `DisclosurePreview` (and the HTTP/CLI preview
+contracts) showing a side-by-side original/disclosed view built from the pipeline's own
+structured output, plus a collapsed-by-default `DisclosureInspector` panel on the web Review
+screen.
+
+- Gated by `ADG_ENABLE_DEMO_TRANSPARENCY` (`application/settings.py`; unset/blank/anything but
+  exactly `"1"` after stripping is disabled). `inspection` is `null` on every response when the
+  flag is off, matching today's contract exactly; `CONTRACT_VERSION` (`t20-application-api-v1`)
+  is unchanged, since the field is additive and nullable.
+- `application/inspection.py::build_inspection` derives `segments` from
+  `resolve_overlaps(decision.spans)` zipped 1:1 against `decision.result.transformations` --
+  never a string diff -- and verifies the segments' concatenated `original`/`disclosed` values
+  reproduce the source text / `external_payload` exactly; fails closed
+  (`unavailable_reason: "blocked"` or `"alignment_failed"`) rather than emitting a partial or
+  best-effort projection. B0 — Direct falls back to one whole-text segment. No offsets on the
+  wire, only reconstructed text segments.
+- No-leak: `inspection.py` never imports `vault`, opens no OTel span of its own
+  (`tests/test_inspection_isolation.py`); the projection itself is the only place a preview
+  response widens under this flag.
+- Not in this PR: any change to detection/transformation/B0–B4 semantics, any persistence of
+  the inspection projection, any endpoint that returns more than one request's own
+  transformations.
+
+### T28 / Issue #70 — gated export/restore UI for the demo
+
+Status: **in validation (open PR to `develop`, feat/t27-t28-demo-transparency)**.
+
+Adds a web-facing, gated proxy for T26's export/restore mechanism plus an `ExportRestorePanel`
+on the Review screen, so an advisor can run the full export → simulated external use → restore
+cycle from the browser instead of the CLI.
+
+- Same `ADG_ENABLE_DEMO_TRANSPARENCY` gate as T27, checked in `web/app/api/documents/export`
+  and `.../restore` route handlers *before* anything else -- a disabled flag makes zero
+  upstream calls to the api service, and both return a fixed 404
+  (`{"detail": "not found", "kind": "DemoTransparencyDisabled"}`) when off. A third route,
+  `GET /api/demo/features` (`dynamic = "force-dynamic"`, so a container's runtime value of the
+  flag is never baked in at `next build` time), tells the web UI whether to render the panel at
+  all.
+- `web/lib/demoTransparency.ts` mirrors `application/settings.py`'s parsing rule
+  byte-identically; the flag is read server-side at request time and is deliberately never a
+  `NEXT_PUBLIC_*` build-time variable.
+- `tests/test_demo_deployment_config.py::TestWebExportRestoreIsGated` replaces T26's
+  `TestWebDoesNotExposeExportRestore` pin -- the web now has export/restore routes, so the
+  invariant worth pinning changed from "the routes do not exist" to "the routes exist but are
+  gated and check the flag first."
+- Export is upload-only in this panel (T26's HTTP export endpoint is document-only; there is no
+  paste-text export path to proxy). The restore handle lives only in React state for the
+  lifetime of the tab -- never `localStorage`/`sessionStorage`, never a URL parameter, never
+  logged.
+- Not in this PR: a Vault Explorer (delivered separately by T29 / Issue #72 below) or any
+  endpoint listing/dumping the pseudonym → original mapping; persistence of exported/restored
+  content; any change to T26's API/CLI behavior or to B2 — Reversible Pseudonymization
+  semantics; enabling this on a public unauthenticated URL (the flag exists precisely so the
+  hosted demo can keep it off).
+
+### T29 / Issue #72 — local Vault Explorer for demo/debug
+
+Status: **in validation (open PR to `develop`)**.
+
+Adds a gated, demo-only surface that lets an operator confirm, for one specific preview, exactly
+which vault entries back its reversible pseudonymization and that local reconstruction resolves
+them -- the one thing neither T27's inspector (shows what changed, never touches the vault) nor
+T28's export/restore (proves the durable handle mechanism works, scoped to one sealed handle) by
+itself demonstrates.
+
+- Gated by its own `ADG_ENABLE_DEMO_VAULT_EXPLORER` flag (`application/settings.py`,
+  `web/lib/demoVaultExplorer.ts`), parsed byte-identically to `ADG_ENABLE_DEMO_TRANSPARENCY`
+  (set AND stripped value exactly `"1"`) but fully independent of it -- enabling one never
+  enables or requires the other. Must be set on both `api` and `web`; default off on both.
+- `application/vault_explorer.py` (`VaultExplorerSealer`): on an allowed preview,
+  `issue_reference` seals an opaque `vx1.…` AES-256-GCM reference over that decision's own
+  distinct PSEUDONYMIZE `(pseudonym, category)` pairs -- never the originals, which are looked
+  up fresh from the live vault only inside `explore` -- plus the resolved `PseudonymScope` and
+  its partition key, each pseudonym re-verified against the vault at issuance time. Returns
+  `None` (never raises) for a blocked decision, a resolved `PseudonymScope.ORGANIZATION`, a
+  missing scope key, or any entry that fails re-verification. The sealing key is a fresh random
+  32-byte value generated once per process -- never derived from `ADG_RESTORE_HANDLE_SECRET` or
+  `ADG_PREVIEW_CONFIRMATION_SECRET` -- so a reference from one process is unconditionally
+  rejected by any other, and a restart invalidates every outstanding token. Fixed 900-second
+  (15-minute) TTL, not configurable. This module is the only application/api-layer code besides
+  the existing execute path allowed to call `Vault.reconstruct`, pinned by
+  `tests/test_vault_explorer_import_isolation.py`.
+- `PreviewResponse.vault_explorer_token: str | None` -- additive, nullable; `null` when the flag
+  is off, the decision is blocked, or the resolved scope is ORGANIZATION. Issued from the same
+  decision `preview()` already computed, never a second one.
+- `POST /demo/vault-explorer` (JSON `{token}` -> `{contract_version, scope, entry_count,
+  entries: [{category, pseudonym, original | null, present}]}`) resolves each entry via a point
+  lookup (`vault.reconstruct(scope, key, pseudonym)`) only -- no enumeration, no change to
+  `vault/`. Fixed 404 (`DemoVaultExplorerDisabled`) when the flag is off; fixed 400
+  (`VaultExplorerReferenceError`, one message for every rejection reason) for a malformed,
+  tampered, expired, or foreign-process token. Every response from this path -- any status --
+  carries `Cache-Control: no-store` / `Pragma: no-cache` via a dedicated path-scoped pure ASGI
+  middleware (`_NoStoreOnVaultExplorerASGIMiddleware`), not a route-local header, so a future new
+  failure mode on this path inherits the header automatically.
+- Web: `lib/demoVaultExplorer.ts` (server-only gate, never `NEXT_PUBLIC_*`),
+  `app/api/demo/vault-explorer/route.ts` (`force-dynamic`, checks the flag before any upstream
+  call, disabled and forwarded responses both carry `no-store`), `GET /api/demo/features` gains
+  `demo_vault_explorer_enabled`, and a collapsed-by-default `VaultExplorerPanel` on both the
+  Review and Result screens -- fetches only on open, masks originals until an explicit toggle,
+  and discards fetched entries on close.
+- No-leak: the only OTel spans this feature opens (`vault_explorer.issue`,
+  `vault_explorer.explore`) carry counts only (`entry_count`, `present_count`); every parser that
+  could otherwise echo attacker- or plaintext-controlled bytes into its own exception message is
+  broken from its exception with `raise ... from None`.
+- Not in this PR: any change to B0–B4 treatment semantics, the frozen HR/Contracts corpora, the
+  T10 oracle, T26's restore-handle mechanism itself, or `vault/`'s own protocol; any list-all or
+  enumeration capability; any change to `ADG_ENABLE_DEMO_TRANSPARENCY`'s own behavior.
+- Known limitations: a single-process sealing key means references issued by one `api` worker
+  fail closed on every other worker or after a load-balancer hop (unusable, not unsafe); the
+  15-minute TTL is fixed, not configurable; the demo's default SESSION scope uses a shared
+  configured `session_id` (`demo-session`), so enabling this flag on any shared/hosted deployment
+  reveals originals of submitted content to whoever can reach the web origin -- keep it off
+  outside a controlled local environment, a constraint the application cannot enforce by itself.
 
 ### Demo completion criterion
 
@@ -369,12 +753,16 @@ T22/real provider improves this substantially and should be enabled when availab
 ### Critical research path
 
 1. M2 / HR pilot ✅
-2. **T23 / Issue #36 — freeze post-pilot protocol**
-3. In parallel: **T22 real provider** + **T12 Docling/normalization**
-4. **T24 / Issue #37 — Contracts v1 corpus/oracle**
-5. Verify M3 closure / confirmatory-readiness
-6. Launch next frozen B0–B4 validation batch
-7. Only then analyze authoritative comparative results under the pre-frozen protocol
+2. **T23 / Issue #36 — freeze post-pilot protocol** ✅
+3. **T12 / Issue #9 — Docling ingestion/normalization** ✅
+4. **Issue #56 — Contracts domain extensions** ✅ (merged into `develop` via PR #59)
+5. **T24 / Issue #37 — Contracts v1 corpus/oracle** (in validation)
+6. Verify M3 closure / confirmatory-readiness
+7. Launch next frozen B0–B4 validation batch
+8. Only then analyze authoritative comparative results under the pre-frozen protocol
+
+**T22 real provider** proceeds in parallel with steps 3–7 (see T22 status above); it gates
+authoritative utility/token/cost claims, not the Contracts corpus/oracle freeze itself.
 
 ### Parallel academic path
 
@@ -394,14 +782,22 @@ This ordering is internal to the demo track and does not reorder the scientific 
 - Experimental design: `docs/experimental-design.md`
 - M2 pilot record: `docs/milestone-2-pilot.md`
 - Advisor demo plan: `docs/advisor-demo.md`
+- Contracts domain freeze: `docs/contracts-policy-matrix.md`
+- Contracts v1 corpus: `corpus/contracts/v1/README.md` (coverage, limitations, freeze rule, freeze record)
+- Contracts v1 corpus schema: `corpus/contracts/v1/SCHEMA.md`
+- HR policy matrix: `docs/hr-policy-matrix.md`
 - ADR 0001: `docs/adr/0001-milestone-1-architecture.md`
+- ADR 0002: `docs/adr/0002-deferred-restore-handles.md`
 - M2 tracker: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/32
 - T23 methodology freeze: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/36
 - T22 real provider: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/30
 - T12 Docling: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/9
+- Contracts domain extensions: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/56
 - T24 Contracts corpus: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/37
 - M3 tracker: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/38
 - Demo tracker: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/41
 - T20 CLI/API/MCP: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/28
 - T21 Next.js UI: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/29
 - T25 demo containers/deploy: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/42
+- T26 deferred restore handles: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/67
+- T29 local Vault Explorer: https://github.com/Sheliga/adaptive-disclosure-gateway/issues/72

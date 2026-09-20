@@ -12,17 +12,33 @@ reasoning, no summary building, no payload manipulation. See
 ``application/`` or the core imports ``fastapi``/``starlette`` -- the
 dependency arrow points one way only, ``api`` -> ``application`` -> core.
 
+Two input surfaces, one application boundary:
+
+- ``POST /disclosure/{preview,execute,compare}`` take JSON. ``file_content``
+  on ``DisclosureRequestBody`` is the file's *text* content, already decoded
+  client-side by the UI; it exercises the ``.txt``/``.md`` normalization path
+  and cannot carry a PDF or DOCX.
+- ``POST /documents/{preview,execute}`` take ``multipart/form-data`` and are
+  the real structured-upload path (issue #41 gate A): the binary reaches the
+  T12 ingestion boundary intact, and governance is selected by a
+  server-validated preset rather than by caller-supplied policy strings.
+  ``/documents/execute`` additionally requires the confirmation token its
+  preview issued -- the two calls are bound to each other rather than merely
+  adjacent. See their own comment block below and
+  ``application/preview_confirmation.py``.
+
+Both map onto the same ``DisclosureApplicationService`` and return the same
+response schemas; they differ in how the content and the governance arrive,
+and in nothing else.
+
 Deliberate follow-ups NOT in this slice:
 
-- multipart/binary file upload. ``file_content`` on
-  ``DisclosureRequestBody`` is the file's *text* content, already decoded
-  client-side by the UI -- this route encodes it back to UTF-8 bytes and
-  hands it to ``build_application_request`` purely so the real
-  ``.txt``/``.md`` normalization/validation path in ``application/ingestion.py``
-  is genuinely exercised, not to support a general file-upload contract.
-  A real multipart endpoint is future work, most naturally once T12/Docling
-  (issue #9) adds non-text formats.
 - API authentication/authorization and rate limiting.
+- image/OCR ingestion (issue #41 defers it explicitly while PDF/DOCX work).
+
+Request-body size is bounded by ``api/limits.RequestBodySizeLimitMiddleware``
+before any route or body parser runs -- see that module for why
+``application/ingestion.py``'s own ``MAX_INPUT_BYTES`` cannot cover this.
 
 No-leak boundary (CLAUDE.md) -- three things below exist specifically for
 this:
@@ -49,22 +65,102 @@ this:
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Annotated
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from adaptive_disclosure_gateway.api import schemas
 from adaptive_disclosure_gateway.api import settings as api_settings
+from adaptive_disclosure_gateway.api.limits import (
+    ASGIApp,
+    Message,
+    Receive,
+    RequestBodySizeLimitMiddleware,
+    Scope,
+    Send,
+)
 from adaptive_disclosure_gateway.application.contracts import (
+    DemoVaultExplorerDisabledError,
     DisclosureApplicationRequest,
     DisclosureStrategy,
+    ExportRefusedError,
+    UnsafeControlExecutionError,
 )
 from adaptive_disclosure_gateway.application.examples import ExampleNotFoundError
 from adaptive_disclosure_gateway.application.ingestion import IngestionError
+from adaptive_disclosure_gateway.application.presets import (
+    DocumentAnalysisPresetError,
+    list_document_presets,
+)
+from adaptive_disclosure_gateway.application.preview_confirmation import (
+    PreviewConfirmationError,
+)
 from adaptive_disclosure_gateway.application.requests import ContentSourceError, MissingTaskError
+from adaptive_disclosure_gateway.application.restore_handle import (
+    RestoreHandleError,
+    RestoreUnavailableError,
+)
 from adaptive_disclosure_gateway.application.service import DisclosureApplicationService
+from adaptive_disclosure_gateway.application.vault_explorer import VaultExplorerReferenceError
+
+VAULT_EXPLORER_PATH = "/demo/vault-explorer"
+
+
+_NO_STORE_HEADERS = ((b"cache-control", b"no-store"), (b"pragma", b"no-cache"))
+_NO_STORE_HEADER_NAMES = frozenset(name for name, _value in _NO_STORE_HEADERS)
+
+
+class _NoStoreOnVaultExplorerASGIMiddleware:
+    """Force ``Cache-Control: no-store`` / ``Pragma: no-cache`` on EVERY
+    response from :data:`VAULT_EXPLORER_PATH`, regardless of status code
+    (T29 / issue #72).
+
+    Deliberately a pure ASGI middleware, not a ``BaseHTTPMiddleware``
+    subclass: ``BaseHTTPMiddleware`` reconstructs the whole response (it
+    consumes the inner ASGI ``send`` into a buffered/streamed response object
+    and replays it), which forwards every request through an extra layer of
+    buffering for every route on this API just to touch headers on one path.
+    This wraps ``send`` only for requests to ``VAULT_EXPLORER_PATH`` and lets
+    everything else pass straight through untouched -- the path check below
+    is the only branch, exactly as before.
+
+    The header set is a response hook rather than being set inside the route
+    handler and each individual exception handler on purpose: a route
+    handler only runs for the 200 case, and the 404/400/413/422 paths are
+    produced by exception handlers and other middleware (in particular
+    ``RequestBodySizeLimitMiddleware``) shared with -- or, for 422,
+    identical to -- every other route on this API. Setting the header in
+    exactly one path-scoped place means a future new failure mode for this
+    route (another exception type, a different status) inherits the header
+    for free instead of depending on someone remembering to add it again.
+    Registered outermost (see ``create_app``) so a 413 produced by
+    ``RequestBodySizeLimitMiddleware`` upstream of the route handler still
+    carries the headers.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope.get("type") != "http" or scope.get("path") != VAULT_EXPLORER_PATH:
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_no_store(message: Message) -> None:
+            if message.get("type") == "http.response.start":
+                existing = message.get("headers", [])
+                kept = [
+                    (name, value)
+                    for name, value in existing
+                    if name.lower() not in _NO_STORE_HEADER_NAMES
+                ]
+                message = {**message, "headers": [*kept, *_NO_STORE_HEADERS]}
+            await send(message)
+
+        await self.app(scope, receive, send_with_no_store)
 
 
 def _build_default_service() -> DisclosureApplicationService:
@@ -109,10 +205,44 @@ def _error_response(exc: Exception, *, status_code: int) -> JSONResponse:
     return JSONResponse(status_code=status_code, content=body.model_dump())
 
 
+def _document_application_request(
+    service: DisclosureApplicationService,
+    *,
+    upload: UploadFile,
+    task: str,
+    document_type: str,
+    analysis_mode: str | None,
+    strategy: DisclosureStrategy | None,
+) -> DisclosureApplicationRequest:
+    """Map one multipart upload onto the application contract.
+
+    Reads the bytes and the client-supplied filename and hands both to
+    ``service.build_document_request``; decides nothing. In particular it
+    does NOT forward ``upload.content_type``: the filename extension is the
+    single authoritative dispatch key at the T12 boundary, and a
+    client-declared MIME type must not be able to select a parser (see
+    ``service.build_document_request``'s docstring).
+
+    The bytes are read into memory and never written to disk -- the upload
+    is ephemeral by default (issue #28/#41), and the only bound on how much
+    can arrive here is ``RequestBodySizeLimitMiddleware``, which has already
+    run by this point.
+    """
+    return service.build_document_request(
+        filename=upload.filename or "",
+        file_bytes=upload.file.read(),
+        task=task,
+        document_type=document_type,
+        analysis_mode=analysis_mode,
+        strategy=strategy or DisclosureStrategy.RECOMMENDED,
+    )
+
+
 def create_app(
     service: DisclosureApplicationService | None = None,
     *,
     allowed_origins: Sequence[str] = (),
+    max_upload_bytes: int | None = None,
 ) -> FastAPI:
     """Build the FastAPI app.
 
@@ -135,6 +265,22 @@ def create_app(
     if not resolved_origins and service is None:
         resolved_origins = api_settings.allowed_origins()
 
+    resolved_max_upload_bytes = max_upload_bytes
+    if resolved_max_upload_bytes is None:
+        resolved_max_upload_bytes = (
+            api_settings.max_upload_bytes()
+            if service is None
+            else api_settings.DEFAULT_MAX_UPLOAD_BYTES
+        )
+
+    # Added BEFORE the CORS middleware on purpose. Starlette applies the
+    # most recently added middleware outermost, so this ordering puts CORS
+    # outside the size limit -- which means the 413 a browser gets still
+    # carries the CORS headers it needs to read the status at all. The size
+    # limit still runs before the router and therefore before any body is
+    # parsed.
+    app.add_middleware(RequestBodySizeLimitMiddleware, max_bytes=resolved_max_upload_bytes)
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(resolved_origins),
@@ -142,6 +288,8 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    app.add_middleware(_NoStoreOnVaultExplorerASGIMiddleware)
 
     @app.exception_handler(RequestValidationError)
     async def _handle_validation_error(
@@ -164,17 +312,67 @@ def create_app(
     @app.exception_handler(IngestionError)
     @app.exception_handler(ContentSourceError)
     @app.exception_handler(MissingTaskError)
+    @app.exception_handler(DocumentAnalysisPresetError)
+    @app.exception_handler(PreviewConfirmationError)
+    @app.exception_handler(UnsafeControlExecutionError)
+    @app.exception_handler(ExportRefusedError)
+    @app.exception_handler(RestoreHandleError)
     async def _handle_bad_request(_request: Request, exc: Exception) -> JSONResponse:
         # Registered once, for every route, rather than repeated as a
         # per-route try/except: this is the single place a caller-input
         # error becomes an HTTP body, so the no-leak guarantee about which
         # exception messages may be surfaced (module docstring, point 2)
         # is enforced in exactly one place instead of once per endpoint.
+        # ``DocumentAnalysisPresetError`` joins this set for the same
+        # reason: its message names only the server's own supported document
+        # types/analysis modes, never the token the caller sent.
+        # ``PreviewConfirmationError`` carries one fixed constant message
+        # for every failure mode -- never the confirmation token, the
+        # recomputed state, the document, the task or the payload -- and
+        # ``UnsafeControlExecutionError`` names only the treatment class and
+        # the surface. Both are 400 rather than 200-with-an-outcome because
+        # nothing was executed at all: unlike a blocked disclosure or a
+        # failed provider call, these are refusals to run the request, not
+        # results of running it.
         return _error_response(exc, status_code=400)
+
+    @app.exception_handler(VaultExplorerReferenceError)
+    async def _handle_vault_explorer_reference_error(
+        _request: Request, exc: Exception
+    ) -> JSONResponse:
+        # T29 / issue #72. One fixed message for every rejection reason
+        # (malformed, tampered, expired, wrong-process key) -- see
+        # ``application/vault_explorer.py``'s own docstring for why. Never
+        # echoes the submitted token.
+        return _error_response(exc, status_code=400)
+
+    @app.exception_handler(DemoVaultExplorerDisabledError)
+    async def _handle_demo_vault_explorer_disabled(
+        _request: Request, _exc: Exception
+    ) -> JSONResponse:
+        # T29 / issue #72. Deliberately NOT ``_error_response`` (which would
+        # use ``type(exc).__name__`` == "DemoVaultExplorerDisabledError"):
+        # the disabled-feature body is a fixed, minimal 404 that reveals
+        # nothing about why -- indistinguishable from the route not existing
+        # at all, matching every other disabled-by-default demo surface's
+        # posture of not advertising its own existence.
+        return JSONResponse(
+            status_code=404,
+            content={"detail": "not found", "kind": "DemoVaultExplorerDisabled"},
+        )
 
     @app.exception_handler(ExampleNotFoundError)
     async def _handle_example_not_found(_request: Request, exc: Exception) -> JSONResponse:
         return _error_response(exc, status_code=404)
+
+    @app.exception_handler(RestoreUnavailableError)
+    async def _handle_restore_unavailable(_request: Request, exc: Exception) -> JSONResponse:
+        # T26 / issue #67, D2: no ADG_RESTORE_HANDLE_SECRET configured. A
+        # configuration/availability problem, not a caller mistake -- 503,
+        # distinct from every 400 above. Every other route (including
+        # /health and document preview/execute) is unaffected; only export
+        # and restore reach this handler.
+        return _error_response(exc, status_code=503)
 
     @app.exception_handler(Exception)
     async def _handle_unexpected_exception(_request: Request, _exc: Exception) -> JSONResponse:
@@ -191,6 +389,20 @@ def create_app(
     def health(request: Request) -> dict[str, object]:
         service = _get_service(request)
         return schemas.HealthResponse.from_domain(service.describe_health()).model_dump()
+
+    @app.get("/ready", response_model=None)
+    def ready(request: Request) -> JSONResponse:
+        """Purely local readiness (T25 review finding 2): no network call,
+        no provider call, no SDK client construction -- see
+        ``DisclosureApplicationService.describe_readiness``'s own docstring.
+        Distinct from ``/health`` above, which is liveness/introspection and
+        always returns 200; this returns 503 when not ready so a container
+        orchestrator's healthcheck can act on it directly.
+        """
+        service = _get_service(request)
+        readiness = service.describe_readiness()
+        body = schemas.ReadyResponse.from_domain(readiness).model_dump(exclude_none=True)
+        return JSONResponse(status_code=200 if readiness.ready else 503, content=body)
 
     @app.get("/examples", response_model=None)
     def list_examples(request: Request) -> dict[str, object]:
@@ -244,6 +456,185 @@ def create_app(
         # returns 200 either way.
         execution = service.execute(application_request)
         content = schemas.ExecuteResponse.from_domain(execution).model_dump()
+        return JSONResponse(status_code=200, content=content)
+
+    # --- structured document upload ------------------------------------------
+    #
+    # The binary entry point for the advisor contract demo (issue #41 gate
+    # A). Three routes, matching the existing /disclosure ones exactly in
+    # shape and response schema:
+    #
+    #   multipart HTTP -> service.build_document_request -> T12 ingestion
+    #     -> NormalizedContent -> the same preview/execute the JSON routes use
+    #
+    # Nothing about preview/execute/comparison/governance is reimplemented
+    # here; these routes differ from /disclosure/* in their *input* only.
+    # ``document_type`` is a required form field, so an uploaded contract can
+    # never fall through to the deployer's default (HR) governance.
+    #
+    # There is deliberately no single "upload and answer" route. Upload +
+    # preview is one request, the confirmed execute is another, and the
+    # reviewer's confirmation happens between them -- that separation is the
+    # product, not an implementation detail. The cost is that the file is
+    # uploaded twice for a confirmed run; the alternative is server-side
+    # retention of the uploaded document between the two calls, which is
+    # exactly what "no persistent storage of uploaded source documents by
+    # default" forbids.
+    #
+    # Two separate requests are not by themselves a review step, though.
+    # Until the preview confirmation existed, a client could preview under
+    # `recommended`/B4 and execute the same upload under `strategy=b0`: the
+    # separation was there and the guarantee was not. `/documents/preview`
+    # therefore issues a server-signed token over what it showed, and
+    # `/documents/execute` requires it and re-computes that state from its
+    # own request before the provider is reachable. The binding lives in the
+    # application layer (`application/preview_confirmation.py` and
+    # `DisclosureApplicationService.{preview,execute}_document`); these
+    # routes only carry the token, exactly as this adapter carries
+    # everything else.
+
+    @app.get("/documents/types", response_model=None)
+    def list_document_types(_request: Request) -> dict[str, object]:
+        """The caller-facing upload vocabulary, so a UI never hardcodes it.
+
+        Pure data from ``application/presets.py``; exposes no policy
+        version, domain or role -- see ``schemas.DocumentTypeModel``.
+        """
+        return schemas.DocumentTypesResponse.from_domain(list_document_presets()).model_dump()
+
+    @app.post("/documents/preview", response_model=None)
+    def preview_document(
+        request: Request,
+        file: Annotated[UploadFile, File()],
+        task: Annotated[str, Form()],
+        document_type: Annotated[str, Form()],
+        analysis_mode: Annotated[str | None, Form()] = None,
+        strategy: Annotated[DisclosureStrategy | None, Form()] = None,
+    ) -> JSONResponse:
+        """The review half of preview -> confirm -> execute.
+
+        Returns the same review the JSON routes return, plus the
+        ``confirmation_token`` the matching ``/documents/execute`` requires.
+        The token is what makes the two stateless calls one flow -- see
+        ``application/preview_confirmation.py``.
+        """
+        service = _get_service(request)
+        application_request = _document_application_request(
+            service,
+            upload=file,
+            task=task,
+            document_type=document_type,
+            analysis_mode=analysis_mode,
+            strategy=strategy,
+        )
+
+        document_preview = service.preview_document(application_request)
+        content = schemas.DocumentPreviewResponse.from_document_preview(
+            document_preview
+        ).model_dump()
+        return JSONResponse(status_code=200, content=content)
+
+    @app.post("/documents/execute", response_model=None)
+    def execute_document(
+        request: Request,
+        file: Annotated[UploadFile, File()],
+        task: Annotated[str, Form()],
+        document_type: Annotated[str, Form()],
+        confirmation_token: Annotated[str, Form()],
+        analysis_mode: Annotated[str | None, Form()] = None,
+        strategy: Annotated[DisclosureStrategy | None, Form()] = None,
+    ) -> JSONResponse:
+        """The confirmed half of preview -> confirm -> execute.
+
+        ``confirmation_token`` is REQUIRED, and is the whole reason this
+        route is not simply "preview, but also call the provider". The
+        service re-normalizes the re-uploaded file, re-resolves the
+        governance and the treatment, recomputes the state that would be
+        disclosed, and only then checks the token against it. Any divergence
+        from the approved review -- a different document, task, analysis
+        mode, strategy, resolved policy or provider class -- is refused
+        before the provider is contacted.
+
+        Like ``POST /disclosure/execute``, a blocked request or a failed
+        provider call is a legitimate outcome recorded on the result, not an
+        HTTP error: this returns 200 in those cases. A failed confirmation
+        is different in kind -- nothing was executed at all -- and is a 400
+        through ``PreviewConfirmationError``.
+        """
+        service = _get_service(request)
+        application_request = _document_application_request(
+            service,
+            upload=file,
+            task=task,
+            document_type=document_type,
+            analysis_mode=analysis_mode,
+            strategy=strategy,
+        )
+
+        execution = service.execute_document(
+            application_request, confirmation_token=confirmation_token
+        )
+        content = schemas.ExecuteResponse.from_domain(execution).model_dump()
+        return JSONResponse(status_code=200, content=content)
+
+    # --- export / deferred restore (T26 / issue #67) --------------------------
+    #
+    # /documents/export: same multipart form shape as /documents/preview
+    # (reusing _document_application_request unchanged), plus a sealed
+    # restore handle for the disclosed representation it returns.
+    # /documents/restore: JSON body, independent of the document surface --
+    # a handle carries everything restore needs, so this route requires
+    # neither a re-upload nor any governance field.
+    #
+    # Neither route ever calls a provider, and neither requires (or checks)
+    # a preview confirmation -- that mechanism binds preview to a provider
+    # call, which export never makes.
+
+    @app.post("/documents/export", response_model=None)
+    def export_document(
+        request: Request,
+        file: Annotated[UploadFile, File()],
+        task: Annotated[str, Form()],
+        document_type: Annotated[str, Form()],
+        analysis_mode: Annotated[str | None, Form()] = None,
+        strategy: Annotated[DisclosureStrategy | None, Form()] = None,
+    ) -> JSONResponse:
+        service = _get_service(request)
+        application_request = _document_application_request(
+            service,
+            upload=file,
+            task=task,
+            document_type=document_type,
+            analysis_mode=analysis_mode,
+            strategy=strategy,
+        )
+
+        export = service.export(application_request)
+        content = schemas.ExportResponse.from_domain(export).model_dump()
+        return JSONResponse(status_code=200, content=content)
+
+    @app.post("/documents/restore", response_model=None)
+    def restore_document(body: schemas.RestoreRequestBody, request: Request) -> JSONResponse:
+        service = _get_service(request)
+        restored = service.restore(text=body.text, restore_handle=body.restore_handle)
+        content = schemas.RestoreResponse.from_domain(restored).model_dump()
+        return JSONResponse(status_code=200, content=content)
+
+    # --- demo vault explorer (T29 / issue #72) ---------------------------------
+    #
+    # Local, debug-only surface: opens a sealed reference a prior preview
+    # issued and resolves its entries against this service's own vault.
+    # Disabled -> 404 (DemoVaultExplorerDisabledError, handled above);
+    # malformed/tampered/expired/foreign-process token -> 400
+    # (VaultExplorerReferenceError, handled above). Every response from this
+    # route additionally carries Cache-Control: no-store / Pragma: no-cache
+    # via ``_NoStoreOnVaultExplorerMiddleware`` above, on every status code.
+
+    @app.post(VAULT_EXPLORER_PATH, response_model=None)
+    def explore_vault(body: schemas.VaultExplorerRequestBody, request: Request) -> JSONResponse:
+        service = _get_service(request)
+        view = service.explore_vault(body.token)
+        content = schemas.VaultExplorerResponse.from_domain(view).model_dump()
         return JSONResponse(status_code=200, content=content)
 
     return app

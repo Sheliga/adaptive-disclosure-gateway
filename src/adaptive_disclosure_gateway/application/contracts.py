@@ -194,13 +194,40 @@ class GovernanceOverrides:
 
 
 @dataclass(frozen=True)
+class DocumentRequestDescriptor:
+    """The caller-facing selection an uploaded document was analysed under.
+
+    Carried on the request so the preview-confirmation fingerprint can bind
+    what the *caller asked for* (``document_type``/``analysis_mode``) and not
+    only what the server resolved it to. The two are not interchangeable: a
+    future preset could map two document types onto one governance
+    configuration, and an approval of one must not authorise the other.
+
+    ``analysis_mode`` is always the resolved mode -- never ``None`` -- so a
+    preview that accepted the preset's default and an execute that named
+    that same mode explicitly describe one state rather than two.
+    """
+
+    document_type: str
+    analysis_mode: str
+
+
+@dataclass(frozen=True)
 class DisclosureApplicationRequest:
-    """The single input shape both ``preview`` and ``execute`` accept."""
+    """The single input shape both ``preview`` and ``execute`` accept.
+
+    ``document`` is set only by ``build_document_request`` (the structured
+    upload path) and stays ``None`` for pasted text, ``.txt``/``.md`` files
+    and prepared examples. It is what distinguishes a request that must
+    carry a preview confirmation from one on the historical ``/disclosure/*``
+    surface, which is unchanged by that mechanism.
+    """
 
     content: NormalizedContent
     task: str
     strategy: DisclosureStrategy = DisclosureStrategy.RECOMMENDED
     governance: GovernanceOverrides = field(default_factory=GovernanceOverrides)
+    document: DocumentRequestDescriptor | None = None
 
 
 class DisclosureOutcome(StrEnum):
@@ -293,10 +320,73 @@ class ProviderMode:
 
 
 @dataclass(frozen=True)
+class DisclosureInspectionSegment:
+    """One contiguous slice of the source text for the T27 / issue #69
+    visual diff/inspector, in source order: either untouched (``action`` and
+    ``category`` both ``None``, ``original == disclosed``) or the result of
+    exactly one ``Transformation`` (``action``/``category`` mirror that
+    transformation, ``original`` is the detected span's own value,
+    ``disclosed`` is what actually crossed the trust boundary for it --
+    ``""`` for ``DisclosureAction.REMOVE``, never ``None``).
+
+    Never carries anything beyond what ``decision.result`` already produced:
+    no rule identifier, no policy reasoning text, no vault/pseudonym mapping
+    -- see ``application/inspection.py``'s module docstring for the
+    alignment this is projected from and why a mismatch fails the whole
+    projection closed rather than guessing.
+    """
+
+    action: DisclosureAction | None
+    category: str | None
+    original: str
+    disclosed: str
+
+
+@dataclass(frozen=True)
+class DisclosureInspection:
+    """The T27 / issue #69 visual diff/inspector projection of one
+    disclosure decision: ``segments``, in source order, reconstruct the
+    original text (``original``, concatenated) and the disclosed payload
+    (``disclosed``, concatenated) alike -- see
+    ``application/inspection.py::build_inspection`` for the construction and
+    verification this guarantees.
+
+    ``available`` is ``False`` -- with ``segments`` empty -- for a blocked
+    decision (``unavailable_reason="blocked"``, never echoing the original
+    text a blocked decision has no disclosed representation for) or when the
+    decision's own structured metadata does not align with the source text
+    closely enough to project safely (``unavailable_reason="alignment_failed"``,
+    the fail-closed outcome for any other unresolved mismatch -- never a
+    best-effort guess, and never a raised exception).
+    """
+
+    available: bool
+    unavailable_reason: Literal["blocked", "alignment_failed"] | None
+    segments: tuple[DisclosureInspectionSegment, ...]
+
+
+@dataclass(frozen=True)
 class DisclosurePreview:
     """The "review before sending" result: everything about what would
     happen, plus the exact payload that would cross the trust boundary --
     without ever calling a provider.
+
+    ``inspection`` is ``None`` whenever the demo transparency surface (T27 /
+    issue #69, gated by ``ADG_ENABLE_DEMO_TRANSPARENCY`` -- see
+    ``application/settings.py``) is disabled for this service; it is
+    populated only by ``preview``/``preview_document`` when that flag is on,
+    never by ``export``/``execute``/``execute_document``/
+    ``compare_strategies`` -- see ``service.py``'s own docstring.
+
+    ``vault_explorer_token`` (T29 / issue #72) is ``None`` unless the demo
+    vault explorer surface (gated by ``ADG_ENABLE_DEMO_VAULT_EXPLORER`` --
+    independent of the transparency flag above) is enabled AND this
+    decision is ``"allowed"``. It is an opaque, sealed reference (see
+    ``application/vault_explorer.py``) a caller sends back unchanged to
+    ``DisclosureApplicationService.explore_vault`` -- never a mapping, a
+    scope key, or anything else that would let the token itself carry a
+    sensitive value. Populated only by ``preview``/``preview_document``,
+    exactly like ``inspection``.
     """
 
     summary: DisclosureSummary
@@ -306,6 +396,52 @@ class DisclosurePreview:
     strategy: DisclosureStrategy
     governance: SafeGovernanceView
     provider_mode: ProviderMode
+    inspection: DisclosureInspection | None = None
+    vault_explorer_token: str | None = None
+
+
+@dataclass(frozen=True)
+class DocumentDisclosurePreview:
+    """A structured-document preview plus the server-signed proof of what
+    was reviewed.
+
+    A separate type rather than an optional field on ``DisclosurePreview``:
+    the historical ``/disclosure/preview`` surface does not have (or need) a
+    confirmation, and giving it a permanently-null ``confirmation_token``
+    would change its contract for every existing caller to describe a
+    mechanism that does not apply to it. See
+    ``application/preview_confirmation.py``.
+    """
+
+    preview: DisclosurePreview
+    confirmation_token: str
+
+
+class UnsafeControlExecutionError(Exception):
+    """Raised when an unsafe-control treatment (B0 -- Direct) is asked to
+    execute an uploaded document against a provider outside the trust
+    boundary.
+
+    A product/demo-surface rule, not an experimental one. B0's experimental
+    semantics are untouched and it stays fully visible in preview and in the
+    B0-B4 comparison; what it must not do is send an advisor's untransformed
+    document across the organizational boundary. This is the same stance
+    ``compare_strategies`` already takes when it refuses to execute any
+    comparison entry.
+
+    Its message names the treatment class and the surface only -- never the
+    document, the task or the payload.
+    """
+
+
+class DemoVaultExplorerDisabledError(Exception):
+    """Raised by ``DisclosureApplicationService.explore_vault`` when the demo
+    vault explorer surface (``ADG_ENABLE_DEMO_VAULT_EXPLORER``, T29 / issue
+    #72) is not enabled for this service -- checked and raised BEFORE the
+    submitted token is opened at all, so a disabled deployment never even
+    attempts to decrypt caller-supplied bytes. Its message names the surface
+    only, never the token.
+    """
 
 
 @dataclass(frozen=True)
@@ -323,6 +459,65 @@ class DisclosureExecution:
     strategy: DisclosureStrategy
     governance: SafeGovernanceView
     total_ms: float
+
+
+class ExportRefusedError(Exception):
+    """Raised when ``DisclosureApplicationService.export`` is asked to
+    export a request whose disclosure decision is not ``"allowed"`` (T26 /
+    issue #67) -- a ``BLOCK_REQUEST`` outcome, or any other case where
+    ``preview`` would not have produced a disclosed representation at all.
+
+    Export exists to hand a caller the SAME disclosed representation
+    ``preview`` already shows them, plus a restore handle for it -- there is
+    nothing to export for a request that never produced one. Its message
+    names the surface only, never the document, the task, or which category
+    caused the block (that detail already exists, safely, on the ordinary
+    preview response).
+    """
+
+
+@dataclass(frozen=True)
+class DisclosureExport:
+    """The result of ``DisclosureApplicationService.export`` (T26 / issue
+    #67): the same disclosed representation ``preview``/``execute`` would
+    show, plus a stateless, sealed restore handle for it.
+
+    ``external_payload`` is exactly ``DisclosurePreview.external_payload``
+    for the same input -- see that field's own docstring for why returning
+    it is the product, not a leak. ``restore_handle`` is an opaque,
+    self-contained envelope (see ``application/restore_handle.py``); this
+    service never retains anything server-side to make it work later.
+    ``restorable_count`` is the number of pseudonym entries the handle
+    actually carries -- zero for B0 -- Direct and B1 -- Static Sanitization,
+    which never pseudonymize anything, and for any category a treatment
+    removed or generalized instead.
+    """
+
+    external_payload: str
+    restore_handle: str
+    expires_at: int
+    restorable_count: int
+    treatment: Treatment
+    strategy: DisclosureStrategy
+    governance: SafeGovernanceView
+
+
+@dataclass(frozen=True)
+class DisclosureRestore:
+    """The result of ``DisclosureApplicationService.restore`` (T26 / issue
+    #67): the submitted text with every pseudonym the handle recognizes
+    replaced by its original, plus two counts -- never the mapping, and
+    never an original for a pseudonym absent from the submitted text.
+
+    ``unresolved_count`` is the number of pseudonym-shaped tokens present in
+    the submitted text that this handle does NOT know about -- e.g. because
+    they belong to a different document's export. They are left untouched in
+    ``restored_text``, never reported individually.
+    """
+
+    restored_text: str
+    restored_count: int
+    unresolved_count: int
 
 
 @dataclass(frozen=True)

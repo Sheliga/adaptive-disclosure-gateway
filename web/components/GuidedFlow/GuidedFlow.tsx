@@ -38,14 +38,25 @@ import { useEffect, useReducer, useState } from "react";
 
 import {
   compareStrategies,
+  executeDocument,
   executeDisclosure,
+  getDemoFeatures,
+  getDocumentTypes,
   getExamples,
   getHealth,
   previewDisclosure,
+  previewDocument,
   type DisplayError,
 } from "@/lib/api";
-import type { ExampleSummary } from "@/lib/contracts";
-import { buildRequestBody, flowReducer, initialFlowState, type ComposeState } from "@/lib/flow";
+import type { DocumentType, ExampleSummary } from "@/lib/contracts";
+import {
+  buildDocumentFormData,
+  buildRequestBody,
+  flowReducer,
+  initialFlowState,
+  type ComposeState,
+  type FlowState,
+} from "@/lib/flow";
 import type { ProviderModeState } from "@/lib/providerMode";
 import { LocaleProvider } from "@/i18n/LocaleProvider";
 import { useCopy } from "@/i18n/useLocale";
@@ -74,7 +85,34 @@ function GuidedFlowShell() {
   const [state, dispatch] = useReducer(flowReducer, initialFlowState);
   const [examples, setExamples] = useState<ExampleSummary[] | null>(null);
   const [examplesError, setExamplesError] = useState<DisplayError | null>(null);
+  const [documentTypes, setDocumentTypes] = useState<DocumentType[] | null>(null);
+  const [documentTypesError, setDocumentTypesError] = useState<DisplayError | null>(null);
   const [health, setHealth] = useState<ProviderModeState>({ status: "loading" });
+  // T28 / issue #70. A UX convenience only, never a security decision --
+  // see ReviewScreen's docstring and lib/demoTransparency.ts's own gate,
+  // which is what actually decides whether export/restore requests are
+  // ever forwarded upstream. Any failure or invalid body from
+  // getDemoFeatures is treated as disabled, same posture as `health`.
+  const [demoTransparencyEnabled, setDemoTransparencyEnabled] = useState(false);
+  // T29 / issue #72. Same posture, read from the SAME single features
+  // fetch below rather than a second request -- see
+  // `lib/demoVaultExplorer.ts`'s own gate, which is what actually decides
+  // whether the vault explorer route ever forwards a request upstream.
+  const [demoVaultExplorerEnabled, setDemoVaultExplorerEnabled] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    getDemoFeatures().then((result) => {
+      if (cancelled) {
+        return;
+      }
+      setDemoTransparencyEnabled(result.ok && result.data.demo_transparency_enabled);
+      setDemoVaultExplorerEnabled(result.ok && result.data.demo_vault_explorer_enabled);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -86,6 +124,50 @@ function GuidedFlowShell() {
       // "loading" -- the whole point of the three-state value is that the
       // screen can tell "we could not check" from "we have not checked yet".
       setHealth(result.ok ? { status: "ready", health: result.data } : { status: "unavailable" });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (
+      state.screen !== "compose" ||
+      state.compose.documentType !== null ||
+      documentTypes === null
+    ) {
+      return;
+    }
+    const primary =
+      documentTypes.find((item) => item.document_type === "contract") ?? documentTypes[0];
+    if (primary) {
+      dispatch({
+        type: "SET_DOCUMENT_TYPE",
+        documentType: primary.document_type,
+        analysisMode: primary.default_analysis_mode,
+      });
+    }
+  }, [state, documentTypes]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getDocumentTypes().then((result) => {
+      if (cancelled) return;
+      if (!result.ok) {
+        setDocumentTypesError(result.error);
+        return;
+      }
+      setDocumentTypes(result.data.document_types);
+      const primary =
+        result.data.document_types.find((item) => item.document_type === "contract") ??
+        result.data.document_types[0];
+      if (primary) {
+        dispatch({
+          type: "SET_DOCUMENT_TYPE",
+          documentType: primary.document_type,
+          analysisMode: primary.default_analysis_mode,
+        });
+      }
     });
     return () => {
       cancelled = true;
@@ -114,6 +196,16 @@ function GuidedFlowShell() {
 
   async function handleSubmitCompose(compose: ComposeState) {
     dispatch({ type: "SUBMIT_COMPOSE" });
+    if (compose.mode === "upload") {
+      const result = await previewDocument(buildDocumentFormData(compose), copy);
+      if (result.ok) {
+        const { confirmation_token, ...preview } = result.data;
+        dispatch({ type: "PREVIEW_SUCCEEDED", preview, confirmationToken: confirmation_token });
+      } else {
+        dispatch({ type: "PREVIEW_FAILED", error: result.error });
+      }
+      return;
+    }
     const body = buildRequestBody(compose);
     // `copy` is the CURRENT locale's table, read from this render's closure
     // -- never a dependency of an effect, so switching locale never
@@ -127,8 +219,33 @@ function GuidedFlowShell() {
     }
   }
 
-  async function handleConfirmReview(compose: ComposeState) {
+  async function handleConfirmReview(review: Extract<FlowState, { screen: "review" }>) {
     dispatch({ type: "CONFIRM_REVIEW" });
+    if (review.compose.mode === "upload") {
+      if (review.confirmationToken === null) {
+        dispatch({
+          type: "EXECUTE_FAILED",
+          error: { message: copy.errors.previewExpired, kind: "PreviewConfirmationError", fields: null },
+          requiresNewPreview: true,
+        });
+        return;
+      }
+      const result = await executeDocument(
+        buildDocumentFormData(review.compose, review.confirmationToken),
+        copy,
+      );
+      if (result.ok) {
+        dispatch({ type: "EXECUTE_SUCCEEDED", execute: result.data });
+      } else {
+        dispatch({
+          type: "EXECUTE_FAILED",
+          error: result.error,
+          requiresNewPreview: result.error.kind === "PreviewConfirmationError",
+        });
+      }
+      return;
+    }
+    const compose = review.compose;
     const body = buildRequestBody(compose);
     const result = await executeDisclosure(body, copy);
     if (result.ok) {
@@ -147,6 +264,17 @@ function GuidedFlowShell() {
    */
   async function handleRequestComparison(compose: ComposeState) {
     dispatch({ type: "REQUEST_COMPARISON" });
+    if (compose.mode === "upload") {
+      dispatch({
+        type: "COMPARE_FAILED",
+        error: {
+          message: copy.errors.comparisonUnavailableForUpload,
+          kind: "UnsupportedDocumentComparison",
+          fields: null,
+        },
+      });
+      return;
+    }
     const body = buildRequestBody(compose);
     const result = await compareStrategies(body, copy);
     if (result.ok) {
@@ -173,6 +301,8 @@ function GuidedFlowShell() {
             submitError={state.submitError}
             examples={examples}
             examplesError={examplesError}
+            documentTypes={documentTypes}
+            documentTypesError={documentTypesError}
             dispatch={dispatch}
             onSubmit={() => handleSubmitCompose(state.compose)}
           />
@@ -180,10 +310,19 @@ function GuidedFlowShell() {
 
         {state.screen === "previewing" && (
           <ProcessingStatus
-            stages={[
-              copy.processingStages.detectingSensitiveData,
-              copy.processingStages.applyingDisclosurePolicy,
-            ]}
+            stages={
+              state.compose.mode === "upload"
+                ? [
+                    copy.processingStages.readingFile,
+                    copy.processingStages.analyzingDocument,
+                    copy.processingStages.detectingSensitiveData,
+                    copy.processingStages.applyingDisclosurePolicy,
+                  ]
+                : [
+                    copy.processingStages.detectingSensitiveData,
+                    copy.processingStages.applyingDisclosurePolicy,
+                  ]
+            }
           />
         )}
 
@@ -191,8 +330,11 @@ function GuidedFlowShell() {
           <ReviewScreen
             preview={state.preview}
             executeError={state.executeError}
-            onConfirm={() => handleConfirmReview(state.compose)}
+            onConfirm={() => handleConfirmReview(state)}
             onCancel={() => dispatch({ type: "CANCEL_REVIEW" })}
+            compose={state.compose}
+            demoTransparencyEnabled={demoTransparencyEnabled}
+            demoVaultExplorerEnabled={demoVaultExplorerEnabled}
           />
         )}
 
@@ -210,6 +352,8 @@ function GuidedFlowShell() {
             onRestart={() => dispatch({ type: "RESTART" })}
             onCompareStrategies={() => handleRequestComparison(state.compose)}
             onViewTechnicalDetails={() => dispatch({ type: "OPEN_TECHNICAL_DETAILS" })}
+            demoVaultExplorerEnabled={demoVaultExplorerEnabled}
+            vaultExplorerToken={state.preview.vault_explorer_token}
           />
         )}
 

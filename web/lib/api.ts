@@ -38,20 +38,33 @@
 
 import type {
   CompareResponse,
+  DemoFeaturesResponse,
   DisclosureRequestBody,
+  DocumentPreviewResponse,
+  DocumentTypesResponse,
   ExamplesResponse,
   ExecuteResponse,
+  ExportResponse,
   HealthResponse,
   PreviewResponse,
+  RestoreResponse,
+  VaultExplorerResponse,
 } from "./contracts";
+import { apiPath } from "./basePath";
 import type { AppCopy } from "./copy";
 import { copy as defaultCopy } from "./copy";
 import {
   isCompareResponse,
+  isDemoFeaturesResponse,
+  isDocumentPreviewResponse,
+  isDocumentTypesResponse,
   isExamplesResponse,
   isExecuteResponse,
+  isExportResponse,
   isHealthResponse,
   isPreviewResponse,
+  isRestoreResponse,
+  isVaultExplorerResponse,
   type ResponseGuard,
 } from "./responseGuards";
 
@@ -110,6 +123,9 @@ function genericError(appCopy: AppCopy): DisplayError {
 }
 
 async function toDisplayError(response: Response, appCopy: AppCopy): Promise<DisplayError> {
+  if (response.status === 413) {
+    return { message: appCopy.errors.fileTooLarge, kind: "RequestTooLarge", fields: null };
+  }
   let parsed: unknown;
   try {
     parsed = await response.json();
@@ -126,7 +142,31 @@ async function toDisplayError(response: Response, appCopy: AppCopy): Promise<Dis
   }
 
   if (isErrorResponseShape(parsed)) {
-    return { message: parsed.detail, kind: parsed.kind, fields: null };
+    const known: Record<string, string> = {
+      IngestionError: appCopy.errors.documentParsing,
+      DocumentAnalysisPresetError: appCopy.errors.invalidAnalysisMode,
+      PreviewConfirmationError: appCopy.errors.previewExpired,
+      UpstreamUnreachable: appCopy.errors.upstreamUnreachable,
+      // T27/T28 (issues #69-#70): the demo transparency gate and T26's
+      // export/restore refusal kinds. Every one of these carries a fixed,
+      // safe `detail` from the Python side already (CLAUDE.md's no-leak
+      // invariant), but this app still prefers its own copy over the raw
+      // upstream string for the same reason every other kind above does --
+      // consistent phrasing/locale, and one fewer place a future upstream
+      // wording change could surface unreviewed prose to the user.
+      DemoTransparencyDisabled: appCopy.errors.demoTransparencyDisabled,
+      ExportRefusedError: appCopy.errors.exportRefused,
+      RestoreUnavailableError: appCopy.errors.restoreUnavailable,
+      RestoreHandleInvalidError: appCopy.errors.restoreHandleInvalid,
+      RestoreHandleExpiredError: appCopy.errors.restoreHandleExpired,
+      // T29 / issue #72: the demo vault explorer gate and reference-token
+      // refusal kinds -- same posture as every kind above, a fixed, safe
+      // `detail` already (CLAUDE.md's no-leak invariant), replaced with this
+      // app's own copy for consistent phrasing/locale.
+      DemoVaultExplorerDisabled: appCopy.errors.demoVaultExplorerDisabled,
+      VaultExplorerReferenceError: appCopy.errors.vaultExplorerReferenceInvalid,
+    };
+    return { message: known[parsed.kind] ?? parsed.detail, kind: parsed.kind, fields: null };
   }
 
   // Parsed fine but matches neither contract this app trusts -- fail
@@ -182,11 +222,41 @@ async function requestJson<T>(
 }
 
 export function getHealth(appCopy: AppCopy = defaultCopy): Promise<ApiResult<HealthResponse>> {
-  return requestJson("/api/health", isHealthResponse, undefined, appCopy);
+  return requestJson(apiPath("/api/health"), isHealthResponse, undefined, appCopy);
 }
 
 export function getExamples(appCopy: AppCopy = defaultCopy): Promise<ApiResult<ExamplesResponse>> {
-  return requestJson("/api/examples", isExamplesResponse, undefined, appCopy);
+  return requestJson(apiPath("/api/examples"), isExamplesResponse, undefined, appCopy);
+}
+
+export function getDocumentTypes(
+  appCopy: AppCopy = defaultCopy,
+): Promise<ApiResult<DocumentTypesResponse>> {
+  return requestJson(apiPath("/api/documents/types"), isDocumentTypesResponse, undefined, appCopy);
+}
+
+export function previewDocument(
+  form: FormData,
+  appCopy: AppCopy = defaultCopy,
+): Promise<ApiResult<DocumentPreviewResponse>> {
+  return requestJson(
+    apiPath("/api/documents/preview"),
+    isDocumentPreviewResponse,
+    { method: "POST", body: form },
+    appCopy,
+  );
+}
+
+export function executeDocument(
+  form: FormData,
+  appCopy: AppCopy = defaultCopy,
+): Promise<ApiResult<ExecuteResponse>> {
+  return requestJson(
+    apiPath("/api/documents/execute"),
+    isExecuteResponse,
+    { method: "POST", body: form },
+    appCopy,
+  );
 }
 
 export function previewDisclosure(
@@ -194,7 +264,7 @@ export function previewDisclosure(
   appCopy: AppCopy = defaultCopy,
 ): Promise<ApiResult<PreviewResponse>> {
   return requestJson(
-    "/api/disclosure/preview",
+    apiPath("/api/disclosure/preview"),
     isPreviewResponse,
     {
       method: "POST",
@@ -210,7 +280,7 @@ export function executeDisclosure(
   appCopy: AppCopy = defaultCopy,
 ): Promise<ApiResult<ExecuteResponse>> {
   return requestJson(
-    "/api/disclosure/execute",
+    apiPath("/api/disclosure/execute"),
     isExecuteResponse,
     {
       method: "POST",
@@ -234,12 +304,94 @@ export function compareStrategies(
   appCopy: AppCopy = defaultCopy,
 ): Promise<ApiResult<CompareResponse>> {
   return requestJson(
-    "/api/disclosure/compare",
+    apiPath("/api/disclosure/compare"),
     isCompareResponse,
     {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
+    },
+    appCopy,
+  );
+}
+
+/**
+ * T27/T28 (issues #69-#70). Whether the export/restore UI should render at
+ * all -- a UX convenience only, never a security decision: the route
+ * handlers this app calls for the actual export/restore requests
+ * (`exportDocument`/`restoreText` below) re-check the same server-side gate
+ * independently, per request, regardless of what this call last reported.
+ * A failure here (including an invalid body) is therefore always safe to
+ * treat as "disabled" -- see `GuidedFlow`, which does exactly that.
+ */
+export function getDemoFeatures(
+  appCopy: AppCopy = defaultCopy,
+): Promise<ApiResult<DemoFeaturesResponse>> {
+  return requestJson(apiPath("/api/demo/features"), isDemoFeaturesResponse, undefined, appCopy);
+}
+
+/**
+ * T28 / issue #70. Upload-only, mirroring T26's HTTP export route itself
+ * (`POST /documents/export` takes the same multipart document shape as
+ * `/documents/preview` -- no plain-text/example variant, and no
+ * confirmation token). `lib/flow.ts`'s `buildDocumentFormData` builds the
+ * exact same `FormData` this call needs, reused unchanged.
+ */
+export function exportDocument(
+  form: FormData,
+  appCopy: AppCopy = defaultCopy,
+): Promise<ApiResult<ExportResponse>> {
+  return requestJson(
+    apiPath("/api/documents/export"),
+    isExportResponse,
+    { method: "POST", body: form },
+    appCopy,
+  );
+}
+
+/**
+ * T28 / issue #70. `body.restore_handle` is the opaque handle
+ * `exportDocument` returned; `body.text` is whatever the caller pasted or
+ * imported (e.g. a simulated external response containing pseudonym-shaped
+ * tokens). Neither this function nor anything it calls ever inspects,
+ * decodes, or logs the handle -- it is forwarded to the proxy route
+ * byte-identical, exactly like every other request body in this module.
+ */
+export function restoreText(
+  body: { text: string; restore_handle: string },
+  appCopy: AppCopy = defaultCopy,
+): Promise<ApiResult<RestoreResponse>> {
+  return requestJson(
+    apiPath("/api/documents/restore"),
+    isRestoreResponse,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    appCopy,
+  );
+}
+
+/**
+ * T29 / issue #72. `token` is the opaque `vault_explorer_token` a preview
+ * issued (`PreviewResponse.vault_explorer_token`); this function forwards it
+ * unchanged in the JSON body, never in a URL or query string -- see
+ * `app/api/demo/vault-explorer/route.ts`, the gated proxy this calls.
+ * Neither this function nor anything it calls inspects, decodes, or logs
+ * the token.
+ */
+export function exploreVault(
+  token: string,
+  appCopy: AppCopy = defaultCopy,
+): Promise<ApiResult<VaultExplorerResponse>> {
+  return requestJson(
+    apiPath("/api/demo/vault-explorer"),
+    isVaultExplorerResponse,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token }),
     },
     appCopy,
   );

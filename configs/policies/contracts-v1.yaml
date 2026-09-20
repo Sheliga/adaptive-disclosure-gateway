@@ -1,24 +1,101 @@
+# contracts-v1 (Issue #56): the frozen Contracts domain-support policy.
+#
+# THIS FILE IS THE FREEZE ARTIFACT. Together with
+# docs/contracts-policy-matrix.md it records exactly what T24 / Issue #37 may
+# rely on being stable while it builds the Contracts v1 corpus and oracle.
+# The `version:` string plus a prose matrix is the project's existing freeze
+# mechanism (see configs/policies/hr-v*.yaml and docs/hr-policy-matrix.md);
+# no new mechanism was invented for Contracts.
+#
+# The version string stays `contracts-v1` deliberately. An earlier,
+# aspirational `contracts-v1` existed before Issue #56 but was never
+# functional: not one of its categories had a detection rule, an entry in any
+# treatment's action map, or a generalization strategy, so every Contracts
+# request detected nothing, and it additionally carried a top-level
+# `semantic_constraints:` block that PolicyDocument silently dropped. It was
+# never referenced by any corpus, oracle or experimental run, so nothing
+# depends on its previous contents and there is no evidence to protect -- the
+# freeze point for `contracts-v1` is this ticket, not its former shape. The
+# dropped `semantic_constraints:` keys are gone and the fail-open behaviour
+# that hid them is fixed at the model (`extra="forbid"` in policies.py); the
+# guarantees they gestured at are now real, enforced structurally by the
+# detector's role-in-label / identity-in-value split and pinned by
+# tests/test_contracts_domain.py.
+#
+# No rule below was derived from any Contracts case, sample_id, task family
+# or oracle field: no Contracts corpus exists yet. `pseudonym_scope` is
+# deliberately omitted -- it is a separate governance axis from per-category
+# disclosure action (the same separation hr-v2/hr-v3 keep), the model default
+# (session scope, no role ceilings) is well defined, and inventing Contracts
+# role vocabulary here would add a dimension nothing needs yet. It can be
+# added later without touching a single category's semantics.
 version: contracts-v1
 domain: contracts
 rules:
+  # A contracting party is normally a legal entity, so its name is usually
+  # not personal data -- but it is commercially confidential, and it is the
+  # anchor of every obligation in the document. PSEUDONYMIZE keeps the
+  # obligation graph readable (stable, distinct references per party) while
+  # disclosing no identity. Both role labels map here; the role itself
+  # survives in the payload because it is part of the detector's label, not
+  # of the detected value.
   party_name:
     default: pseudonymize
+  # A signatory / legal representative IS a natural person, so this is
+  # personal data under LGPD. Same action as party_name today, kept as a
+  # separate category because the two are different legal objects and a
+  # future policy must be able to move one without the other.
   representative_name:
     default: pseudonymize
-  tax_id:
+  # Tax identifiers reuse the categories the detector already has. There is
+  # no `tax_id` category: a company registry number is a `cnpj` and a natural
+  # person's is a `cpf`, and inventing a third name for the same information
+  # type would have produced a rule that never fires.
+  #
+  # REMOVE rather than PSEUDONYMIZE, and this is load-bearing: a CNPJ
+  # identifies a company far more precisely than its name does and is
+  # publicly resolvable, so preserving it alongside a pseudonymized
+  # party_name would make the pseudonym decorative.
+  cnpj:
     default: remove
+  cpf:
+    default: remove
+  # Payment credentials have no legitimate reason to cross an external-LLM
+  # boundary in any form, reversible or not.
   bank_account:
     default: block_request
-  confidential_value:
+  # The negotiated total. Task-dependent: a summarization task needs its
+  # order of magnitude, an audit may need the figure itself. `financial_audit`
+  # is the one purpose permitted to preserve it exactly.
+  contract_value:
     default: task_dependent
-  obligation:
-    default: preserve
+    allowed_actions:
+      - remove
+      - generalize
+    purpose_actions:
+      financial_audit:
+        - remove
+        - generalize
+        - preserve
+  # Penalty amounts are governed separately from the contract value on
+  # purpose. They are a different order of magnitude (hence a different
+  # band), and separating them is what lets a task ask about the penalty
+  # regime without thereby disclosing what the contract is worth -- with one
+  # merged category that discrimination is impossible.
+  penalty_amount:
+    default: task_dependent
+    allowed_actions:
+      - remove
+      - generalize
+    purpose_actions:
+      compliance_review:
+        - remove
+        - generalize
+        - preserve
+  # A hard PRESERVE, and the one place this policy is deliberately MORE
+  # disclosing than B3 -- Task-aware would be on its own. A legal deadline
+  # coarsened to a month is not a term of a contract; "sometime in March"
+  # cannot be complied with or enforced. Dates are also weak identifiers
+  # compared with the categories above. See docs/contracts-policy-matrix.md.
   deadline:
     default: preserve
-  penalty:
-    default: task_dependent
-  confidential_clause:
-    default: task_dependent
-semantic_constraints:
-  preserve_party_roles: true
-  preserve_obligation_assignment: true

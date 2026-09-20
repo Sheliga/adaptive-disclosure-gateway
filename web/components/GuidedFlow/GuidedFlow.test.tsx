@@ -4,8 +4,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resetVolatileLocaleForTests } from "@/i18n/LocaleProvider";
 import { readStoredLocale } from "@/i18n/localeStorage";
-import { compareStrategies, executeDisclosure, getExamples, getHealth, previewDisclosure } from "@/lib/api";
-import type { CompareResponse, ExecuteResponse, HealthResponse, PreviewResponse } from "@/lib/contracts";
+import {
+  compareStrategies,
+  executeDocument,
+  executeDisclosure,
+  getDemoFeatures,
+  getDocumentTypes,
+  getExamples,
+  getHealth,
+  previewDisclosure,
+  previewDocument,
+} from "@/lib/api";
+import type { CompareResponse, DocumentPreviewResponse, ExecuteResponse, HealthResponse, PreviewResponse } from "@/lib/contracts";
 import { copy } from "@/lib/copy";
 import { en } from "@/lib/copy.en";
 
@@ -14,15 +24,23 @@ import { GuidedFlow } from "./GuidedFlow";
 vi.mock("@/lib/api", () => ({
   getHealth: vi.fn(),
   getExamples: vi.fn(),
+  getDocumentTypes: vi.fn(),
+  getDemoFeatures: vi.fn(),
   previewDisclosure: vi.fn(),
   executeDisclosure: vi.fn(),
+  previewDocument: vi.fn(),
+  executeDocument: vi.fn(),
   compareStrategies: vi.fn(),
 }));
 
 const mockedGetHealth = vi.mocked(getHealth);
 const mockedGetExamples = vi.mocked(getExamples);
+const mockedGetDocumentTypes = vi.mocked(getDocumentTypes);
+const mockedGetDemoFeatures = vi.mocked(getDemoFeatures);
 const mockedPreviewDisclosure = vi.mocked(previewDisclosure);
 const mockedExecuteDisclosure = vi.mocked(executeDisclosure);
+const mockedPreviewDocument = vi.mocked(previewDocument);
+const mockedExecuteDocument = vi.mocked(executeDocument);
 const mockedCompareStrategies = vi.mocked(compareStrategies);
 
 function healthResponse(deterministicDemoMode = true): HealthResponse {
@@ -74,6 +92,8 @@ function previewResponse(): PreviewResponse {
       requested_pseudonym_scope: "session",
     },
     provider_mode: { provider_class: "FakeProvider" },
+    inspection: null,
+    vault_explorer_token: null,
   };
 }
 
@@ -199,6 +219,108 @@ beforeEach(() => {
         },
       ],
     },
+  });
+  mockedGetDocumentTypes.mockResolvedValue({
+    ok: true,
+    data: {
+      contract_version: "t20-application-api-v1",
+      document_types: [
+        {
+          document_type: "contract",
+          analysis_modes: ["contract_summary", "financial_audit", "compliance_review"],
+          default_analysis_mode: "contract_summary",
+        },
+      ],
+    },
+  });
+  // Disabled by default -- every existing test in this file that never
+  // overrides this mock is exactly the "features disabled" regression test
+  // for T28's gating.
+  mockedGetDemoFeatures.mockResolvedValue({ ok: true, data: { demo_transparency_enabled: false, demo_vault_explorer_enabled: false } });
+});
+
+describe("GuidedFlow -- confirmed structured contract flow", () => {
+  it("uploads the same PDF twice and executes only after explicit review confirmation", async () => {
+    const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
+    const documentPreview: DocumentPreviewResponse = {
+      ...previewResponse(),
+      confirmation_token: "opaque.confirmation.token",
+    };
+    mockedPreviewDocument.mockResolvedValue({ ok: true, data: documentPreview });
+    mockedExecuteDocument.mockResolvedValue({ ok: true, data: executeResponse() });
+
+    render(<GuidedFlow />);
+    await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
+    await userEvent.click(screen.getByRole("radio", { name: copy.entryModes.uploadFile }));
+
+    const file = new File([new Uint8Array([0x25, 0x50, 0x44, 0x46])], "synthetic-contract.pdf", {
+      type: "application/pdf",
+    });
+    await userEvent.upload(screen.getByLabelText(copy.newTest.uploadFieldLabel), file);
+    await userEvent.type(
+      screen.getByLabelText(copy.newTest.taskLabel),
+      "Quais são as principais obrigações e prazos?",
+    );
+    await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+
+    await screen.findByRole("heading", { name: copy.review.heading });
+    expect(mockedPreviewDocument).toHaveBeenCalledTimes(1);
+    expect(mockedExecuteDocument).not.toHaveBeenCalled();
+    expect(document.body).not.toHaveTextContent("opaque.confirmation.token");
+    expect(JSON.stringify(consoleLog.mock.calls)).not.toContain("opaque.confirmation.token");
+    expect(Object.values(window.localStorage)).not.toContain("opaque.confirmation.token");
+
+    const previewForm = mockedPreviewDocument.mock.calls[0][0];
+    expect(previewForm.get("file")).toBe(file);
+    expect(previewForm.get("document_type")).toBe("contract");
+    expect(previewForm.get("analysis_mode")).toBe("contract_summary");
+
+    await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+    await screen.findByRole("heading", { name: copy.result.heading });
+
+    const executeForm = mockedExecuteDocument.mock.calls[0][0];
+    expect(executeForm.get("file")).toBe(file);
+    expect(executeForm.get("task")).toBe(previewForm.get("task"));
+    expect(executeForm.get("document_type")).toBe(previewForm.get("document_type"));
+    expect(executeForm.get("analysis_mode")).toBe(previewForm.get("analysis_mode"));
+    expect(executeForm.get("confirmation_token")).toBe("opaque.confirmation.token");
+    expect(document.body).not.toHaveTextContent("opaque.confirmation.token");
+  });
+
+  it("cancelling, editing, and submitting again requires a new preview token", async () => {
+    mockedPreviewDocument
+      .mockResolvedValueOnce({
+        ok: true,
+        data: { ...previewResponse(), confirmation_token: "first-token" },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: { ...previewResponse(), confirmation_token: "second-token" },
+      });
+    mockedExecuteDocument.mockResolvedValue({ ok: true, data: executeResponse() });
+
+    render(<GuidedFlow />);
+    await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
+    await userEvent.click(screen.getByRole("radio", { name: copy.entryModes.uploadFile }));
+    await userEvent.upload(
+      screen.getByLabelText(copy.newTest.uploadFieldLabel),
+      new File(["synthetic"], "contract.docx"),
+    );
+    const task = screen.getByLabelText(copy.newTest.taskLabel);
+    await userEvent.type(task, "Resuma o contrato");
+    await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+    await screen.findByRole("heading", { name: copy.review.heading });
+
+    await userEvent.click(screen.getByRole("button", { name: copy.review.backToCompose }));
+    await userEvent.clear(screen.getByLabelText(copy.newTest.taskLabel));
+    await userEvent.type(screen.getByLabelText(copy.newTest.taskLabel), "Liste os prazos");
+    await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+    await screen.findByRole("heading", { name: copy.review.heading });
+    await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+
+    await waitFor(() => expect(mockedExecuteDocument).toHaveBeenCalledTimes(1));
+    expect(mockedPreviewDocument).toHaveBeenCalledTimes(2);
+    expect(mockedExecuteDocument.mock.calls[0][0].get("confirmation_token")).toBe("second-token");
   });
 });
 
@@ -681,5 +803,132 @@ describe("GuidedFlow -- no sensitive information reaches the DOM because of the 
     await switchToEnglish();
 
     expect(screen.queryByText(/SESSION_SECRET_MARKER/)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * T28 / issue #70: `getDemoFeatures` is fetched once, up front, and its
+ * result (or absence of a successful one) gates whether the export/restore
+ * panel renders on Revisão at all. Every OTHER test in this file relies on
+ * the `beforeEach` default (`{ demo_transparency_enabled: false, demo_vault_explorer_enabled: false }`) and is
+ * therefore itself a "disabled" regression test; these are the explicit
+ * ones plus the "request fails" and "enabled" cases.
+ */
+describe("GuidedFlow -- demo transparency feature flag (T28)", () => {
+  it("renders no export/restore panel on Revisão when the flag is disabled (default)", async () => {
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+
+    await goToReview();
+
+    expect(screen.queryByText(copy.exportRestorePanel.heading)).not.toBeInTheDocument();
+  });
+
+  it("renders no export/restore panel when the features request itself fails", async () => {
+    mockedGetDemoFeatures.mockResolvedValue({
+      ok: false,
+      status: 500,
+      error: { message: copy.errors.generic, kind: null, fields: null },
+    });
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+
+    await goToReview();
+
+    expect(screen.queryByText(copy.exportRestorePanel.heading)).not.toBeInTheDocument();
+  });
+
+  it("renders the export/restore panel on Revisão when the flag is enabled and the preview is allowed", async () => {
+    mockedGetDemoFeatures.mockResolvedValue({ ok: true, data: { demo_transparency_enabled: true, demo_vault_explorer_enabled: false } });
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+
+    await goToReview();
+
+    expect(await screen.findByText(copy.exportRestorePanel.heading)).toBeInTheDocument();
+  });
+
+  it("does not call getDemoFeatures more than once across a full run", async () => {
+    mockedGetDemoFeatures.mockResolvedValue({ ok: true, data: { demo_transparency_enabled: true, demo_vault_explorer_enabled: false } });
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+    mockedExecuteDisclosure.mockResolvedValue({ ok: true, data: executeResponse() });
+
+    await goToReview();
+    await screen.findByText(copy.exportRestorePanel.heading);
+    await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+    await screen.findByRole("heading", { name: copy.result.heading });
+
+    expect(mockedGetDemoFeatures).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * T29 / issue #72: `demo_vault_explorer_enabled` is read from the SAME
+ * single `getDemoFeatures` fetch above, never a second request, and gates
+ * `VaultExplorerPanel` on both Revisão and Resultado. Every OTHER test in
+ * this file relies on the `beforeEach` default (`demo_vault_explorer_enabled:
+ * false`) and is therefore itself a "disabled" regression test; these are
+ * the explicit "request fails" and "enabled" cases, on both screens.
+ */
+describe("GuidedFlow -- demo vault explorer feature flag (T29)", () => {
+  it("renders no Vault Explorer panel on Revisão when the flag is disabled (default), even with a non-null token", async () => {
+    mockedPreviewDisclosure.mockResolvedValue({
+      ok: true,
+      data: { ...previewResponse(), vault_explorer_token: "vx1.token" },
+    });
+
+    await goToReview();
+
+    expect(screen.queryByText(copy.vaultExplorerPanel.heading)).not.toBeInTheDocument();
+  });
+
+  it("renders no Vault Explorer panel when the features request itself fails", async () => {
+    mockedGetDemoFeatures.mockResolvedValue({
+      ok: false,
+      status: 500,
+      error: { message: copy.errors.generic, kind: null, fields: null },
+    });
+    mockedPreviewDisclosure.mockResolvedValue({
+      ok: true,
+      data: { ...previewResponse(), vault_explorer_token: "vx1.token" },
+    });
+
+    await goToReview();
+
+    expect(screen.queryByText(copy.vaultExplorerPanel.heading)).not.toBeInTheDocument();
+  });
+
+  it("renders the Vault Explorer panel on Revisão and Resultado when the flag is enabled, sharing the same token", async () => {
+    mockedGetDemoFeatures.mockResolvedValue({
+      ok: true,
+      data: { demo_transparency_enabled: false, demo_vault_explorer_enabled: true },
+    });
+    mockedPreviewDisclosure.mockResolvedValue({
+      ok: true,
+      data: { ...previewResponse(), vault_explorer_token: "vx1.shared-token" },
+    });
+    mockedExecuteDisclosure.mockResolvedValue({ ok: true, data: executeResponse() });
+
+    await goToReview();
+    expect(await screen.findByText(copy.vaultExplorerPanel.heading)).toBeInTheDocument();
+    expect(screen.getByText(copy.vaultExplorerPanel.toggleLabel)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+    await screen.findByRole("heading", { name: copy.result.heading });
+
+    expect(screen.getByText(copy.vaultExplorerPanel.heading)).toBeInTheDocument();
+    expect(screen.getByText(copy.vaultExplorerPanel.toggleLabel)).toBeInTheDocument();
+  });
+
+  it("renders the panel's unavailable note on Resultado when the flag is enabled but the token is null", async () => {
+    mockedGetDemoFeatures.mockResolvedValue({
+      ok: true,
+      data: { demo_transparency_enabled: false, demo_vault_explorer_enabled: true },
+    });
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+    mockedExecuteDisclosure.mockResolvedValue({ ok: true, data: executeResponse() });
+
+    await goToReview();
+    await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+    await screen.findByRole("heading", { name: copy.result.heading });
+
+    expect(screen.getByText(copy.vaultExplorerPanel.unavailableForDecision)).toBeInTheDocument();
   });
 });

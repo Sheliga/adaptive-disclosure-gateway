@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { renderWithLocale } from "@/i18n/renderWithLocale";
-import type { CategoryDisclosureSummary, PreviewResponse } from "@/lib/contracts";
+import type { CategoryDisclosureSummary, DisclosureInspection, PreviewResponse } from "@/lib/contracts";
 import { copy } from "@/lib/copy";
 import { en } from "@/lib/copy.en";
 
@@ -29,7 +29,12 @@ function category(overrides: Partial<CategoryDisclosureSummary>): CategoryDisclo
   };
 }
 
-function preview(categories: CategoryDisclosureSummary[], status: "allowed" | "blocked" = "allowed"): PreviewResponse {
+function preview(
+  categories: CategoryDisclosureSummary[],
+  status: "allowed" | "blocked" = "allowed",
+  inspection: DisclosureInspection | null = null,
+  vaultExplorerToken: string | null = null,
+): PreviewResponse {
   return {
     contract_version: "t20-application-api-v1",
     summary: {
@@ -51,6 +56,8 @@ function preview(categories: CategoryDisclosureSummary[], status: "allowed" | "b
       requested_pseudonym_scope: "session",
     },
     provider_mode: { provider_class: "FakeProvider" },
+    inspection,
+    vault_explorer_token: vaultExplorerToken,
   };
 }
 
@@ -318,5 +325,194 @@ describe("ReviewScreen -- switches to English (T21 fourth slice)", () => {
     await userEvent.click(screen.getByText(en.review.showPayloadToggle));
 
     expect(await screen.findByText(p.external_payload)).toBeInTheDocument();
+  });
+});
+
+/**
+ * T27 / issue #69: `ReviewScreen` renders the transformation inspector only
+ * when `preview.inspection !== null`, and only via the inspector's own
+ * collapsed disclosure -- its content must stay out of the DOM here too,
+ * for the same reason `external_payload` does.
+ */
+describe("ReviewScreen -- disclosure inspector (T27)", () => {
+  it("renders no inspector toggle when inspection is null", () => {
+    render(
+      <ReviewScreen preview={preview([category({})])} executeError={null} onConfirm={vi.fn()} onCancel={vi.fn()} />,
+    );
+
+    expect(screen.queryByText(copy.disclosureInspector.toggleLabel)).not.toBeInTheDocument();
+  });
+
+  it("renders the inspector toggle when inspection is provided, with its content absent until opened", async () => {
+    const inspection = {
+      available: true,
+      unavailable_reason: null,
+      segments: [{ action: null, category: null, original: "hello", disclosed: "hello" }],
+    };
+    render(
+      <ReviewScreen
+        preview={preview([category({})], "allowed", inspection)}
+        executeError={null}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(copy.disclosureInspector.toggleLabel)).toBeInTheDocument();
+    expect(screen.queryByText(copy.disclosureInspector.originalColumnHeading)).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByText(copy.disclosureInspector.toggleLabel));
+
+    expect(screen.getByText(copy.disclosureInspector.originalColumnHeading)).toBeInTheDocument();
+  });
+
+  it("renders the unavailable message when inspection.available is false", () => {
+    const inspection = { available: false as const, unavailable_reason: "blocked" as const, segments: [] };
+    render(
+      <ReviewScreen
+        preview={preview([category({})], "allowed", inspection)}
+        executeError={null}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(copy.disclosureInspector.unavailableBlockedHeading)).toBeInTheDocument();
+  });
+});
+
+/**
+ * T28 / issue #70: `ExportRestorePanel` renders only when the caller passes
+ * `demoTransparencyEnabled` AND the preview is allowed. `demoTransparencyEnabled`
+ * defaults to `false`, so every existing render call in this file (which
+ * never passes it) already proves the "disabled" half of this pin.
+ */
+describe("ReviewScreen -- export/restore panel (T28)", () => {
+  it("does not render the panel when demoTransparencyEnabled is not passed (defaults to disabled)", () => {
+    render(
+      <ReviewScreen preview={preview([category({})])} executeError={null} onConfirm={vi.fn()} onCancel={vi.fn()} />,
+    );
+
+    expect(screen.queryByText(copy.exportRestorePanel.heading)).not.toBeInTheDocument();
+  });
+
+  it("does not render the panel when explicitly disabled", () => {
+    render(
+      <ReviewScreen
+        preview={preview([category({})])}
+        executeError={null}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+        demoTransparencyEnabled={false}
+      />,
+    );
+
+    expect(screen.queryByText(copy.exportRestorePanel.heading)).not.toBeInTheDocument();
+  });
+
+  it("renders the panel when enabled and the preview is allowed", () => {
+    render(
+      <ReviewScreen
+        preview={preview([category({})], "allowed")}
+        executeError={null}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+        demoTransparencyEnabled={true}
+      />,
+    );
+
+    expect(screen.getByText(copy.exportRestorePanel.heading)).toBeInTheDocument();
+  });
+
+  it("does not render the panel when enabled but the preview is blocked", () => {
+    render(
+      <ReviewScreen
+        preview={preview([category({ outcome: "blocked" })], "blocked")}
+        executeError={null}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+        demoTransparencyEnabled={true}
+      />,
+    );
+
+    expect(screen.queryByText(copy.exportRestorePanel.heading)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * T29 / issue #72: `VaultExplorerPanel` renders whenever the caller passes
+ * `demoVaultExplorerEnabled={true}`, regardless of `preview.summary.status`
+ * -- unlike the export/restore panel above, a blocked decision's `null`
+ * token is a legitimate state the panel itself renders as "unavailable",
+ * not a reason for this screen to hide the panel outright. Defaults to
+ * `false`, so every existing render call in this file already proves the
+ * "disabled" half of this pin.
+ */
+describe("ReviewScreen -- Vault Explorer panel (T29)", () => {
+  it("does not render the panel when demoVaultExplorerEnabled is not passed (defaults to disabled), and makes no fetch call", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <ReviewScreen
+        preview={preview([category({})], "allowed", null, "vx1.token")}
+        executeError={null}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText(copy.vaultExplorerPanel.heading)).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("does not render the panel when explicitly disabled even though a token is present", () => {
+    render(
+      <ReviewScreen
+        preview={preview([category({})], "allowed", null, "vx1.token")}
+        executeError={null}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+        demoVaultExplorerEnabled={false}
+      />,
+    );
+
+    expect(screen.queryByText(copy.vaultExplorerPanel.heading)).not.toBeInTheDocument();
+  });
+
+  it("renders the panel with its unavailable note when enabled but the token is null", () => {
+    render(
+      <ReviewScreen
+        preview={preview([category({})], "allowed", null, null)}
+        executeError={null}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+        demoVaultExplorerEnabled={true}
+      />,
+    );
+
+    expect(screen.getByText(copy.vaultExplorerPanel.heading)).toBeInTheDocument();
+    expect(screen.getByText(copy.vaultExplorerPanel.unavailableForDecision)).toBeInTheDocument();
+  });
+
+  it("renders the interactive panel when enabled and the token is non-null, collapsed by default", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <ReviewScreen
+        preview={preview([category({})], "allowed", null, "vx1.token")}
+        executeError={null}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+        demoVaultExplorerEnabled={true}
+      />,
+    );
+
+    expect(screen.getByText(copy.vaultExplorerPanel.heading)).toBeInTheDocument();
+    expect(screen.getByText(copy.vaultExplorerPanel.toggleLabel)).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
   });
 });

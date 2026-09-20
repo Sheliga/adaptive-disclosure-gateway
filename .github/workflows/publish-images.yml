@@ -1,0 +1,83 @@
+name: publish-images
+
+# Builds and publishes the api/web container images to GHCR. This is
+# DELIBERATELY separate from `test.yml`, which only runs at the
+# `develop -> master` integration boundary (see CLAUDE.md's "Branching and
+# CI"): this workflow triggers on push to `master` -- i.e. only after an
+# integration PR has already gone through that gate and merged -- plus
+# `workflow_dispatch` for a manual re-publish of the current `master` (e.g.
+# to recover from a registry outage, or to republish without a new commit).
+#
+# The target VPS (docs/advisor-demo.md's hosted-deployment section,
+# compose.prod.yaml) has 1 vCPU and cannot build the api image itself (CPU
+# torch + Docling, ~2.64 GB) without OOM-ing, so the image is built here, on
+# CI, and only ever pulled on the host -- see compose.prod.yaml's own header
+# comment for the full reasoning.
+on:
+  push:
+    branches: [master]
+  workflow_dispatch: {}
+
+# GHCR publish needs `packages: write`; no new secret is introduced --
+# `GITHUB_TOKEN` is the repository's own built-in token, scoped down to
+# exactly what this workflow needs and nothing more.
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    strategy:
+      # `fail-fast: false` -- a transient failure building one image (e.g. a
+      # flaky upstream wheel download for the api image) should not cancel
+      # the other, unrelated build.
+      fail-fast: false
+      matrix:
+        include:
+          - name: api
+            image: ghcr.io/sheliga/adg-api
+            context: .
+            dockerfile: docker/api.Dockerfile
+            build-args: ""
+          - name: web
+            image: ghcr.io/sheliga/adg-web
+            context: ./web
+            dockerfile: web/Dockerfile
+            # Not a secret -- see web/Dockerfile's own module docstring:
+            # Next.js requires basePath at BUILD time, so it must be an
+            # explicit build-arg here, matching the path the host's nginx
+            # routes this deployment under (deploy/nginx/).
+            build-args: ADG_WEB_BASE_PATH=/disclosure-gateway
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Two tags: the commit SHA (reproducible -- compose.prod.yaml's
+      # ADG_IMAGE_TAG can pin an exact, known-good build) and `latest`
+      # (whatever `master` most recently published). GHCR requires an
+      # all-lowercase image path, which is why `matrix.image` is written
+      # lowercase above rather than derived from the mixed-case
+      # `Sheliga/adaptive-disclosure-gateway` repository name.
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          build-args: ${{ matrix.build-args }}
+          push: true
+          tags: |
+            ${{ matrix.image }}:${{ github.sha }}
+            ${{ matrix.image }}:latest
+          # GitHub Actions cache -- without it, the ~2.64 GB api image (CPU
+          # torch + Docling) rebuilds every layer from scratch on every
+          # push, which is both slow and burns far more Actions minutes than
+          # necessary.
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}

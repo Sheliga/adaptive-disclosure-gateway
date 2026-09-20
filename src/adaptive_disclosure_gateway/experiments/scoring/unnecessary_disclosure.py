@@ -1,6 +1,7 @@
 """Unnecessary-disclosure scoring (T10 / issue #8).
 
-Primary metric (docs/experimental-design.md):
+Historical M2 binary metric, preserved as a secondary metric by the T23
+post-pilot protocol (docs/experimental-design.md):
 
     transmitted sensitive units labeled NOT_REQUIRED / total sensitive units
     labeled NOT_REQUIRED present in the case

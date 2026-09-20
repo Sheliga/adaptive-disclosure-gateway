@@ -26,6 +26,14 @@ const EXAMPLES: ExampleSummary[] = [
   },
 ];
 
+const DOCUMENT_TYPES = [
+  {
+    document_type: "contract",
+    analysis_modes: ["contract_summary", "financial_audit", "compliance_review"],
+    default_analysis_mode: "contract_summary",
+  },
+];
+
 /** Wraps ComposeScreen with a real reducer so dispatched events actually update the UI. */
 function Harness({
   onSubmit = vi.fn(),
@@ -39,7 +47,11 @@ function Harness({
       const next = flowReducer({ screen: "compose", compose: state, submitError: null }, event);
       return next.screen === "compose" ? next.compose : state;
     },
-    initialComposeState,
+    {
+      ...initialComposeState,
+      documentType: "contract",
+      analysisMode: "contract_summary",
+    },
   );
 
   return (
@@ -48,6 +60,8 @@ function Harness({
       submitError={null}
       examples={examples}
       examplesError={null}
+      documentTypes={DOCUMENT_TYPES}
+      documentTypesError={null}
       dispatch={dispatch}
       onSubmit={onSubmit}
     />
@@ -104,7 +118,7 @@ describe("ComposeScreen -- entry modes and labels come from copy.ts", () => {
 });
 
 describe("ComposeScreen -- file upload", () => {
-  it("sends file_content + filename shaped data for a supported .txt file", async () => {
+  it("keeps a supported .txt File in memory and shows its metadata", async () => {
     render(<Harness />);
     await userEvent.click(screen.getByRole("radio", { name: copy.entryModes.uploadFile }));
 
@@ -113,7 +127,9 @@ describe("ComposeScreen -- file upload", () => {
     await userEvent.upload(input, file);
 
     expect(await screen.findByText("notas.txt")).toBeInTheDocument();
-    expect(screen.getByText("text/plain")).toBeInTheDocument();
+    expect(screen.getByText(copy.newTest.fileTypeLabels.txt)).toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText(copy.newTest.taskLabel), "Resuma o contrato");
 
     const submit = screen.getByRole("button", { name: copy.newTest.continueToReview });
     expect(submit).toBeEnabled();
@@ -130,11 +146,28 @@ describe("ComposeScreen -- file upload", () => {
     expect(await screen.findByText("notas.md")).toBeInTheDocument();
   });
 
+  it.each([
+    ["contract.pdf", "application/pdf"],
+    ["contract.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+  ])("accepts %s without ever calling FileReader.readAsText", async (filename, mime) => {
+    const readAsText = vi.spyOn(FileReader.prototype, "readAsText");
+    render(<Harness />);
+    await userEvent.click(screen.getByRole("radio", { name: copy.entryModes.uploadFile }));
+
+    await userEvent.upload(
+      screen.getByLabelText(copy.newTest.uploadFieldLabel),
+      new File([new Uint8Array([0, 1, 2, 3])], filename, { type: mime }),
+    );
+
+    expect(await screen.findByText(filename)).toBeInTheDocument();
+    expect(readAsText).not.toHaveBeenCalled();
+  });
+
   it("refuses an unsupported extension client-side with copy.ts text, never reading it or enabling submit", async () => {
     render(<Harness />);
     await userEvent.click(screen.getByRole("radio", { name: copy.entryModes.uploadFile }));
 
-    const file = new File(["%PDF-1.4 binary content"], "scan.pdf", { type: "application/pdf" });
+    const file = new File(["image"], "scan.png", { type: "image/png" });
     // Drag-and-drop (unlike userEvent.upload through a real file picker) is
     // not constrained by the input's `accept` attribute, so this is the
     // realistic path for an unsupported file actually reaching the app --
@@ -144,7 +177,7 @@ describe("ComposeScreen -- file upload", () => {
     });
 
     expect(await screen.findByText(copy.newTest.uploadUnsupportedType)).toBeInTheDocument();
-    expect(screen.queryByText("scan.pdf")).not.toBeInTheDocument();
+    expect(screen.queryByText("scan.png")).not.toBeInTheDocument();
 
     const submit = screen.getByRole("button", { name: copy.newTest.continueToReview });
     expect(submit).toBeDisabled();

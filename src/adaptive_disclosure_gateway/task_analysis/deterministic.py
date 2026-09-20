@@ -146,6 +146,69 @@ CATEGORY_INDICATORS: dict[str, tuple[str, ...]] = {
         "employee's division",
     ),
     "medical_data": ("medical", "diagnosis", "health condition", "illness"),
+    # --- Contracts domain (Issue #56), authored under exactly the same
+    # false-positive-is-worse-than-false-negative rule as the HR tables
+    # above. Ambiguous single words that collide with ordinary English are
+    # left out rather than included and hoped for: bare "party" (a social
+    # event), bare "value"/"amount" (any quantity at all), bare "fine" ("that
+    # is fine"), and bare "term" ("long term") are all absent for that
+    # reason; the multi-word phrasings below cover the same intent without
+    # matching those idioms. None of these were chosen against any Contracts
+    # case -- no Contracts corpus exists yet (T24 / Issue #37).
+    "party_name": (
+        "contracting party",
+        "contracting parties",
+        "contracted party",
+        "contracted parties",
+        "counterparty",
+        "counterparties",
+        "party name",
+        "names of the parties",
+        "which companies",
+        "which organizations",
+    ),
+    "representative_name": (
+        "legal representative",
+        "legal representatives",
+        "representative name",
+        "signatory",
+        "signatories",
+        "who signed",
+    ),
+    "bank_account": (
+        "bank account",
+        "banking details",
+        "account number",
+        "payment account",
+    ),
+    "contract_value": (
+        "contract value",
+        "contract amount",
+        "contract price",
+        "total value",
+        "financial terms",
+        "monetary value",
+    ),
+    "penalty_amount": (
+        "penalty",
+        "penalties",
+        "penalty amount",
+        "penalty clause",
+        "late fee",
+        "late fees",
+        "liquidated damages",
+    ),
+    "deadline": (
+        "deadline",
+        "deadlines",
+        "due date",
+        "due dates",
+        "delivery date",
+        "payment date",
+        "expiry date",
+        "expiration date",
+        "term of the contract",
+    ),
 }
 # Bare "name"/"naming" and bare "pay"/"team"/"division" were removed from the
 # tables above (PR #33 review round): each collided with common English

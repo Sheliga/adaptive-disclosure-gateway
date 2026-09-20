@@ -46,17 +46,22 @@ const UPSTREAM_UNREACHABLE_BODY = JSON.stringify({
 async function forwardToUpstream(input: {
   method: "GET" | "POST";
   upstreamPath: string;
-  body?: string;
+  body?: BodyInit | null;
+  contentType?: string;
 }): Promise<Response> {
   const url = `${apiBaseUrl()}${input.upstreamPath}`;
 
   let upstreamResponse: Response;
   try {
-    upstreamResponse = await fetch(url, {
+    const init: RequestInit & { duplex?: "half" } = {
       method: input.method,
-      headers: input.body !== undefined ? { "content-type": "application/json" } : undefined,
+      headers: input.contentType ? { "content-type": input.contentType } : undefined,
       body: input.body,
-    });
+    };
+    if (input.body instanceof ReadableStream) {
+      init.duplex = "half";
+    }
+    upstreamResponse = await fetch(url, init);
   } catch {
     // Deliberately no logging and no access to the caught error's own
     // message -- see the module docstring's no-leak posture.
@@ -86,5 +91,30 @@ export async function proxyGet(upstreamPath: string): Promise<Response> {
  */
 export async function proxyJsonPost(upstreamPath: string, request: Request): Promise<Response> {
   const body = await request.text();
-  return forwardToUpstream({ method: "POST", upstreamPath, body });
+  return forwardToUpstream({
+    method: "POST",
+    upstreamPath,
+    body,
+    contentType: "application/json",
+  });
+}
+
+/** Stream multipart bytes unchanged; never parse, text-decode, or rebuild the file. */
+export async function proxyMultipartPost(
+  upstreamPath: string,
+  request: Request,
+): Promise<Response> {
+  const contentType = request.headers.get("content-type");
+  if (contentType === null || !contentType.toLowerCase().startsWith("multipart/form-data;")) {
+    return new Response(
+      JSON.stringify({ detail: "request must be multipart/form-data", kind: "InvalidContentType" }),
+      { status: 400, headers: { "content-type": "application/json" } },
+    );
+  }
+  return forwardToUpstream({
+    method: "POST",
+    upstreamPath,
+    body: request.body,
+    contentType,
+  });
 }

@@ -53,6 +53,19 @@ export interface ExamplesResponse {
   examples: ExampleSummary[];
 }
 
+// --- GET /documents/types ---------------------------------------------------
+
+export interface DocumentType {
+  document_type: string;
+  analysis_modes: string[];
+  default_analysis_mode: string;
+}
+
+export interface DocumentTypesResponse {
+  contract_version: string;
+  document_types: DocumentType[];
+}
+
 // --- shared preview/execute pieces ------------------------------------------
 
 /**
@@ -158,6 +171,90 @@ export interface PreviewResponse {
   strategy: string;
   governance: SafeGovernanceView;
   provider_mode: ProviderMode;
+  /**
+   * The T27 / issue #69 visual diff/inspector projection. `null` whenever
+   * the deployment has `ADG_ENABLE_DEMO_TRANSPARENCY` off (the historical,
+   * pre-T27 behavior for every existing caller) -- never absent, always
+   * either `null` or a full `DisclosureInspection`.
+   */
+  inspection: DisclosureInspection | null;
+  /**
+   * T29 / issue #72. A sealed, opaque reference the demo vault explorer can
+   * later resolve back into its entries (`VaultExplorerResponse` below).
+   * `null` whenever the deployment has `ADG_ENABLE_DEMO_VAULT_EXPLORER` off,
+   * the decision was blocked, or the resolved pseudonym scope is
+   * `ORGANIZATION`/unresolvable -- never absent, always either `null` or a
+   * string. A token with zero entries is still issued for a decision with
+   * no pseudonymized values (B0 -- Direct, B1 -- Static Sanitization): a
+   * `null` token means "not available", never "nothing to show".
+   */
+  vault_explorer_token: string | null;
+}
+
+/** Structured-upload preview: the normal safe preview plus an opaque proof. */
+export interface DocumentPreviewResponse extends PreviewResponse {
+  confirmation_token: string;
+}
+
+// --- T27 / issue #69: visual diff / transformation inspector ----------------
+
+/**
+ * The `DisclosureAction` (`domain.py`) string values that can appear on an
+ * `InspectionSegment.action` for a segment that was actually transformed --
+ * i.e. the per-span actions a treatment can apply to a detected value.
+ * `BLOCK_REQUEST` and `TASK_DEPENDENT` are deliberately excluded: neither is
+ * ever the `action` of an individual `Transformation` the inspector
+ * projects (`application/inspection.py`) -- `block_request` stops the whole
+ * request before any segment exists, and `task_dependent` is resolved to one
+ * of the four members below before a `Transformation` is built. Kept as a
+ * plain readonly array (not just a union) so `contracts.test.ts` can pin it
+ * against `domain.py`'s `DisclosureAction` on disk, and so
+ * `lib/inspectionActions.ts` can check membership at runtime.
+ */
+export const KNOWN_INSPECTION_ACTIONS = ["preserve", "pseudonymize", "generalize", "remove"] as const;
+
+export type KnownInspectionAction = (typeof KNOWN_INSPECTION_ACTIONS)[number];
+
+/**
+ * `action` is modeled the same way `DisclosureOutcome` is above: the known
+ * union plus an escape hatch, never a bare union or a bare `string` -- see
+ * that type's docstring for why. `null` (a separate case, not part of this
+ * union) means the segment was untouched, never an unrecognized action.
+ */
+export type InspectionAction = KnownInspectionAction | (string & {});
+
+/**
+ * One segment of the T27 visual diff/inspector projection
+ * (`application/contracts.py`'s `DisclosureInspectionSegment` /
+ * `application/wire.py`'s `InspectionSegmentModel`). `action`/`category` are
+ * both `null` for an untouched segment -- never independently null/non-null,
+ * see `lib/responseGuards.ts`'s invariant check. Segments carry no offsets
+ * by design: Python code-point offsets are not JS UTF-16 indices, so the UI
+ * must never slice `original`/`disclosed` by any index derived from the API
+ * -- it only ever renders these strings and concatenates them in order.
+ */
+export interface InspectionSegment {
+  action: InspectionAction | null;
+  category: string | null;
+  original: string;
+  disclosed: string;
+}
+
+/**
+ * The T27 visual diff/inspector projection itself
+ * (`application/contracts.py`'s `DisclosureInspection` /
+ * `application/wire.py`'s `DisclosureInspectionModel`). `segments` is always
+ * empty when `available` is `false`. `unavailable_reason` is one of
+ * `"blocked"` (the disclosure decision itself blocked the request -- nothing
+ * to inspect) or `"alignment_failed"` (the pipeline's own alignment check
+ * could not verify the projection is faithful, so it fails closed rather
+ * than show a partial/best-effort diff) when `available` is `false`, and
+ * `null` when `available` is `true`.
+ */
+export interface DisclosureInspection {
+  available: boolean;
+  unavailable_reason: string | null;
+  segments: InspectionSegment[];
 }
 
 // --- POST /disclosure/execute -----------------------------------------------
@@ -293,6 +390,116 @@ export interface ValidationErrorItem {
 /** The 422 body shape returned by FastAPI's `RequestValidationError` handler. */
 export interface ValidationErrorResponse {
   detail: ValidationErrorItem[];
+}
+
+// --- export / restore (T26 / issue #67; gated behind -----------------------
+// ADG_ENABLE_DEMO_TRANSPARENCY for the web UI -- T28 / #70). This module
+// never spells out either route handler's own upstream path string in
+// prose -- see tests/test_demo_deployment_config.py::TestWebExportRestoreIsGated,
+// which pins those two literal strings to the route handlers and lib/api.ts
+// only.
+
+/**
+ * `application/wire.py`'s `ExportResponse`. Deliberately excludes anything
+ * that would let the pseudonym -> original mapping travel wholesale: only
+ * `restore_handle` (opaque) and `restorable_count`, never the mapping
+ * entries themselves. `expires_at` is an epoch-seconds integer, not an ISO
+ * string -- the UI formats it for display, never re-derives a security
+ * decision from it.
+ */
+export interface ExportResponse {
+  contract_version: string;
+  external_payload: string;
+  restore_handle: string;
+  expires_at: number;
+  restorable_count: number;
+  treatment: string;
+  strategy: string;
+  governance: SafeGovernanceView;
+}
+
+/**
+ * `application/wire.py`'s `RestoreResponse`. Never carries the mapping
+ * either -- only the restored text and two counts.
+ */
+export interface RestoreResponse {
+  contract_version: string;
+  restored_text: string;
+  restored_count: number;
+  unresolved_count: number;
+}
+
+// --- demo vault explorer (T29 / issue #72; gated behind ---------------------
+// ADG_ENABLE_DEMO_VAULT_EXPLORER for the web UI). This module never spells
+// out the route handler's own upstream path string in prose -- see
+// tests/test_demo_deployment_config.py::TestWebVaultExplorerIsGated, which
+// pins that literal string to the route handler and lib/api.ts only.
+
+/**
+ * `application/domain.py`'s `PseudonymScope` values that the vault explorer
+ * can ever actually return, as `application/vault_explorer.py` resolves
+ * them -- deliberately EXCLUDING `"organization"`: `PreviewResponse.
+ * vault_explorer_token` is never issued for an ORGANIZATION-scoped
+ * decision (see that field's own docstring), so an explorer response can
+ * never carry that scope. Kept as a plain readonly array (not just a union)
+ * so `contracts.test.ts` can diff it against `domain.py`'s
+ * `PseudonymScope` on disk, deliberately in ONE direction only (every
+ * member here must be a real Python member) -- the exclusion is
+ * intentional and the other direction is not checked here.
+ */
+export const KNOWN_VAULT_SCOPES = ["request", "document", "session"] as const;
+
+export type KnownVaultScope = (typeof KNOWN_VAULT_SCOPES)[number];
+
+/**
+ * One reversible entry the sealed token names (`application/wire.py`'s
+ * `VaultExplorerEntryModel`). `original` is `string | null`: `present`
+ * tells the UI whether the local vault still holds this pseudonym --
+ * `present === false` means `original` is `null` (a category evicted/
+ * rotated out of the vault since the token was issued), never a "known but
+ * expired" third state.
+ */
+export interface VaultExplorerEntry {
+  category: string;
+  pseudonym: string;
+  original: string | null;
+  present: boolean;
+}
+
+/**
+ * `application/wire.py`'s `VaultExplorerResponse`. `scope` is `null` (with
+ * `entries` empty) exactly when the decision pseudonymized nothing (B0/B1),
+ * never a `null` standing in for "unknown" -- see `VaultExplorerEntry`'s
+ * docstring for the analogous `present`/`original` pairing.
+ */
+export interface VaultExplorerResponse {
+  contract_version: string;
+  scope: string | null;
+  entry_count: number;
+  entries: VaultExplorerEntry[];
+}
+
+// --- GET /api/demo/features (web-only; not part of application/wire.py) -----
+
+/**
+ * A web-invented, purely presentational endpoint (T28 / issue #70): whether
+ * the export/restore UI should render at all, computed server-side from the
+ * SAME `ADG_ENABLE_DEMO_TRANSPARENCY` gate the route handlers themselves
+ * enforce (`lib/demoTransparency.ts`). Carries no `contract_version` -- it
+ * is not part of the Python application-layer wire contract this module
+ * otherwise mirrors, and never will be: it exists only so the client knows
+ * whether to bother rendering export/restore controls, never to decide
+ * anything security-relevant (the route handlers gate that independently,
+ * per request, regardless of what this endpoint last reported).
+ *
+ * `demo_vault_explorer_enabled` (T29 / issue #72) is the SAME kind of
+ * presentational-only flag, computed from the independent
+ * `ADG_ENABLE_DEMO_VAULT_EXPLORER` gate -- the two booleans are unrelated
+ * deployment toggles and neither is derived from the other.
+ */
+export interface DemoFeaturesResponse {
+  demo_transparency_enabled: boolean;
+  demo_vault_explorer_enabled: boolean;
 }
 
 // --- request body ------------------------------------------------------------

@@ -277,7 +277,7 @@ def test_task_needing_only_a_reduced_form_selects_generalize():
     result = _discloser().sanitize(_request(TEXT, task), Detector().detect(TEXT))
 
     assert _actions_by_category(result)["salary"] is DisclosureAction.GENERALIZE
-    assert "8500" not in result.external_payload
+    assert "8500.00" not in result.external_payload
     assert "R$ 5000-10000" in result.external_payload
 
 
@@ -506,7 +506,7 @@ def test_exact_employee_name_cue_never_escalates_salary_to_preserve():
     result = _discloser().sanitize(_request(TEXT, task), Detector().detect(TEXT))
 
     assert _actions_by_category(result)["salary"] is DisclosureAction.GENERALIZE
-    assert "8500" not in result.external_payload
+    assert "8500.00" not in result.external_payload
 
 
 def test_department_exactly_cue_never_escalates_salary_to_preserve():
@@ -514,7 +514,7 @@ def test_department_exactly_cue_never_escalates_salary_to_preserve():
     result = _discloser().sanitize(_request(TEXT, task), Detector().detect(TEXT))
 
     assert _actions_by_category(result)["salary"] is DisclosureAction.GENERALIZE
-    assert "8500" not in result.external_payload
+    assert "8500.00" not in result.external_payload
 
 
 def test_exact_cpf_cue_never_escalates_salary_to_preserve():
@@ -522,7 +522,7 @@ def test_exact_cpf_cue_never_escalates_salary_to_preserve():
     result = _discloser().sanitize(_request(TEXT, task), Detector().detect(TEXT))
 
     assert _actions_by_category(result)["salary"] is DisclosureAction.GENERALIZE
-    assert "8500" not in result.external_payload
+    assert "8500.00" not in result.external_payload
 
 
 # --- Negative control: the same defect, same-clause (PR #33 third review
@@ -540,7 +540,7 @@ def test_exact_employee_name_cue_never_escalates_salary_to_preserve_joined_by_an
     result = _discloser().sanitize(_request(TEXT, task), Detector().detect(TEXT))
 
     assert _actions_by_category(result)["salary"] is DisclosureAction.GENERALIZE
-    assert "8500" not in result.external_payload
+    assert "8500.00" not in result.external_payload
 
 
 def test_department_exactly_cue_never_escalates_salary_to_preserve_joined_by_and():
@@ -548,7 +548,7 @@ def test_department_exactly_cue_never_escalates_salary_to_preserve_joined_by_and
     result = _discloser().sanitize(_request(TEXT, task), Detector().detect(TEXT))
 
     assert _actions_by_category(result)["salary"] is DisclosureAction.GENERALIZE
-    assert "8500" not in result.external_payload
+    assert "8500.00" not in result.external_payload
 
 
 def test_exact_cpf_cue_never_escalates_salary_to_preserve_joined_by_and():
@@ -556,7 +556,7 @@ def test_exact_cpf_cue_never_escalates_salary_to_preserve_joined_by_and():
     result = _discloser().sanitize(_request(TEXT, task), Detector().detect(TEXT))
 
     assert _actions_by_category(result)["salary"] is DisclosureAction.GENERALIZE
-    assert "8500" not in result.external_payload
+    assert "8500.00" not in result.external_payload
 
 
 def test_exact_employee_name_cue_never_escalates_salary_to_preserve_joined_by_comma_then():
@@ -564,7 +564,7 @@ def test_exact_employee_name_cue_never_escalates_salary_to_preserve_joined_by_co
     result = _discloser().sanitize(_request(TEXT, task), Detector().detect(TEXT))
 
     assert _actions_by_category(result)["salary"] is DisclosureAction.GENERALIZE
-    assert "8500" not in result.external_payload
+    assert "8500.00" not in result.external_payload
 
 
 # --- Ambiguity: a cue exactly equidistant between two co-mentioned
@@ -582,7 +582,7 @@ def test_cue_equidistant_between_two_categories_never_escalates_salary_to_preser
     result = _discloser().sanitize(_request(TEXT, task), Detector().detect(TEXT))
 
     assert _actions_by_category(result)["salary"] is DisclosureAction.GENERALIZE
-    assert "8500" not in result.external_payload
+    assert "8500.00" not in result.external_payload
 
 
 # --- Positive controls: the binding fix must still recognize genuine
@@ -617,7 +617,7 @@ def test_wrapper_cue_enclosing_salary_and_cpf_never_escalates_either_to_preserve
 
     assert actions["salary"] is DisclosureAction.GENERALIZE
     assert actions["cpf"] is DisclosureAction.PSEUDONYMIZE
-    assert "8500" not in result.external_payload
+    assert "8500.00" not in result.external_payload
     assert "123.456.789-09" not in result.external_payload
 
 

@@ -8,6 +8,8 @@ import {
   CANONICAL_COMPARISON_TREATMENTS,
   DISCLOSURE_SUMMARY_STATUSES,
   KNOWN_DISCLOSURE_OUTCOMES,
+  KNOWN_INSPECTION_ACTIONS,
+  KNOWN_VAULT_SCOPES,
 } from "./contracts";
 
 /**
@@ -317,6 +319,54 @@ function readPythonCanonicalComparisonTreatmentCodes(): string[] {
   });
 }
 
+/**
+ * Reads `domain.py`'s `DisclosureAction` StrEnum values directly off disk,
+ * the same repo-relative technique as the other drift tests above. Unlike
+ * `KNOWN_DISCLOSURE_OUTCOMES`'s pin (an exact set match both ways),
+ * `KNOWN_INSPECTION_ACTIONS` is a deliberate SUBSET of `DisclosureAction`:
+ * `block_request` and `task_dependent` are real enum members but never the
+ * `action` of an actual per-span `Transformation` the inspector projects
+ * (see `contracts.ts`'s docstring on `KNOWN_INSPECTION_ACTIONS`) -- so this
+ * only asserts the four transformation actions exist there and that
+ * `KNOWN_INSPECTION_ACTIONS` contains nothing Python does not.
+ */
+function readPythonDisclosureActionValues(): string[] {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const domainPath = path.resolve(here, "..", "..", "src", "adaptive_disclosure_gateway", "domain.py");
+  const source = readFileSync(domainPath, "utf-8");
+
+  const classMatch = source.match(/class DisclosureAction\(StrEnum\):[\s\S]*?(?=\nclass )/);
+  if (!classMatch) {
+    throw new Error(
+      "could not locate `class DisclosureAction(StrEnum):` block in domain.py -- " +
+        "has it been renamed or moved?",
+    );
+  }
+  const values = [...classMatch[0].matchAll(/=\s*"([a-z_]+)"/g)].map((match) => match[1]);
+  if (values.length === 0) {
+    throw new Error(
+      "found the DisclosureAction block but extracted zero string values -- regex likely stale",
+    );
+  }
+  return values;
+}
+
+describe("KNOWN_INSPECTION_ACTIONS stays synchronized with Python's DisclosureAction", () => {
+  it("contains exactly preserve/pseudonymize/generalize/remove, all real DisclosureAction members", () => {
+    const pythonValues = readPythonDisclosureActionValues();
+
+    expect(KNOWN_INSPECTION_ACTIONS).toEqual(["preserve", "pseudonymize", "generalize", "remove"]);
+    for (const value of KNOWN_INSPECTION_ACTIONS) {
+      expect(pythonValues).toContain(value);
+    }
+  });
+
+  it("never includes block_request or task_dependent -- neither is a real per-span transformation action", () => {
+    expect(KNOWN_INSPECTION_ACTIONS).not.toContain("block_request");
+    expect(KNOWN_INSPECTION_ACTIONS).not.toContain("task_dependent");
+  });
+});
+
 describe("CANONICAL_COMPARISON_TREATMENTS stays synchronized with Python's resolve_treatment", () => {
   it("has the exact treatment code resolve_treatment maps each canonical strategy to, in order", () => {
     // This is derived from `_STRATEGY_TO_TREATMENT` and `Treatment`
@@ -326,5 +376,57 @@ describe("CANONICAL_COMPARISON_TREATMENTS stays synchronized with Python's resol
     const pythonTreatments = readPythonCanonicalComparisonTreatmentCodes();
 
     expect(CANONICAL_COMPARISON_TREATMENTS).toEqual(pythonTreatments);
+  });
+});
+
+/**
+ * T29 / issue #72 drift test: `KNOWN_VAULT_SCOPES` must be a SUBSET of
+ * `domain.py`'s `PseudonymScope` member values -- checked in one direction
+ * only, deliberately. The vault explorer's own contract excludes
+ * `"organization"` on purpose (`PreviewResponse.vault_explorer_token` is
+ * never issued for that scope), so this test must not fail merely because
+ * Python declares a scope this UI does not expect to ever see from this
+ * endpoint; it exists to catch the OTHER drift -- a scope this UI treats as
+ * known that Python does not actually declare, or a real request/document/
+ * session member renamed on the Python side without this file noticing.
+ */
+function readPythonPseudonymScopeValues(): string[] {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const domainPath = path.resolve(here, "..", "..", "src", "adaptive_disclosure_gateway", "domain.py");
+  const source = readFileSync(domainPath, "utf-8");
+
+  const classMatch = source.match(/class PseudonymScope\(StrEnum\):[\s\S]*?(?=\nclass |$)/);
+  if (!classMatch) {
+    throw new Error(
+      "could not locate `class PseudonymScope(StrEnum):` block in domain.py -- " +
+        "has it been renamed or moved?",
+    );
+  }
+  const values = [...classMatch[0].matchAll(/=\s*"([a-z_]+)"/g)].map((match) => match[1]);
+  if (values.length === 0) {
+    throw new Error(
+      "found the PseudonymScope block but extracted zero string values -- regex likely stale",
+    );
+  }
+  return values;
+}
+
+describe("KNOWN_VAULT_SCOPES stays synchronized with Python's PseudonymScope", () => {
+  it("every known scope is a real PseudonymScope member", () => {
+    const pythonValues = readPythonPseudonymScopeValues();
+
+    for (const value of KNOWN_VAULT_SCOPES) {
+      expect(pythonValues).toContain(value);
+    }
+  });
+
+  it("deliberately excludes organization -- the explorer never returns that scope", () => {
+    const pythonValues = readPythonPseudonymScopeValues();
+    expect(pythonValues).toContain("organization");
+    expect(KNOWN_VAULT_SCOPES).not.toContain("organization");
+  });
+
+  it("is exactly request, document, session", () => {
+    expect([...KNOWN_VAULT_SCOPES].sort()).toEqual(["document", "request", "session"]);
   });
 });

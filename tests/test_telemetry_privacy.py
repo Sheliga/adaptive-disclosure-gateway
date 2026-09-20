@@ -53,7 +53,9 @@ def test_b0_span_attributes_never_contain_the_raw_text_even_though_it_is_the_pay
     result = DirectDiscloser().sanitize(request, spans=[])
 
     finished = recorded_spans.get_finished_spans()
-    _assert_span_attributes_never_leak(finished, "Ana Souza", "123.456.789-09", "8500", SECRET_TEXT)
+    _assert_span_attributes_never_leak(
+        finished, "Ana Souza", "123.456.789-09", "8500.00", SECRET_TEXT
+    )
     assert result.external_payload == SECRET_TEXT
 
 
@@ -61,7 +63,9 @@ def test_detector_span_attributes_never_contain_detected_values_or_raw_text(reco
     Detector().detect(SECRET_TEXT)
 
     finished = recorded_spans.get_finished_spans()
-    _assert_span_attributes_never_leak(finished, "Ana Souza", "123.456.789-09", "8500", SECRET_TEXT)
+    _assert_span_attributes_never_leak(
+        finished, "Ana Souza", "123.456.789-09", "8500.00", SECRET_TEXT
+    )
 
 
 def test_b1_span_attributes_never_contain_detected_values_or_payload(recorded_spans):
@@ -77,7 +81,7 @@ def test_b1_span_attributes_never_contain_detected_values_or_payload(recorded_sp
 
     finished = recorded_spans.get_finished_spans()
     _assert_span_attributes_never_leak(
-        finished, "Ana Souza", "123.456.789-09", "8500", SECRET_TEXT, result.external_payload
+        finished, "Ana Souza", "123.456.789-09", "8500.00", SECRET_TEXT, result.external_payload
     )
 
 
@@ -114,7 +118,7 @@ def test_b2_span_attributes_never_contain_detected_values_payload_or_pseudonym_m
         finished,
         "Ana Souza",
         "123.456.789-09",
-        "8500",
+        "8500.00",
         SECRET_TEXT,
         result.external_payload,
         pseudonym_mapping,
@@ -196,7 +200,7 @@ def test_b3_span_attributes_never_contain_detected_values_payload_or_pseudonym_m
         finished,
         "Ana Souza",
         "123.456.789-09",
-        "8500",
+        "8500.00",
         SECRET_TEXT,
         result.external_payload,
         pseudonym_mapping,
@@ -266,7 +270,7 @@ def test_b4_span_attributes_never_contain_detected_values_payload_or_pseudonym_m
         finished,
         "Ana Souza",
         "123.456.789-09",
-        "8500",
+        "8500.00",
         SECRET_TEXT,
         result.external_payload,
         pseudonym_mapping,
@@ -303,7 +307,7 @@ def test_b4_span_attributes_never_leak_when_policy_blocks_a_category(recorded_sp
         finished,
         "Ana Souza",
         "123.456.789-09",
-        "8500",
+        "8500.00",
         "chronic migraine",
         text,
         request.task,

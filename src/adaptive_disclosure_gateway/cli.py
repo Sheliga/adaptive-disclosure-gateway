@@ -89,8 +89,11 @@ from pathlib import Path
 from adaptive_disclosure_gateway.application import wire
 from adaptive_disclosure_gateway.application.contracts import (
     DisclosureExecution,
+    DisclosureExport,
     DisclosurePreview,
+    DisclosureRestore,
     DisclosureStrategy,
+    ExportRefusedError,
     GovernanceOverrides,
     StrategyComparison,
     StrategyOption,
@@ -98,6 +101,10 @@ from adaptive_disclosure_gateway.application.contracts import (
 from adaptive_disclosure_gateway.application.examples import ExampleNotFoundError, ExampleSummary
 from adaptive_disclosure_gateway.application.ingestion import IngestionError
 from adaptive_disclosure_gateway.application.requests import ContentSourceError, MissingTaskError
+from adaptive_disclosure_gateway.application.restore_handle import (
+    RestoreHandleError,
+    RestoreUnavailableError,
+)
 from adaptive_disclosure_gateway.application.service import (
     DisclosureApplicationService,
     ServiceHealth,
@@ -114,21 +121,42 @@ EXIT_BAD_INPUT = 2
 # for bad caller input -- see the module docstring's no-leak boundary. Never
 # includes anything provider- or core-raised: those are unexpected errors.
 class FileReadError(Exception):
-    """Raised when ``--file`` names a path this process cannot read at all
-    (missing, a directory, permission denied). Distinct from
-    ``IngestionError``, which is about content this CLI *did* read and the
-    application layer refused to normalize: reading from disk is a CLI
-    concern the application boundary deliberately has no part in (it accepts
-    bytes, never a path). Messages name the path and the OSError kind only.
+    """Raised when ``--file``/``--handle-file``/``--text-file`` names a path
+    this process cannot read at all (missing, a directory, permission
+    denied). Distinct from ``IngestionError``, which is about content this
+    CLI *did* read and the application layer refused to normalize: reading
+    from disk is a CLI concern the application boundary deliberately has no
+    part in (it accepts bytes, never a path). Messages name the path and the
+    OSError kind only.
     """
 
 
+class RestoreInputError(Exception):
+    """Raised by ``adg restore`` when neither ``--handle-file`` nor
+    ``--text-file`` is supplied (T26 / issue #67): standard input is one
+    stream and cannot be split between the handle and the submitted text, so
+    at least one of the two must be an explicit file. Never requires the
+    handle itself as a plain argv value -- only ever a path to it.
+    """
+
+
+# Every exception build_application_request/service.load_example/
+# service.export/service.restore may raise for bad caller input -- see the
+# module docstring's no-leak boundary. Never includes anything provider- or
+# core-raised: those are unexpected errors. ExportRefusedError,
+# RestoreUnavailableError and RestoreHandleError all carry fixed, safe
+# messages by construction (see their own docstrings) -- naming a category,
+# a missing environment variable, or "expired"/"invalid", never a value.
 _BAD_INPUT_EXCEPTIONS = (
     FileReadError,
     IngestionError,
     ContentSourceError,
     MissingTaskError,
     ExampleNotFoundError,
+    ExportRefusedError,
+    RestoreUnavailableError,
+    RestoreHandleError,
+    RestoreInputError,
 )
 
 _EPILOG = """\
@@ -201,7 +229,10 @@ def _add_json_argument(parser: argparse.ArgumentParser, *, suppress_default: boo
 
 
 def _add_disclosure_arguments(
-    parser: argparse.ArgumentParser, *, include_strategy: bool = True
+    parser: argparse.ArgumentParser,
+    *,
+    include_strategy: bool = True,
+    include_show_payload: bool = True,
 ) -> None:
     # include_strategy=False for `compare` (see its subparser below and the
     # module docstring): a comparison always covers all five B0-B4
@@ -209,6 +240,12 @@ def _add_disclosure_arguments(
     # selects one, when in fact any value would be silently overwritten per
     # entry by service.compare_strategies. preview/execute, which each run
     # exactly one strategy, keep the flag.
+    #
+    # include_show_payload=False for `export` (T26 / issue #67): unlike
+    # preview/execute/compare, where showing the payload is an opt-in extra
+    # on top of the primary status/category output, export's ENTIRE point is
+    # to hand the caller the disclosed text -- gating it behind a flag they
+    # would always have to pass defeats the command.
     _add_json_argument(parser, suppress_default=True)
     _add_content_source_arguments(parser)
     parser.add_argument("--task", help="the task the disclosed content is for")
@@ -219,11 +256,14 @@ def _add_disclosure_arguments(
             default=DisclosureStrategy.RECOMMENDED.value,
         )
     _add_governance_arguments(parser)
-    parser.add_argument(
-        "--show-payload",
-        action="store_true",
-        help="also print the external payload in human-readable output (see module docstring)",
-    )
+    if include_show_payload:
+        parser.add_argument(
+            "--show-payload",
+            action="store_true",
+            help=(
+                "also print the external payload in human-readable output (see module docstring)"
+            ),
+        )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -261,6 +301,33 @@ def build_parser() -> argparse.ArgumentParser:
         "the provider",
     )
     _add_disclosure_arguments(compare_parser, include_strategy=False)
+
+    export_parser = subparsers.add_parser(
+        "export",
+        help="export the disclosed representation plus a sealed restore handle; never calls "
+        "the provider (T26 / issue #67)",
+    )
+    _add_disclosure_arguments(export_parser, include_show_payload=False)
+
+    restore_parser = subparsers.add_parser(
+        "restore",
+        help="restore pseudonyms in submitted text using a restore handle from a prior export "
+        "(T26 / issue #67)",
+    )
+    _add_json_argument(restore_parser, suppress_default=True)
+    restore_parser.add_argument(
+        "--handle-file",
+        type=Path,
+        metavar="PATH",
+        help="read the restore handle from this file instead of standard input -- the handle "
+        "is never accepted as a plain argv value",
+    )
+    restore_parser.add_argument(
+        "--text-file",
+        type=Path,
+        metavar="PATH",
+        help="read the submitted text from this file instead of standard input",
+    )
 
     return parser
 
@@ -395,6 +462,24 @@ def _print_compare_human(comparison: StrategyComparison, *, show_payload: bool) 
         print()
 
 
+def _print_export_human(export: DisclosureExport) -> None:
+    print(f"strategy: {export.strategy.value}")
+    print(f"treatment: {export.treatment.value}")
+    print(f"restorable_count: {export.restorable_count}")
+    print(f"expires_at: {export.expires_at}")
+    print("external_payload:")
+    print(export.external_payload)
+    print("restore_handle:")
+    print(export.restore_handle)
+
+
+def _print_restore_human(restored: DisclosureRestore) -> None:
+    print(f"restored_count: {restored.restored_count}")
+    print(f"unresolved_count: {restored.unresolved_count}")
+    print("restored_text:")
+    print(restored.restored_text)
+
+
 def _print_execute_human(execution: DisclosureExecution) -> None:
     print(f"strategy: {execution.strategy.value}")
     print(f"treatment: {execution.treatment.value}")
@@ -467,6 +552,60 @@ def _cmd_execute(service: DisclosureApplicationService, args: argparse.Namespace
     return EXIT_OK
 
 
+def _cmd_export(service: DisclosureApplicationService, args: argparse.Namespace) -> int:
+    request = _build_application_request(service, args)
+    export = service.export(request)
+    if args.json:
+        print(wire.ExportResponse.from_domain(export).model_dump_json(indent=2))
+    else:
+        _print_export_human(export)
+    return EXIT_OK
+
+
+def _read_restore_file(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as exc:
+        # Mirrors _build_application_request's --file handling: names the
+        # path (the caller's own argv) and the OSError kind only -- never
+        # content, which was never read. `from None` breaks the chain so no
+        # stdlib message reaches the caller either.
+        raise FileReadError(f"could not read {path}: {type(exc).__name__}") from None
+
+
+def _read_restore_inputs(args: argparse.Namespace) -> tuple[str, str]:
+    """Resolve ``(restore_handle, text)`` from ``--handle-file``/``--text-file``
+    or standard input.
+
+    Standard input is a single stream, so it can supply at most one of the
+    two -- if both flags are omitted there is nothing left to read the other
+    from, which is a caller usage error, not an unexpected one. The handle
+    is never accepted as a plain argv value (module docstring, and CLAUDE.md:
+    a secret-shaped value on the command line ends up in process listings
+    and shell history).
+    """
+    if args.handle_file is None and args.text_file is None:
+        raise RestoreInputError(
+            "adg restore requires --handle-file and/or --text-file; standard input can supply "
+            "at most one of the two"
+        )
+    handle = (
+        _read_restore_file(args.handle_file) if args.handle_file is not None else sys.stdin.read()
+    )
+    text = _read_restore_file(args.text_file) if args.text_file is not None else sys.stdin.read()
+    return handle.strip(), text
+
+
+def _cmd_restore(service: DisclosureApplicationService, args: argparse.Namespace) -> int:
+    restore_handle, text = _read_restore_inputs(args)
+    restored = service.restore(text=text, restore_handle=restore_handle)
+    if args.json:
+        print(wire.RestoreResponse.from_domain(restored).model_dump_json(indent=2))
+    else:
+        _print_restore_human(restored)
+    return EXIT_OK
+
+
 _COMMAND_HANDLERS = {
     "health": _cmd_health,
     "examples": _cmd_examples,
@@ -474,6 +613,8 @@ _COMMAND_HANDLERS = {
     "preview": _cmd_preview,
     "execute": _cmd_execute,
     "compare": _cmd_compare,
+    "export": _cmd_export,
+    "restore": _cmd_restore,
 }
 
 

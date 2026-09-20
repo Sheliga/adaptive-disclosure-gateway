@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import os
 
+from adaptive_disclosure_gateway.api.limits import DEFAULT_MAX_UPLOAD_BYTES
 from adaptive_disclosure_gateway.application.settings import (
     DEFAULT_EXAMPLES_DIR,
     DEFAULT_POLICY_DIR,
@@ -35,11 +36,13 @@ from adaptive_disclosure_gateway.application.settings import (
 
 __all__ = [
     "DEFAULT_EXAMPLES_DIR",
+    "DEFAULT_MAX_UPLOAD_BYTES",
     "DEFAULT_POLICY_DIR",
     "allowed_origins",
     "build_default_service",
     "default_governance_context",
     "examples_directory",
+    "max_upload_bytes",
     "policy_directory",
 ]
 
@@ -52,3 +55,22 @@ def allowed_origins() -> tuple[str, ...]:
     """
     raw = os.getenv("ADG_ALLOWED_ORIGINS", "")
     return tuple(origin.strip() for origin in raw.split(",") if origin.strip())
+
+
+def max_upload_bytes() -> int:
+    """``ADG_MAX_UPLOAD_BYTES``, defaulting to ``DEFAULT_MAX_UPLOAD_BYTES``.
+
+    Fails closed on a value that is not a positive integer: an unparseable
+    or non-positive limit falls back to the documented default rather than
+    to "no limit". A deployment that wanted no limit would have to remove
+    the middleware deliberately, which is a reviewable change -- never a
+    typo in an environment variable.
+    """
+    raw = os.getenv("ADG_MAX_UPLOAD_BYTES")
+    if raw is None or not raw.strip():
+        return DEFAULT_MAX_UPLOAD_BYTES
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return DEFAULT_MAX_UPLOAD_BYTES
+    return parsed if parsed > 0 else DEFAULT_MAX_UPLOAD_BYTES

@@ -79,13 +79,35 @@ const ptBR = {
     pasteLabel: "Cole o texto que deseja testar",
     pastePlaceholder: "Cole aqui o conteúdo que deseja testar.",
     uploadFieldLabel: "Selecione um arquivo",
-    uploadDropHint: "Arraste um arquivo .txt ou .md aqui, ou escolha um arquivo.",
-    uploadUnsupportedType: "Apenas arquivos .txt ou .md são aceitos.",
+    uploadDropHint: "Arraste um contrato PDF, DOCX, TXT ou MD aqui, ou escolha um arquivo.",
+    uploadUnsupportedType: "Apenas arquivos PDF, DOCX, TXT ou MD são aceitos.",
     uploadReadError: "Não foi possível ler o arquivo selecionado.",
     removeFile: "Remover arquivo",
     fileNameLabel: "Nome do arquivo",
     fileTypeLabel: "Tipo",
     fileSizeLabel: "Tamanho",
+    documentTypeLabel: "Tipo de documento",
+    documentTypesLoading: "Carregando tipos de documento...",
+    documentTypesLoadError: "Não foi possível carregar os tipos de documento.",
+    analysisModeLabel: "Tipo de análise",
+    documentTypeLabels: {
+      contract: "Contrato",
+      hr_record: "Registro de RH",
+    } as Record<string, string>,
+    analysisModeLabels: {
+      contract_summary: "Resumo do contrato",
+      financial_audit: "Auditoria financeira",
+      compliance_review: "Revisão de conformidade",
+      team_summary: "Resumo da equipe",
+      salary_analysis: "Análise salarial",
+      compensation_review: "Revisão de remuneração",
+    } as Record<string, string>,
+    fileTypeLabels: {
+      pdf: "Documento PDF",
+      docx: "Documento Word",
+      txt: "Texto simples",
+      md: "Markdown",
+    } as Record<string, string>,
     taskLabel: "O que você quer que o modelo faça com esse conteúdo?",
     taskPlaceholder: "Ex.: Resuma os pontos principais deste documento.",
     taskHintForExample: "Deixe em branco para usar a tarefa sugerida pelo exemplo escolhido.",
@@ -126,6 +148,7 @@ const ptBR = {
 
   provider: {
     deterministicDemoLabel: "Provedor de demonstração determinístico — não é um modelo real.",
+    externalModelLabel: "Modelo externo configurado.",
     /*
      * Shown when `GET /health` could not be reached or did not satisfy its
      * contract. Deliberately states only that the check failed -- it must
@@ -138,6 +161,7 @@ const ptBR = {
 
   processingStages: {
     readingFile: "Lendo o arquivo",
+    analyzingDocument: "Analisando o documento",
     detectingSensitiveData: "Detectando dados sensíveis",
     applyingDisclosurePolicy: "Aplicando política de divulgação",
     consultingModel: "Consultando o modelo",
@@ -351,6 +375,13 @@ const ptBR = {
       salary: "Salário",
       department: "Departamento",
       medical_data: "Dados médicos",
+      party_name: "Parte do contrato",
+      representative_name: "Representante",
+      cnpj: "CNPJ",
+      contract_value: "Valor do contrato",
+      penalty_amount: "Multa / penalidade",
+      deadline: "Prazo",
+      bank_account: "Conta bancária",
     },
   },
 
@@ -406,10 +437,195 @@ const ptBR = {
     tryAgain: "Tentar novamente",
   },
 
+  /**
+   * T27 / issue #69: per-action descriptors for the transformation inspector
+   * (`lib/inspectionActions.ts`). Keyed by the FROZEN `DisclosureAction`
+   * codes (`preserve`, `pseudonymize`, `generalize`, `remove`) -- same split
+   * as `outcomes` above: the key is verbatim API vocabulary, never
+   * translated, only the value is presentation prose. Deliberately a
+   * SEPARATE table from `outcomes` even though the underlying concepts are
+   * closely related (an outcome is what a category ended up as; an
+   * inspector action is what happened to one specific segment of text) --
+   * this table's copy is written for the segment-level, click-to-inspect
+   * context, `outcomes`'s for the category-summary context, and the two are
+   * free to diverge in wording without either module having to know about
+   * the other's copy.
+   */
+  inspectionActions: {
+    preserve: {
+      label: "Mantido",
+      explanation: "Este trecho foi mantido sem alteração nesta divulgação.",
+    },
+    pseudonymize: {
+      label: "Pseudonimizado",
+      explanation: "Este trecho foi substituído por um pseudônimo local.",
+    },
+    generalize: {
+      label: "Generalizado",
+      explanation: "Este trecho foi substituído por uma versão menos específica antes do envio.",
+    },
+    remove: {
+      label: "Removido",
+      explanation: "Este trecho foi removido e não está presente na versão divulgada.",
+    },
+    untouched: {
+      label: "Sem alteração",
+      explanation: "Este trecho não foi identificado como sensível e permanece igual.",
+    },
+    unknown: {
+      label: "Ação não reconhecida",
+      explanation:
+        "O sistema retornou uma ação que esta versão da interface não reconhece. Por segurança, ela não é tratada como nenhuma das ações conhecidas.",
+    },
+    removedMarker: "[trecho removido]",
+  },
+
+  /**
+   * T27 / issue #69: the transformation inspector itself
+   * (`components/DisclosureInspector/`), rendered inside `ReviewScreen` only
+   * when `preview.inspection !== null`.
+   */
+  disclosureInspector: {
+    toggleLabel: "Ver comparação lado a lado (original x divulgado)",
+    heading: "Comparação: original x divulgado",
+    originalColumnHeading: "Original",
+    disclosedColumnHeading: "Divulgado",
+    legendHeading: "Legenda das ações",
+    disclaimer:
+      "Esta visão de transparência existe para fins de avaliação e pesquisa. Um produto final restringiria significativamente este recurso. Não existe um explorador de cofre: esta visão mostra apenas as transformações deste documento.",
+    unavailableBlockedHeading: "Comparação não disponível",
+    unavailableBlockedExplanation:
+      "A solicitação foi bloqueada pela política de divulgação, então não há uma versão divulgada para comparar.",
+    unavailableAlignmentFailedHeading: "Comparação não disponível para esta decisão",
+    unavailableAlignmentFailedExplanation:
+      "Não foi possível verificar com segurança o alinhamento entre o texto original e o divulgado para esta decisão. O payload exato continua disponível acima.",
+    detailPanelHeading: "Detalhe do trecho selecionado",
+    detailActionLabel: "Ação:",
+    detailCategoryLabel: "Categoria:",
+    detailTreatmentLabel: "Tratamento:",
+    detailStrategyLabel: "Estratégia:",
+    detailReasonLabel: "Motivo:",
+    detailReasonUnavailable: "Motivo não disponível para esta categoria.",
+    detailOriginalLabel: "Original:",
+    detailDisclosedLabel: "Divulgado:",
+    detailPositionLabel: "Item {n} de {total}",
+    noSelectionHint: "Selecione um trecho destacado para ver os detalhes.",
+  },
+
+  /**
+   * T28 / issue #70: the export/restore demonstration panel
+   * (`components/ExportRestorePanel/`), rendered inside `ReviewScreen` only
+   * when the demo transparency feature flag is enabled AND the preview is
+   * allowed.
+   */
+  exportRestorePanel: {
+    heading: "Exportar e restaurar (demonstração)",
+    disclaimer:
+      "Este recurso existe para demonstrar o ciclo completo de exportação e restauração para fins de avaliação. Um produto final restringiria ou removeria esta superfície.",
+    uploadOnlyNote:
+      "A exportação HTTP está disponível apenas para o fluxo de envio de arquivo nesta demonstração.",
+    exportButton: "Exportar",
+    exportedPayloadHeading: "Representação divulgada exportada",
+    restorableCountLabel: "itens restauráveis",
+    expiresAtLabel: "Expira em:",
+    treatmentLabel: "Tratamento:",
+    strategyLabel: "Estratégia:",
+    handleHeading: "Identificador de restauração",
+    handleHiddenNotice: "O identificador é mantido apenas nesta tela, nunca salvo automaticamente.",
+    copyHandleButton: "Copiar identificador",
+    copyHandleSuccess: "Identificador copiado.",
+    downloadHandleButton: "Baixar identificador (.txt)",
+    importHandleLabel: "Importar identificador de um arquivo",
+    simulateResponseHeading: "Simular resposta externa",
+    simulateResponseHint:
+      "Edite o texto abaixo como se fosse uma resposta recebida de fora do gateway, mantendo os pseudônimos que deseja restaurar.",
+    restoreButton: "Restaurar localmente",
+    restoredResultHeading: "Resultado da restauração",
+    restoredCountLabel: "pseudônimos restaurados",
+    unresolvedCountLabel: "tokens não reconhecidos por este identificador",
+    unresolvedExplanation:
+      "Tokens não reconhecidos têm formato de pseudônimo, mas não pertencem ao escopo deste identificador de restauração; eles permanecem inalterados no texto restaurado.",
+    clearButton: "Limpar",
+  },
+
+  /**
+   * T29 / issue #72: fail-closed presentation labels for the vault
+   * explorer's `scope` field (`lib/vaultScopes.ts`). Same split as
+   * `categories.labels` above -- keys are the frozen `PseudonymScope`
+   * identifiers verbatim (never translated), only the value is
+   * presentation prose. An unrecognized scope is reported as `unrecognized`
+   * rather than prettified from its identifier, same posture as
+   * `categories.unrecognized`.
+   */
+  vaultScopes: {
+    unrecognized: "Escopo não reconhecido",
+    technicalIdLabel: "Identificador técnico:",
+    labels: {
+      request: "Uma única requisição",
+      document: "Um documento",
+      session: "Uma sessão",
+    } as Record<string, string>,
+    explanations: {
+      request: "Este pseudônimo só pode ser revertido dentro da mesma requisição que o criou.",
+      document: "Este pseudônimo pode ser revertido em qualquer requisição sobre o mesmo documento.",
+      session: "Este pseudônimo pode ser revertido em qualquer requisição da mesma sessão.",
+    } as Record<string, string>,
+  },
+
+  /**
+   * T29 / issue #72: the demo vault explorer panel
+   * (`components/VaultExplorerPanel/`), rendered on the Review and Result
+   * screens only when the demo vault explorer feature flag is enabled AND
+   * the current preview carries a non-null `vault_explorer_token`.
+   *
+   * This panel is DELIBERATELY not merged with the T27 inspector
+   * (`disclosureInspector` above): the inspector shows what changed in this
+   * document's disclosed representation; this panel shows which reversible
+   * local state -- the pseudonym -> original mapping -- stayed inside the
+   * trust boundary for this decision. Two different questions, two
+   * different data models, one conceptual link stated here in copy only.
+   */
+  vaultExplorerPanel: {
+    heading: "Vault Explorer — Demonstração",
+    subtitle: "Fronteira de confiança local",
+    disclaimer:
+      "Esta visão existe apenas para fins de demonstração e avaliação. Um produto final não exporia estes mapeamentos desta forma.",
+    toggleLabel: "Ver o Vault Explorer (cofre local)",
+    unavailableForDecision:
+      "O Vault Explorer não está disponível para esta decisão (nenhuma referência foi emitida).",
+    loadingLabel: "Carregando entradas do cofre local...",
+    scopeLabel: "Escopo:",
+    entryCountLabel: "entradas reversíveis",
+    zeroEntriesMessage:
+      "Esta decisão não deixou estado reversível local: o tratamento removeu ou generalizou os dados sensíveis em vez de pseudonimizá-los.",
+    categoryLabel: "Categoria:",
+    pseudonymLabel: "O que o serviço externo recebeu:",
+    originalLabel: "O que permaneceu na fronteira local:",
+    presentLabel: "Ainda mantido localmente",
+    notPresentLabel: "Não está mais disponível localmente",
+    showOriginalsToggle: "Mostrar valores originais",
+    hideOriginalsToggle: "Ocultar valores originais",
+    maskedValuePlaceholder: "••••••••",
+    notAvailablePlaceholder: "—",
+  },
+
   errors: {
     generic: "Não foi possível concluir a operação. Tente novamente.",
     upstreamUnreachable: "Não foi possível falar com o serviço no momento. Tente novamente em instantes.",
     validationFailed: "Os dados enviados não são válidos. Revise e tente novamente.",
+    fileTooLarge: "O arquivo excede o limite aceito pelo serviço.",
+    documentParsing: "Não foi possível processar este documento. Verifique o formato e tente novamente.",
+    invalidAnalysisMode: "Esse tipo de análise não é aceito para o documento selecionado.",
+    previewExpired: "Esta revisão não é mais válida. Faça uma nova revisão antes de enviar.",
+    comparisonUnavailableForUpload: "A comparação ainda não está disponível para documentos estruturados.",
+    demoTransparencyDisabled: "Este recurso de demonstração não está habilitado nesta implantação.",
+    exportRefused: "Não foi possível gerar a exportação para este conteúdo.",
+    restoreUnavailable: "A restauração local não está disponível nesta implantação no momento.",
+    restoreHandleInvalid: "Este identificador de restauração não é válido.",
+    restoreHandleExpired: "Este identificador de restauração expirou. Gere uma nova exportação.",
+    demoVaultExplorerDisabled: "Este recurso de demonstração não está habilitado nesta implantação.",
+    vaultExplorerReferenceInvalid:
+      "Esta referência ao cofre local não é mais válida ou expirou. Faça uma nova revisão antes de continuar.",
   },
 
   sectionHeadings: {

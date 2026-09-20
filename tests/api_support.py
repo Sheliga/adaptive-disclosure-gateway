@@ -88,13 +88,20 @@ class RecordingProvider:
 
 
 def build_service(
-    provider=None, *, examples_directory: Path | None = EXAMPLES_DIR, **context_overrides
+    provider=None,
+    *,
+    examples_directory: Path | None = EXAMPLES_DIR,
+    demo_transparency_enabled: bool = False,
+    demo_vault_explorer_enabled: bool = False,
+    **context_overrides,
 ) -> DisclosureApplicationService:
     return DisclosureApplicationService(
         policy_repository=policy_repository(),
         provider=provider if provider is not None else FakeProvider(),
         default_context=default_context(**context_overrides),
         examples_directory=examples_directory,
+        demo_transparency_enabled=demo_transparency_enabled,
+        demo_vault_explorer_enabled=demo_vault_explorer_enabled,
     )
 
 

@@ -401,3 +401,51 @@ describe("ResultScreen -- switches to English (T21 fourth slice)", () => {
     expect(screen.queryByText(copy.result.heading)).not.toBeInTheDocument();
   });
 });
+
+describe("ResultScreen -- Vault Explorer gating (T29 / issue #72)", () => {
+  const defaultProps = {
+    health: { status: "loading" as const },
+    onRestart: vi.fn(),
+    compareError: null,
+    onCompareStrategies: vi.fn(),
+    onViewTechnicalDetails: vi.fn(),
+  };
+
+  it("is absent by default (demoVaultExplorerEnabled defaults to false) and makes no fetch call", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<ResultScreen execute={execute()} {...defaultProps} />);
+
+    expect(screen.queryByText(copy.vaultExplorerPanel.heading)).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("is absent when the feature is disabled even though a token is present", () => {
+    render(
+      <ResultScreen
+        execute={execute()}
+        {...defaultProps}
+        demoVaultExplorerEnabled={false}
+        vaultExplorerToken="vx1.token"
+      />,
+    );
+
+    expect(screen.queryByText(copy.vaultExplorerPanel.heading)).not.toBeInTheDocument();
+  });
+
+  it("renders the panel heading when the feature is enabled, regardless of token", () => {
+    render(
+      <ResultScreen
+        execute={execute()}
+        {...defaultProps}
+        demoVaultExplorerEnabled={true}
+        vaultExplorerToken={null}
+      />,
+    );
+
+    expect(screen.getByText(copy.vaultExplorerPanel.heading)).toBeInTheDocument();
+    expect(screen.getByText(copy.vaultExplorerPanel.unavailableForDecision)).toBeInTheDocument();
+  });
+});

@@ -27,7 +27,16 @@ specifically (both adapters serve it verbatim) so a client can assert
 compatibility, and only needs to change when a response shape actually
 changes incompatibly. Its value, ``"t20-application-api-v1"``, is a
 published contract identifier and must not be renamed or bumped as part of
-this move.
+this move. ``PreviewResponse.inspection`` (T27 / issue #69) is one such
+non-incompatible change: an additive, nullable field -- ``null`` whenever
+the demo transparency flag is off (the historical, unmodified behavior for
+every existing caller) and populated only when a deployer opts in -- so it
+does not bump ``CONTRACT_VERSION`` either, for the same reason
+``ExportResponse``/``RestoreResponse`` below did not.
+``PreviewResponse.vault_explorer_token`` (T29 / issue #72) is the same
+shape of change again: additive, nullable, ``null`` unless
+``ADG_ENABLE_DEMO_VAULT_EXPLORER`` is set for this deployment -- so it does
+not bump ``CONTRACT_VERSION`` either.
 
 Every enum-valued field below is serialized as its frozen string value
 (``Treatment``/``DisclosureStrategy``/``PseudonymScope`` are all
@@ -62,6 +71,7 @@ to any shape a client already depends on.
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
@@ -69,15 +79,21 @@ from pydantic import BaseModel, ConfigDict
 from adaptive_disclosure_gateway.application.contracts import (
     CategoryDisclosureSummary,
     DisclosureExecution,
+    DisclosureExport,
+    DisclosureInspection,
+    DisclosureInspectionSegment,
     DisclosurePreview,
+    DisclosureRestore,
     DisclosureSummary,
+    DocumentDisclosurePreview,
     SafeGovernanceView,
     StrategyComparison,
     StrategyComparisonEntry,
     StrategyOption,
 )
 from adaptive_disclosure_gateway.application.examples import ExampleSummary
-from adaptive_disclosure_gateway.application.service import ServiceHealth
+from adaptive_disclosure_gateway.application.service import ServiceHealth, ServiceReadiness
+from adaptive_disclosure_gateway.application.vault_explorer import VaultExplorerView
 from adaptive_disclosure_gateway.audit import ProviderStage, ReconstructionStage
 
 CONTRACT_VERSION = "t20-application-api-v1"
@@ -119,6 +135,52 @@ class HealthResponse(BaseModel):
             contract_version=CONTRACT_VERSION,
             provider=ProviderHealthModel.from_domain(health),
             treatments_available=[treatment.value for treatment in health.treatments_available],
+        )
+
+
+# --- GET /ready (T25 review finding 2) ------------------------------------------
+
+
+class ReadinessReason(StrEnum):
+    """The closed vocabulary ``GET /ready``'s optional ``reason`` field is
+    restricted to (``extra="forbid"`` on ``ReadyResponse`` below rejects
+    anything else). Every member names a *category* of unreadiness only --
+    never a credential, an environment variable's value, a config value or
+    any exception text (CLAUDE.md's no-leak invariant). The string values
+    are produced independently by ``providers.readiness`` and
+    ``application.preview_confirmation`` (which cannot import this module
+    without a cycle); this enum is the one place their shared vocabulary is
+    pinned as a closed set for the wire contract.
+    """
+
+    PROVIDER_CREDENTIAL_MISSING = "provider_credential_missing"
+    PROVIDER_SDK_UNAVAILABLE = "provider_sdk_unavailable"
+    CONFIRMATION_SECRET_NOT_DURABLE = "confirmation_secret_not_durable"
+    PROVIDER_UNRECOGNIZED = "provider_unrecognized"
+
+
+class ReadyResponse(BaseModel):
+    """``GET /ready``'s response -- a purely local readiness probe meant for
+    a container healthcheck/orchestrator, not a versioned data contract a
+    client parses: unlike every other response model here, it carries no
+    ``contract_version``.
+
+    ``reason`` is present only when ``status`` is ``"not_ready"`` and is
+    always one of ``ReadinessReason``'s fixed values -- ``extra="forbid"``
+    plus the closed enum together mean a caller can never observe anything
+    beyond this fixed vocabulary through this endpoint.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: str
+    reason: ReadinessReason | None = None
+
+    @classmethod
+    def from_domain(cls, readiness: ServiceReadiness) -> ReadyResponse:
+        return cls(
+            status="ready" if readiness.ready else "not_ready",
+            reason=ReadinessReason(readiness.reason) if readiness.reason is not None else None,
         )
 
 
@@ -279,6 +341,55 @@ class ProviderModeModel(BaseModel):
     provider_class: str
 
 
+class InspectionSegmentModel(BaseModel):
+    """One ``DisclosureInspectionSegment`` (T27 / issue #69). ``action`` is
+    the frozen ``DisclosureAction`` string value (e.g. ``"remove"``), or
+    ``None`` for an untouched segment -- never a human-readable label; the UI
+    owns copy, exactly like every other action/outcome code this contract
+    serializes.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: str | None
+    category: str | None
+    original: str
+    disclosed: str
+
+    @classmethod
+    def from_domain(cls, segment: DisclosureInspectionSegment) -> InspectionSegmentModel:
+        return cls(
+            action=segment.action.value if segment.action is not None else None,
+            category=segment.category,
+            original=segment.original,
+            disclosed=segment.disclosed,
+        )
+
+
+class DisclosureInspectionModel(BaseModel):
+    """The T27 / issue #69 visual diff/inspector projection. ``segments`` is
+    empty whenever ``available`` is ``False`` -- see
+    ``application/inspection.py``/``contracts.DisclosureInspection`` for the
+    two ``unavailable_reason`` cases this can be.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    available: bool
+    unavailable_reason: str | None
+    segments: list[InspectionSegmentModel]
+
+    @classmethod
+    def from_domain(cls, inspection: DisclosureInspection) -> DisclosureInspectionModel:
+        return cls(
+            available=inspection.available,
+            unavailable_reason=inspection.unavailable_reason,
+            segments=[
+                InspectionSegmentModel.from_domain(segment) for segment in inspection.segments
+            ],
+        )
+
+
 class PreviewResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -290,6 +401,8 @@ class PreviewResponse(BaseModel):
     strategy: str
     governance: SafeGovernanceViewModel
     provider_mode: ProviderModeModel
+    inspection: DisclosureInspectionModel | None = None
+    vault_explorer_token: str | None = None
 
     @classmethod
     def from_domain(cls, preview: DisclosurePreview) -> PreviewResponse:
@@ -302,7 +415,43 @@ class PreviewResponse(BaseModel):
             strategy=preview.strategy.value,
             governance=SafeGovernanceViewModel.from_domain(preview.governance),
             provider_mode=ProviderModeModel(provider_class=preview.provider_mode.provider_class),
+            inspection=(
+                DisclosureInspectionModel.from_domain(preview.inspection)
+                if preview.inspection is not None
+                else None
+            ),
+            vault_explorer_token=preview.vault_explorer_token,
         )
+
+
+# --- POST /documents/preview -----------------------------------------------------
+
+
+class DocumentPreviewResponse(PreviewResponse):
+    """``PreviewResponse`` plus the confirmation the structured-document
+    flow requires back on execute.
+
+    A subclass rather than a new field on ``PreviewResponse`` so the
+    historical ``/disclosure/preview`` contract is untouched: that surface
+    has no confirmation step, and giving every one of its callers a
+    permanently-null ``confirmation_token`` would describe a mechanism that
+    does not apply to them.
+
+    ``confirmation_token`` is opaque to the client. It is not a session, not
+    an identifier of anything stored server-side, and carries no
+    representation of the document, the task or the payload -- see
+    ``application/preview_confirmation.py``. A client's only correct use of
+    it is to send it back unchanged, alongside the identical upload.
+    """
+
+    confirmation_token: str
+
+    @classmethod
+    def from_document_preview(
+        cls, document_preview: DocumentDisclosurePreview
+    ) -> DocumentPreviewResponse:
+        base = PreviewResponse.from_domain(document_preview.preview)
+        return cls(**base.model_dump(), confirmation_token=document_preview.confirmation_token)
 
 
 # --- POST /disclosure/execute ---------------------------------------------------
@@ -434,6 +583,108 @@ class CompareResponse(BaseModel):
             ],
             governance=SafeGovernanceViewModel.from_domain(comparison.governance),
             provider_mode=ProviderModeModel(provider_class=comparison.provider_mode.provider_class),
+        )
+
+
+# --- POST /documents/export / POST /documents/restore ---------------------------
+#
+# T26 / issue #67. Two new, additive response shapes -- neither replaces nor
+# widens an existing one, so CONTRACT_VERSION is not bumped (see this
+# module's own docstring on why adding a response model is not an
+# incompatible change to any shape a client already depends on).
+#
+# Deliberately excludes anything that would let the mapping travel wholesale:
+# ``ExportResponse`` never carries the (pseudonym -> original) entries, only
+# ``restore_handle`` (opaque) and ``restorable_count``; ``RestoreResponse``
+# never carries the mapping either, only the restored text and two counts.
+
+
+class ExportResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: str
+    external_payload: str
+    restore_handle: str
+    expires_at: int
+    restorable_count: int
+    treatment: str
+    strategy: str
+    governance: SafeGovernanceViewModel
+
+    @classmethod
+    def from_domain(cls, export: DisclosureExport) -> ExportResponse:
+        return cls(
+            contract_version=CONTRACT_VERSION,
+            external_payload=export.external_payload,
+            restore_handle=export.restore_handle,
+            expires_at=export.expires_at,
+            restorable_count=export.restorable_count,
+            treatment=export.treatment.value,
+            strategy=export.strategy.value,
+            governance=SafeGovernanceViewModel.from_domain(export.governance),
+        )
+
+
+class RestoreResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: str
+    restored_text: str
+    restored_count: int
+    unresolved_count: int
+
+    @classmethod
+    def from_domain(cls, restore: DisclosureRestore) -> RestoreResponse:
+        return cls(
+            contract_version=CONTRACT_VERSION,
+            restored_text=restore.restored_text,
+            restored_count=restore.restored_count,
+            unresolved_count=restore.unresolved_count,
+        )
+
+
+# --- POST /demo/vault-explorer ---------------------------------------------------
+#
+# T29 / issue #72. Additive, like the export/restore shapes above: a new
+# response shape, not a change to any existing one, so CONTRACT_VERSION is
+# not bumped. Deliberately small and closed -- no scope key, no session/
+# document/request identifier, nothing beyond category/pseudonym/original/
+# present for each reversible entry the sealed token names.
+
+
+class VaultExplorerEntryModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    category: str
+    pseudonym: str
+    original: str | None
+    present: bool
+
+
+class VaultExplorerResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: str
+    scope: str | None
+    entry_count: int
+    entries: list[VaultExplorerEntryModel]
+
+    @classmethod
+    def from_domain(cls, view: VaultExplorerView) -> VaultExplorerResponse:
+        entries = [
+            VaultExplorerEntryModel(
+                category=entry.category,
+                pseudonym=entry.pseudonym,
+                original=entry.original,
+                present=entry.present,
+            )
+            for entry in view.entries
+        ]
+        return cls(
+            contract_version=CONTRACT_VERSION,
+            scope=view.scope,
+            entry_count=len(entries),
+            entries=entries,
         )
 
 

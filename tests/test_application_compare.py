@@ -177,6 +177,24 @@ def test_every_entry_shares_identical_governance_and_provider_mode():
     assert comparison.provider_mode.provider_class == "fake"
 
 
+def test_every_entry_reuses_the_same_normalized_content_object(monkeypatch):
+    service = _service(RecordingProvider())
+    request = _app_request(HR_TEXT)
+    seen_content = []
+    original_preview = service.preview
+
+    def recording_preview(per_strategy_request):
+        seen_content.append(per_strategy_request.content)
+        return original_preview(per_strategy_request)
+
+    monkeypatch.setattr(service, "preview", recording_preview)
+
+    service.compare_strategies(request)
+
+    assert len(seen_content) == 5
+    assert all(content is request.content for content in seen_content)
+
+
 # --- 5. recommended is True for exactly one entry ----------------------------
 
 

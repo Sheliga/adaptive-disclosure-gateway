@@ -1,0 +1,60 @@
+input:
+  sample_id: contracts_deadline_tracking_002
+  task_family: deadline_tracking
+  text: |
+    CONTRACT
+    Contracting party: Serrano Mineracao Ltda
+    Contracted party: Alvorada Servicos Tecnicos SA
+    Penalty: R$ 7500.00
+    Deadline: 2026-01-16
+  task: >-
+    Report the contractual deadline for the internal delivery calendar.
+    The penalty amount and the identities of the parties are not needed.
+  domain: contracts
+  purpose: delivery_tracking
+  requester_role: legal_reviewer
+  provider_class: internal_llm
+  policy_version: contracts-v1
+
+oracle:
+  sample_id: contracts_deadline_tracking_002
+  # The only case that varies `provider_class` (and one of two varying
+  # `requester_role` away from the analyst/auditor pattern). `contracts-v1`
+  # reads NEITHER dimension -- docs/contracts-policy-matrix.md states that
+  # explicitly -- so no policy difference is expected here, and the case
+  # exists to make that documented absence observable rather than assumed.
+  # It is not evidence that those dimensions are inert in general;
+  # hr-v2/hr-v3 are the policy versions that exercise them.
+  expected_spans:
+    - category: party_name
+      value: 'Serrano Mineracao Ltda'
+      start: 28
+      end: 50
+      task_necessity: not_required
+      expected_actions: [remove, pseudonymize]
+    - category: party_name
+      value: 'Alvorada Servicos Tecnicos SA'
+      start: 69
+      end: 98
+      task_necessity: not_required
+      expected_actions: [remove, pseudonymize]
+    - category: penalty_amount
+      value: 'R$ 7500.00'
+      start: 108
+      end: 118
+      task_necessity: not_required
+      expected_actions: [remove, generalize]
+    - category: deadline
+      value: '2026-01-16'
+      start: 129
+      end: 139
+      task_necessity: required
+      expected_actions: [preserve]
+  expected_block_request: false
+  expected_answer: >-
+    The response reports the contractual deadline, 2026-01-16, to the day,
+    and names neither party nor the penalty amount.
+  answer_depends_on_categories: [deadline]
+  reconstruction:
+    - category: party_name
+      expected_reconstructable: true

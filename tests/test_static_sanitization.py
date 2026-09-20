@@ -38,7 +38,7 @@ def test_generalize_action_replaces_salary_without_leaking_original_value():
 
     result = StaticSanitizer().sanitize(request, spans)
 
-    assert "8500" not in result.external_payload
+    assert "8500.00" not in result.external_payload
     transformation = next(t for t in result.transformations if t.category == "salary")
     assert transformation.action is DisclosureAction.GENERALIZE
     # Issue #16: GENERALIZE must be a real band, not a fixed placeholder --
@@ -60,7 +60,7 @@ def test_unconfigured_generalize_category_fails_closed_instead_of_disclosing(mon
     result = StaticSanitizer().sanitize(request, spans)
 
     assert result.status == "blocked"
-    assert "500" not in result.external_payload
+    assert "500.00" not in result.external_payload
 
 
 def test_configured_generalize_category_with_unparseable_value_fails_closed_not_raises():

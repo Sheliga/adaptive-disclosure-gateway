@@ -368,6 +368,28 @@ def apply(
     return ApplyOutcome(result=result, blocked=False, pseudonym_scope=scope)
 
 
+def replace_ordered(text: str, pairs: list[tuple[str, str]]) -> str:
+    """Replace each ``(token, replacement)`` pair in ``pairs`` via literal
+    substring replacement, applied in the order given.
+
+    Callers are responsible for sorting ``pairs`` longest-token-first before
+    calling this (see :func:`reconstruct` and
+    ``application.restore_handle.restore_pseudonyms``, its two callers): a
+    shorter token that happens to be a substring/prefix of a longer one --
+    reachable in production via ``InMemoryVault``'s own collision-suffix
+    disambiguation (``PSEUDO-category-token`` vs.
+    ``PSEUDO-category-token-1``) -- would otherwise corrupt the longer
+    occurrence if replaced first. This function performs no reordering of
+    its own; it is the one shared token-replacement primitive both callers
+    use instead of each maintaining an independent copy of the same
+    ``str.replace`` loop.
+    """
+    result = text
+    for token, replacement in pairs:
+        result = result.replace(token, replacement)
+    return result
+
+
 def reconstruct(
     response_text: str,
     result: DisclosureResult,
@@ -408,12 +430,12 @@ def reconstruct(
         key=len,
         reverse=True,
     )
-
-    reconstructed = response_text
-    for pseudonym in ordered_pseudonyms:
-        original = vault.reconstruct(scope, key, pseudonym)
-        if original is not None:
-            reconstructed = reconstructed.replace(pseudonym, original)
+    resolved_pairs = [
+        (pseudonym, original)
+        for pseudonym in ordered_pseudonyms
+        if (original := vault.reconstruct(scope, key, pseudonym)) is not None
+    ]
+    reconstructed = replace_ordered(response_text, resolved_pairs)
 
     return ReconstructionOutcome(
         text=reconstructed, pseudonym_count=len(pseudonymized), authorized=True
