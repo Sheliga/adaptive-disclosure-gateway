@@ -819,3 +819,74 @@ class TestWebVaultExplorerIsGated:
             f'{route_file} must declare `export const dynamic = "force-dynamic";` -- '
             "otherwise next build may prerender it and bake the build-time env into the image"
         )
+
+
+#: Matches a "/api/..." path literal quoted with `"` or `'` (deliberately
+#: NOT backtick: every docstring in this module quotes example paths with
+#: backticks as markdown-style inline code, e.g. `` `/api/health` `` -- using
+#: only the quote characters real string-literal code in this codebase
+#: actually uses avoids treating that prose as a violation), capturing
+#: whether it is the argument of an `apiPath(...)` call (group 1) or a bare
+#: literal (group 1 is None). Deliberately a plain regex, not a TS parser,
+#: mirroring the style of every other static pin in this module -- good
+#: enough to catch the shape of defect this class exists to catch (a
+#: hardcoded path that bypasses the helper), without needing a real
+#: TypeScript AST.
+_API_PATH_LITERAL_RE = re.compile(r"(apiPath\(\s*)?[\"'](/api/[^\"']*)[\"']")
+
+#: Scoped to exactly the three directories the briefing (and CLAUDE.md's
+#: "reaches code that has not been written yet" architecture-test posture)
+#: names -- NOT the whole `web/` tree via `_web_source_files()`. That
+#: broader helper also walks `web/Dockerfile`, whose HEALTHCHECK
+#: legitimately hits `/api/ready` on the container's own loopback directly
+#: (not through the reverse proxy/basePath at all -- see
+#: `TestDockerfiles.test_web_dockerfile_healthcheck_targets_api_ready_not_api_health`
+#: above, which already pins that literal), so it is intentionally out of
+#: scope for this check.
+_WEB_APP_SOURCE_DIR_NAMES = ("lib", "app", "components")
+
+
+def _web_app_source_files() -> list[Path]:
+    return [
+        path
+        for path in _web_source_files()
+        if path.relative_to(_WEB_ROOT).parts[0] in _WEB_APP_SOURCE_DIR_NAMES
+    ]
+
+
+class TestWebApiCallsGoThroughBasePathHelper:
+    """Subpath deployment: this app is served behind a reverse proxy under a
+    non-root path (e.g. ``https://host/disclosure-gateway``), configured via
+    ``ADG_WEB_BASE_PATH`` (``web/next.config.ts``). Next.js's own `basePath`
+    rewrites `next/link`, the router and asset URLs automatically, but it
+    does NOT rewrite a literal string passed to `fetch()` -- so every
+    client-side call to this app's own `/api/**` proxy routes
+    (`web/lib/api.ts`) must go through `web/lib/basePath.ts`'s `apiPath(...)`
+    helper, never a hardcoded path, or it silently breaks the moment
+    `ADG_WEB_BASE_PATH` is non-empty.
+
+    This is a static, repository-wide pin for the same reason
+    `TestWebVaultExplorerIsGated` above is: it also reaches a call added to a
+    file that does not exist yet, not just the files that exist today.
+    """
+
+    def test_no_unwrapped_api_path_literal_outside_the_base_path_helper(self) -> None:
+        base_path_helper = (_WEB_ROOT / "lib" / "basePath.ts").resolve()
+        offenders: list[tuple[Path, str]] = []
+        for path in _web_app_source_files():
+            if path.name.endswith((".test.ts", ".test.tsx")):
+                continue
+            if path.resolve() == base_path_helper:
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            for match in _API_PATH_LITERAL_RE.finditer(text):
+                if match.group(1) is None:
+                    offenders.append((path, match.group(2)))
+        assert not offenders, (
+            "every '/api/...' path literal outside web/lib/basePath.ts must be passed "
+            f"through apiPath(...) so it is prefixed correctly under a subpath deployment: "
+            f"{offenders!r}"
+        )

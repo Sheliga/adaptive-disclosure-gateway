@@ -452,6 +452,42 @@ an agent session -- no hosting credentials exist in that environment):
    the URL in a browser and run the guided flow with a synthetic document.
 7. Share `https://<ADG_DEMO_DOMAIN>` with prospective advisors.
 
+### Live hosted deployment (srv1994437.hstgr.cloud)
+
+A real deployment of the path above exists, on a Hostinger VPS
+(`srv1994437.hstgr.cloud`), reachable at
+`https://srv1994437.hstgr.cloud/disclosure-gateway/`. It diverges from the
+"Hosted deployment path" recipe above in the specifics that matter for
+anyone operating it:
+
+- **`compose.prod.yaml`, not `compose.demo.yaml`.** The host is a
+  single-vCPU VPS, too small to build the ~2.64 GB api image itself without
+  OOM-ing, so this deployment never builds anything on the host. CI
+  (`.github/workflows/publish-images.yml`, triggered on push to `master`)
+  builds and pushes both images to GHCR; the host only ever runs
+  `docker compose -f compose.prod.yaml --env-file .env pull && ... up -d`
+  against an explicit `ADG_IMAGE_TAG`.
+- **TLS is nginx's, not Caddy's.** The host already runs nginx 1.28 with a
+  Let's Encrypt certificate obtained and renewed by certbot (see
+  `deploy/nginx/srv1994437.hstgr.cloud.conf` for the versioned record of
+  that configuration) -- `compose.prod.yaml` has no `caddy` service and no
+  `tls` profile at all, unlike `compose.demo.yaml`. nginx terminates TLS at
+  `/` (a static landing page) and reverse-proxies
+  `/disclosure-gateway/` to the `web` container, published loopback-only at
+  `127.0.0.1:3000`.
+- **Served under a subpath, not the domain root.** `ADG_WEB_BASE_PATH`
+  defaults to `/disclosure-gateway` in `compose.prod.yaml`, matching the
+  same path baked into the web image at build time (`ADG_WEB_BASE_PATH`
+  build ARG, see `web/Dockerfile`/`web/next.config.ts`) and the path nginx
+  routes to it -- all three must agree, since Next.js's `basePath` cannot be
+  changed without rebuilding the image.
+- **The demo transparency/vault-explorer flags stay off.** This URL is
+  public and unauthenticated, exactly the scenario `docs/advisor-demo.md`'s
+  "Why this defaults off" section above warns about: `compose.prod.yaml`
+  never sets `ADG_ENABLE_DEMO_TRANSPARENCY` or
+  `ADG_ENABLE_DEMO_VAULT_EXPLORER` to `1`, and this deployment does not
+  enable them either.
+
 ### Health checks
 
 Two distinct endpoints, deliberately not one (T25 review finding 2):

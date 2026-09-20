@@ -50,6 +50,7 @@ import type {
   RestoreResponse,
   VaultExplorerResponse,
 } from "./contracts";
+import { apiPath } from "./basePath";
 import type { AppCopy } from "./copy";
 import { copy as defaultCopy } from "./copy";
 import {
@@ -221,17 +222,17 @@ async function requestJson<T>(
 }
 
 export function getHealth(appCopy: AppCopy = defaultCopy): Promise<ApiResult<HealthResponse>> {
-  return requestJson("/api/health", isHealthResponse, undefined, appCopy);
+  return requestJson(apiPath("/api/health"), isHealthResponse, undefined, appCopy);
 }
 
 export function getExamples(appCopy: AppCopy = defaultCopy): Promise<ApiResult<ExamplesResponse>> {
-  return requestJson("/api/examples", isExamplesResponse, undefined, appCopy);
+  return requestJson(apiPath("/api/examples"), isExamplesResponse, undefined, appCopy);
 }
 
 export function getDocumentTypes(
   appCopy: AppCopy = defaultCopy,
 ): Promise<ApiResult<DocumentTypesResponse>> {
-  return requestJson("/api/documents/types", isDocumentTypesResponse, undefined, appCopy);
+  return requestJson(apiPath("/api/documents/types"), isDocumentTypesResponse, undefined, appCopy);
 }
 
 export function previewDocument(
@@ -239,7 +240,7 @@ export function previewDocument(
   appCopy: AppCopy = defaultCopy,
 ): Promise<ApiResult<DocumentPreviewResponse>> {
   return requestJson(
-    "/api/documents/preview",
+    apiPath("/api/documents/preview"),
     isDocumentPreviewResponse,
     { method: "POST", body: form },
     appCopy,
@@ -251,7 +252,7 @@ export function executeDocument(
   appCopy: AppCopy = defaultCopy,
 ): Promise<ApiResult<ExecuteResponse>> {
   return requestJson(
-    "/api/documents/execute",
+    apiPath("/api/documents/execute"),
     isExecuteResponse,
     { method: "POST", body: form },
     appCopy,
@@ -263,7 +264,7 @@ export function previewDisclosure(
   appCopy: AppCopy = defaultCopy,
 ): Promise<ApiResult<PreviewResponse>> {
   return requestJson(
-    "/api/disclosure/preview",
+    apiPath("/api/disclosure/preview"),
     isPreviewResponse,
     {
       method: "POST",
@@ -279,7 +280,7 @@ export function executeDisclosure(
   appCopy: AppCopy = defaultCopy,
 ): Promise<ApiResult<ExecuteResponse>> {
   return requestJson(
-    "/api/disclosure/execute",
+    apiPath("/api/disclosure/execute"),
     isExecuteResponse,
     {
       method: "POST",
@@ -303,7 +304,7 @@ export function compareStrategies(
   appCopy: AppCopy = defaultCopy,
 ): Promise<ApiResult<CompareResponse>> {
   return requestJson(
-    "/api/disclosure/compare",
+    apiPath("/api/disclosure/compare"),
     isCompareResponse,
     {
       method: "POST",
@@ -326,7 +327,7 @@ export function compareStrategies(
 export function getDemoFeatures(
   appCopy: AppCopy = defaultCopy,
 ): Promise<ApiResult<DemoFeaturesResponse>> {
-  return requestJson("/api/demo/features", isDemoFeaturesResponse, undefined, appCopy);
+  return requestJson(apiPath("/api/demo/features"), isDemoFeaturesResponse, undefined, appCopy);
 }
 
 /**
@@ -341,7 +342,7 @@ export function exportDocument(
   appCopy: AppCopy = defaultCopy,
 ): Promise<ApiResult<ExportResponse>> {
   return requestJson(
-    "/api/documents/export",
+    apiPath("/api/documents/export"),
     isExportResponse,
     { method: "POST", body: form },
     appCopy,
@@ -361,7 +362,7 @@ export function restoreText(
   appCopy: AppCopy = defaultCopy,
 ): Promise<ApiResult<RestoreResponse>> {
   return requestJson(
-    "/api/documents/restore",
+    apiPath("/api/documents/restore"),
     isRestoreResponse,
     {
       method: "POST",
@@ -385,7 +386,7 @@ export function exploreVault(
   appCopy: AppCopy = defaultCopy,
 ): Promise<ApiResult<VaultExplorerResponse>> {
   return requestJson(
-    "/api/demo/vault-explorer",
+    apiPath("/api/demo/vault-explorer"),
     isVaultExplorerResponse,
     {
       method: "POST",

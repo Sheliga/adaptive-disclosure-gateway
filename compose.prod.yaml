@@ -1,0 +1,173 @@
+# Production compose file for the VPS-hosted advisor demo -- distinct from
+# `compose.demo.yaml` (the reproducible local/self-hosted demo stack that
+# builds its own images and can optionally terminate TLS itself with Caddy)
+# and from `compose.yaml` (the dev/test harness that mounts the repository
+# and runs pytest).
+#
+# Target host: a single Hostinger VPS (1 vCPU, ~3.8 GiB RAM) that already
+# runs nginx 1.28 with a valid Let's Encrypt certificate and its own
+# reverse-proxy routing:
+#
+#   https://<host>/                       -> a static landing page
+#   https://<host>/disclosure-gateway/    -> proxy_pass http://127.0.0.1:3000/disclosure-gateway/
+#
+# See `deploy/nginx/srv1994437.hstgr.cloud.conf` for the committed record of
+# that nginx configuration.
+#
+# WHY THIS FILE HAS NO `build:` ANYWHERE (the central difference from
+# compose.demo.yaml): the api image bundles CPU-only torch + Docling and
+# weighs ~2.64 GB (docs/advisor-demo.md's "Resource use" table). Building
+# that on a 1-vCPU/~3.8 GiB host is not viable -- the build step alone
+# routinely OOMs a host this small. So the build happens once, on CI
+# (`.github/workflows/publish-images.yml`, triggered on push to `master`),
+# which pushes both images to GHCR; this file only ever PULLS them. A
+# deployment on this host is therefore always exactly one of the SHA-tagged
+# images CI already built and tested, never a fresh, unreviewed build made
+# directly on the production host.
+#
+# `ADG_IMAGE_TAG` selects which published build to run (a commit SHA for a
+# specific, reproducible deploy; `latest` for whatever CI most recently
+# pushed to `master`). It is REQUIRED (`:?...` below), mirroring
+# `ADG_PROVIDER`'s own required interpolation -- an unset tag has no safe
+# default in either direction, so `docker compose -f compose.prod.yaml up`
+# with nothing set refuses immediately rather than silently pulling
+# `:latest` or failing on a missing image reference.
+#
+# Usage, from a `.env` (git-ignored) on the host supplying ADG_IMAGE_TAG,
+# ADG_PROVIDER and the real-provider credential/secret variables:
+#
+#   docker compose -f compose.prod.yaml --env-file .env pull
+#   docker compose -f compose.prod.yaml --env-file .env up -d
+#
+# GHCR image names are lowercase by requirement (`ghcr.io/sheliga/adg-api`,
+# `ghcr.io/sheliga/adg-web`) -- GHCR rejects any uppercase segment in an
+# image reference outright, unlike the GitHub repository name itself
+# (`Sheliga/adaptive-disclosure-gateway`), which is mixed-case.
+#
+# No secret is ever assigned to the `web` service, for the same reason
+# `compose.demo.yaml` never assigns one: the browser never talks to the
+# Python API directly (see web/lib/proxy.ts), so `web` only needs to know
+# WHERE the api service is (and, here, which base path nginx routes it
+# under), never any credential.
+#
+# There is no `caddy` service and no `tls` profile in this file at all --
+# unlike `compose.demo.yaml`'s optional Caddy reverse proxy, TLS termination
+# on this host is the job of the host's own nginx (already configured and
+# already holding a valid certificate), not anything this compose file
+# starts. Starting a second TLS terminator here would either conflict with
+# nginx for ports 80/443 or sit uselessly behind it.
+
+networks:
+  adg-prod:
+    driver: bridge
+
+services:
+  api:
+    image: ghcr.io/sheliga/adg-api:${ADG_IMAGE_TAG:?set ADG_IMAGE_TAG to the commit SHA or 'latest' image tag to deploy -- there is no safe default}
+    environment:
+      # Required, no silent default either way -- same reasoning as
+      # compose.demo.yaml.
+      ADG_PROVIDER: ${ADG_PROVIDER:?set ADG_PROVIDER to 'fake' or 'anthropic' -- there is no safe default for a hosted deployment}
+      # Real-provider credential/config. Empty is equivalent to "unset" for
+      # every one of these (see application/settings.py, providers/settings.py
+      # and api/settings.py), so leaving them unset on the host is safe with
+      # ADG_PROVIDER=fake.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ADG_ANTHROPIC_MODEL_ID: ${ADG_ANTHROPIC_MODEL_ID:-}
+      ADG_ANTHROPIC_MAX_OUTPUT_TOKENS: ${ADG_ANTHROPIC_MAX_OUTPUT_TOKENS:-}
+      ADG_ANTHROPIC_EFFORT: ${ADG_ANTHROPIC_EFFORT:-}
+      ADG_ANTHROPIC_THINKING: ${ADG_ANTHROPIC_THINKING:-}
+      ADG_ANTHROPIC_TIMEOUT_SECONDS: ${ADG_ANTHROPIC_TIMEOUT_SECONDS:-}
+      # Server-side only; never forwarded to the web service. Mandatory in
+      # practice once ADG_PROVIDER=anthropic -- the app itself refuses to
+      # start without it (application/settings.build_preview_confirmation_signer).
+      ADG_PREVIEW_CONFIRMATION_SECRET: ${ADG_PREVIEW_CONFIRMATION_SECRET:-}
+      # Server-side only; never forwarded to the web service. Deliberately
+      # OPTIONAL: export/restore are an opt-in feature layered on top of the
+      # deployment, not a precondition for it.
+      ADG_RESTORE_HANDLE_SECRET: ${ADG_RESTORE_HANDLE_SECRET:-}
+      ADG_RESTORE_HANDLE_TTL_SECONDS: ${ADG_RESTORE_HANDLE_TTL_SECONDS:-}
+      # T27/T28/T29 demo transparency surfaces. This URL is PUBLIC and
+      # UNAUTHENTICATED -- docs/advisor-demo.md is explicit that these must
+      # stay off on a public hosted URL ("Why this defaults off": a
+      # reachable restore/vault-explorer endpoint is a re-identification
+      # oracle for anyone who can reach it). Deliberately OPTIONAL (`:-`),
+      # defaulting to empty/off, and this file never sets it to "1" -- only
+      # a deployer's own `.env` could turn it on, against this stack's
+      # documented recommendation.
+      ADG_ENABLE_DEMO_TRANSPARENCY: ${ADG_ENABLE_DEMO_TRANSPARENCY:-}
+      ADG_ENABLE_DEMO_VAULT_EXPLORER: ${ADG_ENABLE_DEMO_VAULT_EXPLORER:-}
+      # Engineering limits/CORS. Safe repository defaults apply when unset.
+      ADG_MAX_UPLOAD_BYTES: ${ADG_MAX_UPLOAD_BYTES:-}
+      ADG_ALLOWED_ORIGINS: ${ADG_ALLOWED_ORIGINS:-}
+    networks:
+      - adg-prod
+    # No `ports:` -- the api service is reachable only from other containers
+    # on the adg-prod network, never from the host, exactly like
+    # compose.demo.yaml.
+    # Targets /ready, not /health: see compose.demo.yaml's identical comment
+    # for the full reasoning (T25 review finding 2).
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)
+      interval: 15s
+      timeout: 5s
+      start_period: 120s
+      retries: 5
+    restart: unless-stopped
+
+  web:
+    image: ghcr.io/sheliga/adg-web:${ADG_IMAGE_TAG:?set ADG_IMAGE_TAG to the commit SHA or 'latest' image tag to deploy -- there is no safe default}
+    environment:
+      # Runtime-only, read per-request by lib/proxy.ts -- see
+      # compose.demo.yaml's identical comment.
+      ADG_API_BASE_URL: http://api:8000
+      # The host's nginx routes https://<host>/disclosure-gateway/ to this
+      # container (see deploy/nginx/srv1994437.hstgr.cloud.conf); this must
+      # agree with the SAME path the web image itself was built with (the
+      # ADG_WEB_BASE_PATH build ARG in web/Dockerfile bakes basePath into
+      # the client bundle -- it cannot be changed at container runtime, see
+      # web/next.config.ts). This runtime value only feeds the container's
+      # own HEALTHCHECK, which reads it back at runtime to build its probe
+      # path (web/Dockerfile).
+      ADG_WEB_BASE_PATH: ${ADG_WEB_BASE_PATH:-/disclosure-gateway}
+      # Mirrors the api service's own posture above: optional, off by
+      # default, never turned on by this file.
+      ADG_ENABLE_DEMO_TRANSPARENCY: ${ADG_ENABLE_DEMO_TRANSPARENCY:-}
+      ADG_ENABLE_DEMO_VAULT_EXPLORER: ${ADG_ENABLE_DEMO_VAULT_EXPLORER:-}
+    # Loopback-only: bound to 127.0.0.1 specifically, never every host
+    # interface. The host's nginx is the only public listener (80/443,
+    # already configured outside this file) -- without an explicit host IP,
+    # compose would publish on every interface, letting a caller reach the
+    # Next.js container directly over plain HTTP and bypass nginx/TLS
+    # entirely. Port 3000 stays reachable from nginx itself (which proxies
+    # to http://127.0.0.1:3000/disclosure-gateway/) but never from outside
+    # the host.
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - adg-prod
+    # Targets /api/ready, not /api/health -- see compose.demo.yaml's
+    # identical comment (T25 review finding 2). Hits the container's own
+    # loopback directly (not through nginx/basePath), which is why
+    # web/Dockerfile's HEALTHCHECK builds this same path from
+    # ADG_WEB_BASE_PATH at runtime rather than a bare "/api/ready" literal.
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          fetch('http://127.0.0.1:3000' + (process.env.ADG_WEB_BASE_PATH || '') +
+          '/api/ready').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+    restart: unless-stopped
