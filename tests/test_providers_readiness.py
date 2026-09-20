@@ -37,7 +37,15 @@ def test_fake_provider_is_always_ready_with_no_credential_needed(monkeypatch):
 
 
 def test_anthropic_provider_ready_when_key_present_and_sdk_importable(monkeypatch):
+    """The ``anthropic`` package is an optional extra (pyproject.toml) --
+    the baseline dev/test/CI environment never installs it. This test must
+    still exercise the "SDK importable" branch without depending on whether
+    it happens to be installed in whatever environment runs the suite, so
+    ``find_spec`` is monkeypatched to report the package present, the same
+    hook the adjacent not-importable test already uses.
+    """
     monkeypatch.setenv("ANTHROPIC_API_KEY", MARKER_API_KEY)
+    monkeypatch.setattr(readiness_module, "find_spec", lambda name: object())
     provider = AnthropicProvider(AnthropicProviderConfig())
 
     ready, reason = provider_readiness(provider)

@@ -75,7 +75,13 @@ def test_fake_provider_is_ready_even_with_an_ephemeral_signer():
 
 
 def test_anthropic_provider_ready_with_credential_and_durable_signer(monkeypatch):
+    # The `anthropic` package is an optional extra (pyproject.toml) -- the
+    # baseline dev/test/CI environment never installs it. This exercises the
+    # "SDK importable" branch of provider_readiness without depending on
+    # whether it happens to be installed in whatever environment runs the
+    # suite, via the same find_spec hook the negative SDK test already uses.
     monkeypatch.setenv("ANTHROPIC_API_KEY", MARKER_API_KEY)
+    monkeypatch.setattr(readiness_module, "find_spec", lambda name: object())
     service = _service(
         AnthropicProvider(AnthropicProviderConfig()),
         signer=PreviewConfirmationSigner(secret=DURABLE_SECRET),
@@ -88,7 +94,12 @@ def test_anthropic_provider_ready_with_credential_and_durable_signer(monkeypatch
 
 
 def test_anthropic_provider_not_ready_with_ephemeral_signer_even_with_credential(monkeypatch):
+    # See the comment on test_anthropic_provider_ready_with_credential_and_durable_signer
+    # above: this scenario needs the SDK to be considered importable so the
+    # ephemeral-signer check below is the thing actually being exercised,
+    # regardless of whether `anthropic` is installed in this environment.
     monkeypatch.setenv("ANTHROPIC_API_KEY", MARKER_API_KEY)
+    monkeypatch.setattr(readiness_module, "find_spec", lambda name: object())
     service = _service(
         AnthropicProvider(AnthropicProviderConfig()),
         signer=PreviewConfirmationSigner.with_ephemeral_secret(),
@@ -194,7 +205,11 @@ def test_fake_provider_ready_regardless_of_restore_handle_secret_being_configure
 def test_anthropic_provider_ready_with_credential_and_durable_signer_and_no_restore_secret(
     monkeypatch,
 ):
+    # See the comment on test_anthropic_provider_ready_with_credential_and_durable_signer
+    # above: needs the SDK to be considered importable regardless of whether
+    # `anthropic` is installed in this environment.
     monkeypatch.setenv("ANTHROPIC_API_KEY", MARKER_API_KEY)
+    monkeypatch.setattr(readiness_module, "find_spec", lambda name: object())
     service = _service(
         AnthropicProvider(AnthropicProviderConfig()),
         signer=PreviewConfirmationSigner(secret=DURABLE_SECRET),
