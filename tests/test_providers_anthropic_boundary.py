@@ -48,7 +48,9 @@ SENSITIVE_TEXT = (
     "Employee: Ana Souza\nCPF: 123.456.789-09\nSalary: R$ 8500.00\nDepartment: Engineering\n"
 )
 BLOCKED_TEXT = "Employee: Ana Souza\nMedical notes: Reports chronic migraine.\n"
-SENSITIVE_ORIGINALS = ("Ana Souza", "123.456.789-09", "8500", "chronic migraine")
+# "8500.00" (not bare "8500") is collision-proof against a hex-shaped
+# pseudonym/digest -- see tests/test_leak_assertion_literals_are_collision_proof.py.
+SENSITIVE_ORIGINALS = ("Ana Souza", "123.456.789-09", "8500.00", "chronic migraine")
 
 
 class _Block:

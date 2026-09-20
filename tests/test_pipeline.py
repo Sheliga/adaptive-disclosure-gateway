@@ -543,7 +543,9 @@ def test_provider_class_mismatch_never_calls_generate_and_audit_does_not_claim_i
     dumped = execution.audit.model_dump_json()
     assert "Ana Souza" not in dumped
     assert "123.456.789-09" not in dumped
-    assert "8500" not in dumped
+    # ".00" makes this collision-proof against a hex-shaped audit hash (see
+    # tests/test_leak_assertion_literals_are_collision_proof.py).
+    assert "8500.00" not in dumped
     assert "Engineering" not in dumped
     assert HR_FIXTURE_NO_MEDICAL not in dumped
 

@@ -387,7 +387,7 @@ def test_provider_never_receives_sensitive_originals_from_the_hr_fixture():
 
     assert len(stub.received) == 1
     received = stub.received[0]
-    sensitive_originals = ("Ana Souza", "123.456.789-09", "8500")
+    sensitive_originals = ("Ana Souza", "123.456.789-09", "8500.00")
     for field_name in ("payload", "task"):
         value = getattr(received, field_name)
         for original in sensitive_originals:

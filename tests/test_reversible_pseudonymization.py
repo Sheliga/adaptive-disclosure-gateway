@@ -99,7 +99,7 @@ def test_unconfigured_generalize_category_fails_closed_instead_of_disclosing(mon
     result = _pseudonymizer().sanitize(request, spans)
 
     assert result.status == "blocked"
-    assert "500" not in result.external_payload
+    assert "500.00" not in result.external_payload
 
 
 def test_configured_generalize_category_with_unparseable_value_fails_closed_not_raises():
@@ -280,7 +280,7 @@ def test_external_payload_never_contains_original_values():
 
     assert "Ana Souza" not in result.external_payload
     assert "123.456.789-09" not in result.external_payload
-    assert "8500" not in result.external_payload
+    assert "8500.00" not in result.external_payload
     assert (
         "Engineering" in result.external_payload
     )  # PRESERVE still discloses non-sensitive-mapped fields
