@@ -19,6 +19,7 @@ from adaptive_disclosure_gateway.providers import (
     AnthropicProviderConfig,
     FakeProvider,
 )
+from adaptive_disclosure_gateway.providers import readiness as readiness_module
 from tests.api_support import build_client, policy_repository
 from tests.contracts_fixture import CONTRACTS_FIXTURE
 from tests.test_api_documents_export_restore import CONTRACT_TASK
@@ -60,7 +61,14 @@ def test_ready_reports_200_ready_for_fake_provider():
 
 
 def test_ready_reports_200_for_anthropic_with_credential_and_durable_signer(monkeypatch):
+    # The `anthropic` package is an optional extra (pyproject.toml) -- the
+    # baseline dev/test/CI environment never installs it. Patching find_spec
+    # on the readiness module exercises the "SDK importable" branch through
+    # the same hook tests/test_providers_readiness.py's negative SDK test
+    # already uses, without depending on whether `anthropic` happens to be
+    # installed in whatever environment runs the suite.
     monkeypatch.setenv("ANTHROPIC_API_KEY", MARKER_API_KEY)
+    monkeypatch.setattr(readiness_module, "find_spec", lambda name: object())
     client = build_client(
         _service(
             AnthropicProvider(AnthropicProviderConfig()),
@@ -92,7 +100,11 @@ def test_ready_reports_503_when_credential_missing(monkeypatch):
 
 
 def test_ready_reports_503_for_ephemeral_signer_with_external_provider(monkeypatch):
+    # See the comment on test_ready_reports_200_for_anthropic_with_credential_and_durable_signer
+    # above: needs the SDK to be considered importable so the ephemeral-signer
+    # check below is the thing actually under test.
     monkeypatch.setenv("ANTHROPIC_API_KEY", MARKER_API_KEY)
+    monkeypatch.setattr(readiness_module, "find_spec", lambda name: object())
     client = build_client(
         _service(
             AnthropicProvider(AnthropicProviderConfig()),
