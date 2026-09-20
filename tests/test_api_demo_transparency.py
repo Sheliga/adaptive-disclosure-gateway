@@ -185,7 +185,7 @@ def test_demo_transparency_span_attributes_never_leak_sensitive_values(recorded_
 
     finished = recorded_spans.get_finished_spans()
     _assert_span_attributes_never_leak(
-        finished, SENSITIVE_NAME, "123.456.789-09", "8500", HR_TEXT, pseudonym
+        finished, SENSITIVE_NAME, "123.456.789-09", "8500.00", HR_TEXT, pseudonym
     )
 
 

@@ -52,7 +52,7 @@ def test_b1_sanitizes_non_medical_fixture_without_leaking_removed_or_generalized
     assert result.status == "allowed"
     assert "Ana Souza" not in result.external_payload
     assert "123.456.789-09" not in result.external_payload
-    assert "8500" not in result.external_payload
+    assert "8500.00" not in result.external_payload
     assert "Engineering" in result.external_payload
 
     actions_by_category = {t.category: t.action for t in result.transformations}

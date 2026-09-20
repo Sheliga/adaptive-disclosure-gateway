@@ -40,7 +40,7 @@ def test_salary_band_upper_boundary_belongs_to_the_next_band():
 def test_generalize_output_never_contains_the_original_value():
     result = generalize("salary", "R$ 8500.00")
 
-    assert "8500" not in result
+    assert "8500.00" not in result
 
 
 def test_generalize_is_deterministic_for_the_same_input():

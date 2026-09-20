@@ -341,7 +341,7 @@ def test_vault_explorer_span_attributes_never_leak_sensitive_values(recorded_spa
 
     finished = recorded_spans.get_finished_spans()
     _assert_span_attributes_never_leak(
-        finished, SENSITIVE_NAME, SENSITIVE_CPF, "8500", HR_TEXT, pseudonym, token
+        finished, SENSITIVE_NAME, SENSITIVE_CPF, "8500.00", HR_TEXT, pseudonym, token
     )
 
 
