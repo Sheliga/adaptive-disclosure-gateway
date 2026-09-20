@@ -128,7 +128,7 @@ describe("responseGuards covers every field of every validated response contract
 
     for (const guardName of TOP_LEVEL_RESPONSE_GUARDS) {
       const body = guards.match(
-        new RegExp(`export const ${guardName}[\\s\\S]*?;\\n`),
+        new RegExp(`export const ${guardName}[\\s\\S]*?;\\r?\\n`),
       );
       expect(body, `${guardName} not found in responseGuards.ts`).not.toBeNull();
       expect(
