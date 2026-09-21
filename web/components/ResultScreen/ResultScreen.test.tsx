@@ -75,13 +75,142 @@ function healthBody(deterministicDemoMode: boolean): HealthResponse {
 }
 
 describe("ResultScreen -- final answer is the primary output", () => {
-  it("renders the final answer and the trust-boundary path on success", () => {
+  it("renders the final answer directly, and the trust-boundary path once the 'entender o que aconteceu' disclosure is opened", async () => {
     const e = execute();
     render(<ResultScreen execute={e} health={{ status: "loading" }} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} onViewTechnicalDetails={vi.fn()} />);
 
     expect(screen.getByText(e.final_answer as string)).toBeInTheDocument();
+    expect(screen.queryByText(copy.result.pathProvider)).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByText(copy.result.whatHappenedToggle));
+
     expect(screen.getAllByText(copy.result.pathLocal).length).toBe(2);
     expect(screen.getByText(copy.result.pathProvider)).toBeInTheDocument();
+  });
+});
+
+/**
+ * T30 / issue #82: the result hierarchy must read, in DOM order, the final
+ * answer -> the protections summary -> "entender o que aconteceu" ->
+ * the research surface ("Comparar estratégias experimentais") -> the
+ * technical/audit surface ("Ver detalhes técnicos") -> restart. This can
+ * fail from a real defect: putting technical metadata above the answer, or
+ * losing the explicit research/technical framing headings.
+ */
+describe("ResultScreen -- hierarchy order (T30)", () => {
+  it("orders answer -> protections -> entender o que aconteceu -> research -> technical -> restart", () => {
+    render(
+      <ResultScreen
+        execute={execute()}
+        health={{ status: "loading" }}
+        onRestart={vi.fn()}
+        compareError={null}
+        onCompareStrategies={vi.fn()}
+        onViewTechnicalDetails={vi.fn()}
+      />,
+    );
+
+    const answer = screen.getByText("Esta é a resposta final reconstruída.");
+    const protections = screen.getByText(copy.result.protectionsAppliedHeading);
+    const whatHappened = screen.getByText(copy.result.whatHappenedToggle);
+    const research = screen.getByRole("heading", { name: copy.result.researchHeading });
+    const technical = screen.getByRole("heading", { name: copy.result.technicalToolsHeading });
+    const restart = screen.getByRole("button", { name: copy.result.restart });
+
+    const ordered = [answer, protections, whatHappened, research, technical, restart];
+    for (let i = 0; i < ordered.length - 1; i += 1) {
+      expect(ordered[i].compareDocumentPosition(ordered[i + 1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+  });
+
+  it("groups Comparar estratégias under the research heading, and Ver detalhes técnicos under the technical heading", () => {
+    render(
+      <ResultScreen
+        execute={execute()}
+        health={{ status: "loading" }}
+        onRestart={vi.fn()}
+        compareError={null}
+        onCompareStrategies={vi.fn()}
+        onViewTechnicalDetails={vi.fn()}
+      />,
+    );
+
+    const research = screen.getByRole("heading", { name: copy.result.researchHeading });
+    const compareButton = screen.getByRole("button", { name: copy.buttons.compareStrategies });
+    expect(research.compareDocumentPosition(compareButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    const technical = screen.getByRole("heading", { name: copy.result.technicalToolsHeading });
+    const technicalButton = screen.getByRole("button", { name: copy.buttons.viewTechnicalDetails });
+    expect(technical.compareDocumentPosition(technicalButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
+/**
+ * T30 / issue #82: "N itens protegidos; M pseudônimos reconstruídos
+ * localmente" -- derived ONLY from data already on `ExecuteResponse`
+ * (`occurrence_count` per category, `reconstruction.attempted`), never
+ * invented. This can fail from a real defect: hardcoding the numbers,
+ * miscounting, or claiming reconstruction happened when it was not
+ * attempted.
+ */
+describe("ResultScreen -- protections summary (T30)", () => {
+  function categoriesFor(occurrences: { outcome: string; action: string; count: number }[]) {
+    return occurrences.map(({ outcome, action, count }, index) => ({
+      category: `cat_${index}`,
+      outcome,
+      action,
+      crosses_trust_boundary: outcome === "pseudonymized" ? true : false,
+      occurrence_count: count,
+      required_for_task: null,
+      technical_reason: "rule",
+      policy_version: null,
+      policy_restricted: null,
+      impossible_under_policy: null,
+    }));
+  }
+
+  it("counts protected items and reconstructed pseudonyms from occurrence_count only", () => {
+    const e = execute({
+      summary: {
+        status: "allowed",
+        categories: categoriesFor([
+          { outcome: "removed", action: "remove", count: 2 },
+          { outcome: "pseudonymized", action: "pseudonymize", count: 3 },
+        ]),
+        detected_span_count: 5,
+        detected_categories: ["cat_0", "cat_1"],
+      },
+      reconstruction: { attempted: true, reconstructed_hash: "x", changed_from_provider_response: false },
+    });
+
+    render(
+      <ResultScreen execute={e} health={{ status: "loading" }} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} onViewTechnicalDetails={vi.fn()} />,
+    );
+
+    const expected = copy.result.protectionsSummaryTemplate
+      .replace("{protected}", "5")
+      .replace("{reconstructed}", "3");
+    expect(screen.getByText(expected)).toBeInTheDocument();
+  });
+
+  it("omits the reconstruction clause when reconstruction was not attempted", () => {
+    const e = execute({
+      summary: {
+        status: "allowed",
+        categories: categoriesFor([{ outcome: "removed", action: "remove", count: 4 }]),
+        detected_span_count: 4,
+        detected_categories: ["cat_0"],
+      },
+      reconstruction: { attempted: false, reconstructed_hash: null, changed_from_provider_response: false },
+    });
+
+    render(
+      <ResultScreen execute={e} health={{ status: "loading" }} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} onViewTechnicalDetails={vi.fn()} />,
+    );
+
+    const expected = copy.result.protectionsSummaryNoReconstruction.replace("{protected}", "4");
+    expect(screen.getByText(expected)).toBeInTheDocument();
+    expect(screen.queryByText(/reconstru[ií]dos localmente/)).not.toBeInTheDocument();
   });
 });
 
@@ -392,6 +521,7 @@ describe("ResultScreen -- switches to English (T21 fourth slice)", () => {
     );
 
     expect(screen.getByRole("heading", { name: en.result.heading })).toBeInTheDocument();
+    await userEvent.click(screen.getByText(en.result.whatHappenedToggle));
     expect(screen.getByText(en.result.pathProvider)).toBeInTheDocument();
     expect(screen.getByText(en.provider.deterministicDemoLabel)).toBeInTheDocument();
     expect(screen.getByText(en.categories.labels.employee_name, { exact: false })).toBeInTheDocument();

@@ -126,3 +126,37 @@
   color: var(--tone-unknown);
   font-size: 0.9rem;
 }
+
+/*
+ * T30 / issue #82: the provider-mode notice must never outcompete the
+ * answer below it -- smaller type, self-width, no full-bleed banner.
+ */
+.providerModeNotice {
+  font-size: 0.8rem;
+  align-self: flex-start;
+}
+
+.protectionsSummary {
+  font-weight: 600;
+}
+
+.levelDisclosure {
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  background: var(--surface-raised);
+}
+
+.secondarySection {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  align-items: flex-start;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
+}
+
+.explanation {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
