@@ -91,3 +91,37 @@ class TestNginxConfigDocumentationExists:
         """
         text = _NGINX_CONF_PATH.read_text(encoding="utf-8")
         assert "managed by Certbot" in text
+
+
+class TestNginxConfigDocumentationMatchesHostDirectives:
+    """This file claims to be a faithful record of what is live on the host
+    (see the file's own header), but inherited from PR #75 a landing-page
+    `root` path that was never actually on the host, plus an `http2 on;`
+    directive the host does not have. Pin the directives that must match
+    the real `/etc/nginx/sites-available/default` on srv1994437.hstgr.cloud
+    so this file cannot silently drift back into fiction.
+    """
+
+    def test_landing_page_root_matches_the_host(self) -> None:
+        text = _NGINX_CONF_PATH.read_text(encoding="utf-8")
+        assert "root /var/www/landing;" in text, (
+            "the host serves the landing page from /var/www/landing inside "
+            "location /, not /var/www/srv1994437.hstgr.cloud/html at server "
+            "level -- this file must record the real path"
+        )
+
+    def test_does_not_claim_a_server_level_landing_root_the_host_lacks(
+        self,
+    ) -> None:
+        text = _NGINX_CONF_PATH.read_text(encoding="utf-8")
+        assert "/var/www/srv1994437.hstgr.cloud/html" not in text, (
+            "this server-level root path is not on the host; it was "
+            "inherited from PR #75 and never matched reality"
+        )
+
+    def test_does_not_claim_http2_the_host_lacks(self) -> None:
+        text = _NGINX_CONF_PATH.read_text(encoding="utf-8")
+        assert "http2 on" not in text, (
+            "the host's HTTPS server block has no http2 directive at all -- "
+            "this file must not document one that isn't there"
+        )
