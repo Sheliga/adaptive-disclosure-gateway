@@ -34,6 +34,21 @@ name: deploy
 # it through the same API the panel uses keeps that single source of truth,
 # rather than a parallel `ssh`+`docker compose` path the panel doesn't know
 # about and that would drift from what the UI shows.
+#
+# INCIDENT (run 35585709567): the first real automated deploy authenticated,
+# resolved the VM and reached the create/replace call, then got
+# HTTP 422 {"message":"The content field must not be greater than 8192
+# characters.", ...} for compose.prod.yaml's full ~9020-byte content. That
+# limit is undocumented in the Hostinger OpenAPI spec; it only surfaced
+# against the live endpoint. Nothing in production was touched -- the 422
+# is rejected before any change is applied. Fix: compose.prod.yaml stays
+# versioned WITH its explanatory comments (most of the file), and the
+# "Deploy project" step below strips comment/blank lines before sending --
+# filtering, not shortening the committed file, keeps the comments where
+# engineers read them while keeping the wire payload under the limit.
+# tests/test_deploy_workflow.py pins both the filter and the 8192 ceiling
+# against the real compose.prod.yaml so a file that grows too large fails a
+# PR, not a live deploy.
 on:
   workflow_run:
     workflows: [publish-images]
@@ -127,12 +142,27 @@ jobs:
           # ADG_PREVIEW_CONFIRMATION_SECRET in this environment payload,
           # both out of scope for this ticket.
           environment_body=$(printf 'ADG_IMAGE_TAG=%s\nADG_PROVIDER=fake\n' "$ADG_TARGET_SHA")
-          # jq --rawfile reads compose.prod.yaml's raw bytes into the JSON
+          # The Hostinger API rejects `content` over 8192 characters (see the
+          # INCIDENT note in this file's header comment); compose.prod.yaml
+          # itself stays versioned with its explanatory comments, so strip
+          # comment/blank lines here -- semantics-preserving, pinned by
+          # tests/test_deploy_workflow.py against a yaml.safe_load comparison
+          # of the real file -- to build the payload that is actually sent.
+          filtered_compose="$RUNNER_TEMP/compose.deploy.yaml"
+          grep -vE '^[[:space:]]*(#|$)' compose.prod.yaml > "$filtered_compose"
+          filtered_chars=$(wc -m < "$filtered_compose")
+          if [ "$filtered_chars" -gt 8192 ]; then
+            echo "::error::filtered compose.prod.yaml is $filtered_chars characters, over" \
+              "the Hostinger API's 8192-character content limit -- trim compose.prod.yaml" \
+              "(comments are already stripped before sending)"
+            exit 1
+          fi
+          # jq --rawfile reads the filtered compose's raw bytes into the JSON
           # body -- never string-concatenation, which would silently break
           # on the file's own quoting/newlines and risk sending a mangled
           # compose file to a production project.
           payload=$(jq -n \
-            --rawfile content compose.prod.yaml \
+            --rawfile content "$filtered_compose" \
             --arg env "$environment_body" \
             --arg name "$ADG_DOCKER_PROJECT" \
             '{project_name: $name, content: $content, environment: $env}')

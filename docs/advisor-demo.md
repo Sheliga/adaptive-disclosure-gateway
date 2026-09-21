@@ -497,9 +497,18 @@ GHCR, then `.github/workflows/deploy.yml` fires on that publish's
 the target Hostinger VM by hostname, then calls the Hostinger API's
 "Create new project" endpoint for the `disclosure-gateway` project with the
 repository's own `compose.prod.yaml` (read at the same commit the images
-were built from, never a modified copy) and an `environment` payload of
-exactly `ADG_IMAGE_TAG=<sha>` and `ADG_PROVIDER=fake` -- never the demo
-transparency/vault-explorer flags. That endpoint *replaces* the existing
+were built from) and an `environment` payload of exactly
+`ADG_IMAGE_TAG=<sha>` and `ADG_PROVIDER=fake` -- never the demo
+transparency/vault-explorer flags. The Hostinger API rejects a `content`
+field over 8192 characters (undocumented in its OpenAPI spec; it surfaced as
+a real 422 on the first automated deploy, run 35585709567, against
+`compose.prod.yaml`'s full ~9020-byte content). `compose.prod.yaml` stays
+versioned with all of its explanatory comments -- `deploy.yml` strips
+comment/blank lines (`grep -vE '^[[:space:]]*(#|$)'`) before sending, which
+is semantics-preserving (pinned in `tests/test_deploy_workflow.py` against a
+`yaml.safe_load` comparison of the real file) and brings the payload to
+~2.4 KB, and aborts before calling the API if the filtered content still
+exceeds the limit. That endpoint *replaces* the existing
 project rather than updating it in place, because `update` only re-pulls
 whatever tag the current (SHA-pinned) project already references and would
 be a silent no-op here; replacing it is the only way to actually change
