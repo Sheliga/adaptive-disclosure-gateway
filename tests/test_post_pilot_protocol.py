@@ -1,6 +1,7 @@
 """T23 / issue #36 -- enforcement for the frozen post-pilot protocol.
-M3 Gate 6 / issue #38 extends this for the second frozen version,
-``post-pilot-v2``.
+M3 Gate 6 / issue #38 extended this for the second frozen version,
+``post-pilot-v2``; Issue #85 / M3 extends it again for the third,
+``post-pilot-v3`` (numeric-band GENERALIZE fidelity).
 
 A protocol document is narrative and cannot, by itself, stop three kinds of
 silent drift this ticket is specifically about preventing:
@@ -9,18 +10,18 @@ silent drift this ticket is specifically about preventing:
    diverging from the id the *current* frozen document itself declares
    (analogous to this repo's existing UI-copy-vs-wire-schema drift tests,
    applied here to protocol identity instead);
-2. an *earlier* frozen document (``post-pilot-v1``) being edited in place
-   once a later version supersedes it as current -- v1's own front matter
-   and content must stay exactly as frozen even though it is no longer
-   ``CURRENT_PROTOCOL_ID``;
+2. an *earlier* frozen document (``post-pilot-v1``, then ``post-pilot-v2``)
+   being edited in place once a later version supersedes it as current --
+   each superseded document's own front matter and content must stay
+   exactly as frozen even though it is no longer ``CURRENT_PROTOCOL_ID``;
 3. the M2 binary unnecessary-disclosure metric being silently redefined
    (e.g. to stop counting PSEUDONYMIZE as transmitted) after Issue #36
    required it be preserved, unchanged, as a secondary metric for
-   historical continuity -- v2 does not touch this metric at all, so this
-   pin continues to guard it.
+   historical continuity -- neither v2 nor v3 touches this metric at all,
+   so this pin continues to guard it.
 
 All three are pinned here as real tests that fail from an actual defect: an
-unregistered protocol id, a document/code id mismatch, a rewritten v1
+unregistered protocol id, a document/code id mismatch, a rewritten v1/v2
 document, or a changed unnecessary-disclosure formula would each fail one of
 these tests.
 """
@@ -53,6 +54,7 @@ from adaptive_disclosure_gateway.experiments.scoring.unnecessary_disclosure impo
 
 PROTOCOL_DOC_V1 = Path(__file__).parents[1] / "docs" / "research" / "post-pilot-protocol-v1.md"
 PROTOCOL_DOC_V2 = Path(__file__).parents[1] / "docs" / "research" / "post-pilot-protocol-v2.md"
+PROTOCOL_DOC_V3 = Path(__file__).parents[1] / "docs" / "research" / "post-pilot-protocol-v3.md"
 # Backward-compatible alias: PROTOCOL_DOC always names the document this
 # module's older assertions target (v1, whose own frozen content never
 # changes regardless of which id is CURRENT_PROTOCOL_ID).
@@ -104,30 +106,59 @@ def test_frozen_v1_document_status_is_still_frozen():
     assert match.group(1) == "FROZEN"
 
 
-def test_current_protocol_document_declares_the_same_protocol_id_as_the_code():
-    """The *current* frozen document (v2, since Gate 6) must declare exactly
-    ``CURRENT_PROTOCOL_ID`` -- unlike the v1-specific tests above, this one
-    is meant to keep tracking whichever document is current as new versions
-    are frozen in the future.
+def test_frozen_v2_document_still_declares_its_own_original_protocol_id():
+    """``post-pilot-v2.md`` is superseded by ``post-pilot-v3`` (Issue #85)
+    but, exactly like v1 above, is never edited in place once superseded --
+    its own front matter stays the historical record of what governed every
+    run produced under it. Asserts the literal, historical id, never
+    ``CURRENT_PROTOCOL_ID``, for the same reason the v1 pin does: a future
+    v4 moving ``CURRENT_PROTOCOL_ID`` again must never make this test pass
+    by accident merely because the two constants happen to match again.
     """
     text = PROTOCOL_DOC_V2.read_text(encoding="utf-8")
     match = re.search(r"^protocol_id:\s*(\S+)\s*$", text, re.MULTILINE)
     assert match is not None, "post-pilot-protocol-v2.md must declare protocol_id: <id>"
-    assert match.group(1) == CURRENT_PROTOCOL_ID
+    assert match.group(1) == "post-pilot-v2"
 
 
-def test_current_protocol_document_status_is_frozen():
+def test_frozen_v2_document_status_is_still_frozen():
     text = PROTOCOL_DOC_V2.read_text(encoding="utf-8")
     match = re.search(r"^status:\s*(\S+)\s*$", text, re.MULTILINE)
     assert match is not None, "post-pilot-protocol-v2.md must declare status: <STATUS>"
     assert match.group(1) == "FROZEN"
 
 
-def test_current_protocol_document_declares_it_supersedes_v1():
+def test_frozen_v2_document_still_declares_it_supersedes_v1():
     text = PROTOCOL_DOC_V2.read_text(encoding="utf-8")
     match = re.search(r"^supersedes:\s*(\S+)\s*$", text, re.MULTILINE)
     assert match is not None, "post-pilot-protocol-v2.md must declare supersedes: <id>"
     assert match.group(1) == "post-pilot-v1"
+
+
+def test_current_protocol_document_declares_the_same_protocol_id_as_the_code():
+    """The *current* frozen document (v3, since Issue #85) must declare
+    exactly ``CURRENT_PROTOCOL_ID`` -- unlike the v1/v2-specific tests
+    above, this one is meant to keep tracking whichever document is current
+    as new versions are frozen in the future.
+    """
+    text = PROTOCOL_DOC_V3.read_text(encoding="utf-8")
+    match = re.search(r"^protocol_id:\s*(\S+)\s*$", text, re.MULTILINE)
+    assert match is not None, "post-pilot-protocol-v3.md must declare protocol_id: <id>"
+    assert match.group(1) == CURRENT_PROTOCOL_ID
+
+
+def test_current_protocol_document_status_is_frozen():
+    text = PROTOCOL_DOC_V3.read_text(encoding="utf-8")
+    match = re.search(r"^status:\s*(\S+)\s*$", text, re.MULTILINE)
+    assert match is not None, "post-pilot-protocol-v3.md must declare status: <STATUS>"
+    assert match.group(1) == "FROZEN"
+
+
+def test_current_protocol_document_declares_it_supersedes_v2():
+    text = PROTOCOL_DOC_V3.read_text(encoding="utf-8")
+    match = re.search(r"^supersedes:\s*(\S+)\s*$", text, re.MULTILINE)
+    assert match is not None, "post-pilot-protocol-v3.md must declare supersedes: <id>"
+    assert match.group(1) == "post-pilot-v2"
 
 
 IMPLEMENTATION_STATUS_DOC = Path(__file__).parents[1] / "docs" / "implementation-status.md"
@@ -149,23 +180,35 @@ def test_frozen_protocol_date_is_the_frozen_value():
     assert match.group(1) == "2026-09-11"
 
 
-def test_current_protocol_frozen_date_is_the_gate_6_freeze_date():
+def test_frozen_v2_document_frozen_date_is_the_gate_6_freeze_date():
     """Same immutability pin as above, applied to v2's own frozen_date
-    (2026-09-21, the date Gate 6 froze this document)."""
+    (2026-09-21, the date Gate 6 froze this document). Immutable regardless
+    of v2 no longer being ``CURRENT_PROTOCOL_ID``."""
     text = PROTOCOL_DOC_V2.read_text(encoding="utf-8")
     match = re.search(r"^frozen_date:\s*(\S+)\s*$", text, re.MULTILINE)
     assert match is not None, "post-pilot-protocol-v2.md must declare frozen_date: <DATE>"
     assert match.group(1) == "2026-09-21"
 
 
-def test_v1_remains_in_the_frozen_protocol_ids_set_after_v2_supersedes_it():
-    """v1 is superseded as ``CURRENT_PROTOCOL_ID`` but must never be removed
-    from the registry -- it stays the historical record of what governed
-    every run produced before v2 (v1 section 0's own append-only rule).
+def test_current_protocol_frozen_date_is_the_issue_85_freeze_date():
+    """Same immutability pin as above, applied to v3's own frozen_date
+    (2026-09-21, the date Issue #85's fix froze this document)."""
+    text = PROTOCOL_DOC_V3.read_text(encoding="utf-8")
+    match = re.search(r"^frozen_date:\s*(\S+)\s*$", text, re.MULTILINE)
+    assert match is not None, "post-pilot-protocol-v3.md must declare frozen_date: <DATE>"
+    assert match.group(1) == "2026-09-21"
+
+
+def test_all_frozen_protocol_ids_remain_registered_after_v3_supersedes_v2():
+    """v1 and v2 are superseded as ``CURRENT_PROTOCOL_ID`` but must never be
+    removed from the registry -- each stays the historical record of what
+    governed every run produced under it (v1 section 0's own append-only
+    rule).
     """
     assert "post-pilot-v1" in FROZEN_PROTOCOL_IDS
     assert "post-pilot-v2" in FROZEN_PROTOCOL_IDS
-    assert CURRENT_PROTOCOL_ID == "post-pilot-v2"
+    assert "post-pilot-v3" in FROZEN_PROTOCOL_IDS
+    assert CURRENT_PROTOCOL_ID == "post-pilot-v3"
 
 
 def test_implementation_status_still_references_the_current_protocol_id():

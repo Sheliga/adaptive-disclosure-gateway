@@ -17,6 +17,15 @@ as ``post-pilot-v2`` -- ``post-pilot-v1`` is never edited to change its
 methodological content or removed once frozen (see that document's own
 "Versioning" section), it simply stops being ``CURRENT_PROTOCOL_ID``.
 
+Issue #85 / M3 is the second: the numeric-band GENERALIZE path Gate 6
+deliberately left unchanged never checked that the band actually contains
+the case's own oracle value, so a wrong band could still score
+``answerable`` whenever no stated reference figure happened to fall inside
+it. ``docs/research/post-pilot-protocol-v3.md`` freezes the fix (fidelity
+checked before sufficiency) as ``post-pilot-v3`` -- again, neither
+``post-pilot-v1`` nor ``post-pilot-v2`` is edited; ``CURRENT_PROTOCOL_ID``
+simply moves forward.
+
 A later methodological change creates a new protocol document
 (``docs/research/post-pilot-protocol-vN.md``) with its own id, added to
 ``FROZEN_PROTOCOL_IDS`` below -- no id already in that set is ever removed
@@ -44,14 +53,14 @@ from __future__ import annotations
 # methodological change adds a new id here (and a new versioned document
 # under docs/research/) -- an existing id is never removed or reassigned to
 # different content.
-FROZEN_PROTOCOL_IDS: frozenset[str] = frozenset({"post-pilot-v1", "post-pilot-v2"})
+FROZEN_PROTOCOL_IDS: frozenset[str] = frozenset({"post-pilot-v1", "post-pilot-v2", "post-pilot-v3"})
 
 # The protocol version currently in force for any run this codebase
 # produces. Confirmatory-run tooling records this value in the run's
-# provenance (docs/research/post-pilot-protocol-v2.md, section on
+# provenance (docs/research/post-pilot-protocol-v3.md, section on
 # provenance/version boundary; docs/research/post-pilot-protocol-v1.md,
 # section 13).
-CURRENT_PROTOCOL_ID = "post-pilot-v2"
+CURRENT_PROTOCOL_ID = "post-pilot-v3"
 
 
 class UnknownProtocolIdError(ValueError):
