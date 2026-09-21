@@ -351,16 +351,28 @@ new, confirmatory-eligible Contracts corpus be authored — per the permanent-in
 position above, it could not reuse `contracts/v1`. Neither `post-pilot-v2` nor a Contracts v2
 corpus is created by this PR.
 
+**Resolved by M3 Gate 6 / Issue #38 (`post-pilot-v2`, `docs/research/post-pilot-protocol-v2.md`).**
+Finding 1 below is fixed: `score_utility` now routes GENERALIZE on a category in
+`DATE_UTILITY_REQUIRED_GRANULARITY` (`deadline`, required to the day) through a dedicated
+`classify_generalized_date` rule instead of the numeric-band rule; every other GENERALIZE
+category is unaffected. `post-pilot-v1` is not edited — `CURRENT_PROTOCOL_ID` moved to
+`post-pilot-v2`, following v1 §11's change procedure exactly. This does not create a new
+confirmatory-eligible Contracts corpus (that remains Gate 7); `corpus/contracts/v1` stays
+`pilot_development`, and its already-committed run artifact
+(`artifacts/experiments/contracts/v1/954ffae9f6e143d6af45e4842f6daef9`) is unchanged on disk —
+`docs/research/post-pilot-protocol-v2.md` §4 records, verified by re-scoring, exactly which of
+its utility numbers are no longer comparable under the new rule.
+
 **Nothing frozen by Issue #56 changed**: no category, detector rule, policy document, B3 action
 space, generalization strategy or treatment definition was touched, and no metric frozen by
 `post-pilot-v1` was added or redefined.
 
 **Findings recorded, not fixed** (see `corpus/contracts/v1/README.md`):
 
-- `experiments/scoring/utility.py`'s GENERALIZE decidability rule is numeric-band-specific, so a
-  month-coarsened deadline (`2026-02`) is parsed as a numeric band and scored `answerable`. The
-  conformance oracle catches the same loss; the utility dimension reads it optimistically.
-  Changing it is a metric change frozen by `post-pilot-v1` and needs a protocol version.
+- ~~`experiments/scoring/utility.py`'s GENERALIZE decidability rule is numeric-band-specific, so
+  a month-coarsened deadline (`2026-02`) is parsed as a numeric band and scored `answerable`.~~
+  **Resolved in `post-pilot-v2` (Gate 6 / Issue #38)** — see the follow-up note above. The other
+  findings below remain open.
 - `contracts-v1` preserves `deadline` unconditionally, so B4 is nonconformant on the six spans
   where the task does not need it — the documented, identifiable B3→B4 cell in the
   under-studied direction.
