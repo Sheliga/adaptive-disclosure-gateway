@@ -254,7 +254,35 @@ sufficiency (the pre-existing comparison) is only reached once fidelity holds, a
 stated reference is `indeterminate`, never vacuously `answerable`. Re-scoring both registered
 corpora under the new rule changed zero category-, overall- or B3→B4-level rows (every numeric
 oracle span in both corpora already sits inside its own generated band). `post-pilot-v1` and
-`post-pilot-v2` are not edited; `CURRENT_PROTOCOL_ID` is now `post-pilot-v3`.
+`post-pilot-v2` are not edited; `CURRENT_PROTOCOL_ID` moved to `post-pilot-v3`.
+
+**Structured numeric utility references (frozen by Issue #87, `post-pilot-v4`).** `post-pilot-v3`
+left band *sufficiency* on the pre-existing free-text mechanism (`_reference_values`): a bare
+`float` scanned from `input.text` outside any detected span, with no operator and no category
+awareness. Two defects followed: a reference sitting exactly on a band's lower bound could not be
+told apart from a strict "greater than" reading and a non-strict "at least" one (they have
+different correct answers, §4 of `docs/research/post-pilot-protocol-v4.md`); and a reference
+found in the text could be applied as a candidate for a numeric category it was never actually
+about. `CaseOracle.utility_references` (`corpus/models.py`'s `NumericUtilityReference`/
+`ReferenceOperator`, `corpus-case-schema-v3`, purely additive) replaces free-text extraction with
+structured `(category, operator, value)` references, read only by `experiments/scoring/utility.py`
+for evaluation purposes — never by a treatment, the detector, a policy or a provider. A new
+function, `classify_generalized_band_against_references`, shares fidelity (steps 1–3) byte-for-byte
+with the frozen `post-pilot-v3` `classify_generalized_band` and replaces only the sufficiency step
+with the structured per-operator table (`greater_than`/`greater_than_or_equal`/`less_than`/
+`less_than_or_equal`). Deliberately **no load-time coverage requirement** (an opted-in case whose
+numeric-dependent category has no reference scores `indeterminate`/`generalized_band_no_reference`
+at score time, not a schema violation) and **no text-grounding check** (a reference's value need
+not appear anywhere in `input.text` — enforcing that would recouple the oracle to the case's exact
+surface phrasing and conflicts with Issue #88's Brazilian-format-parsing decision). Protocol
+dispatch (`SCORABLE_PROTOCOL_IDS`, `check_corpus_protocol_compatibility`) refuses to score a legacy
+oracle (no opted-in `utility_references`) that depends on a numeric category under `post-pilot-v4`
+— `corpus/hr/v1` and `corpus/contracts/v1` are neither edited nor scorable under v4, and remain
+scored under `protocol_id="post-pilot-v3"` explicitly. `post-pilot-v1`, `-v2` and `-v3` are not
+edited; `CURRENT_PROTOCOL_ID` is now `post-pilot-v4`. See `docs/research/post-pilot-protocol-v4.md`
+for the full rule, the anti-tuning justification for the fix's one case of *adding* credit
+relative to v3, and the item (c)/Unicode-`\d` findings moved to their own issues rather than fixed
+here.
 
 ### Reconstruction
 

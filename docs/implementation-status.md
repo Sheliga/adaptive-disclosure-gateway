@@ -2,8 +2,11 @@
 
 Last updated: 2026-09-21 — M3 Gate 6 / Issue #38 (date-aware GENERALIZE utility scoring,
 `post-pilot-v2`) merged into `master` via PR #86 (merge commit `d1583f6`). M3 / Issue #85
-(numeric-band GENERALIZE fidelity, `post-pilot-v3`) is now **in validation** in an open PR to
-`develop`, resolving the related defect Gate 6 deliberately left open. T30 / Issue #82 (guided
+(numeric-band GENERALIZE fidelity, `post-pilot-v3`) **merged into `develop` via PR #89** (merge
+commit `7d3644e8e2bf9e1c903b21be753c5c999f127e66`), resolving the related defect Gate 6
+deliberately left open. M3 / Issue #87 (structured numeric utility references, `post-pilot-v4`)
+is now **in validation** in an open PR to `develop`, resolving the two remaining Issue #85 §8
+findings that were not fixed by `post-pilot-v3` itself. T30 / Issue #82 (guided
 demo UX with progressive disclosure) merged to `master` in PR #83. T29 / Issue #72 (local Vault
 Explorer for demo/debug) is now **in validation** in an open PR to `develop`. Issue #56
 (Contracts domain extensions) **merged into `develop` via PR #59** (merge commit
@@ -385,8 +388,36 @@ generated band, by the generator's own pre-existing contract) — this ticket cl
 changing any historical result. A further, separate reference-extraction/sufficiency-semantics
 issue (Issue #87) and a separate treatment-behavior defect in the generator's own Brazilian-format
 amount parsing (Issue #88) were found during this fix and filed as their own issues rather than
-folded into this one; #87 remains open and must be resolved or explicitly accepted before Gate 8,
-and #88 needs its own versioned decision before it can be fixed.
+folded into this one; #87 is resolved below (`post-pilot-v4`), and #88 needs its own versioned
+decision before it can be fixed and is ordered directly after #87, before Gate 7.
+
+**Resolved by M3 / Issue #87 (`post-pilot-v4`, `docs/research/post-pilot-protocol-v4.md`).** Both
+remaining Issue #85 §8 findings are fixed: (a) the free-text reference-extraction mechanism
+(`_reference_values`) could not distinguish a strict "greater than" reading of a stated threshold
+from a non-strict "at least" one, so a reference sitting exactly on a band's lower bound was
+always scored `ambiguous` regardless of which reading the case actually intended; (b) that same
+mechanism was category-blind, applying any number found outside a detected span as a candidate
+reference for every numeric category a case depends on. `CaseOracle.utility_references` (a new,
+purely additive `list[NumericUtilityReference] | None` field, `corpus-case-schema-v3`) replaces
+free-text extraction with structured `(category, operator, value)` references for evaluation
+purposes only — never reaching a treatment, the detector, a policy or a provider. A new function,
+`classify_generalized_band_against_references`, shares fidelity (steps 1–3) byte-for-byte with the
+frozen `post-pilot-v3` `classify_generalized_band` and applies a structured, per-operator
+sufficiency rule (`docs/research/post-pilot-protocol-v4.md` §4) instead of the old bare-float
+comparison. Neither `post-pilot-v1`, `-v2` nor `-v3` is edited — `CURRENT_PROTOCOL_ID` moved to
+`post-pilot-v4`, following v1 §11's change procedure exactly. Neither `corpus/hr/v1` nor
+`corpus/contracts/v1` is edited to add the field, so **neither frozen corpus can be scored under
+`post-pilot-v4` at all** — both remain scored under `protocol_id="post-pilot-v3"` explicitly
+(`scripts/run_hr_v1_pilot.py`/`run_contracts_v1_pilot.py`), and no committed artifact changes.
+An analytical (non-committed) historical-impact estimate found 16 of 65 numeric-category rows
+would move from `ambiguous` to `decidable` under a throwaway structured-reference fixture for the
+two corpora (`hr_department_aggregation_001`/`002`, `hr_salary_analysis_001`/`002` × B1–B4;
+Contracts: 0) — see `docs/research/post-pilot-protocol-v4.md` §9 for the method and §10 for why
+this is not tuning. Item (c) from Issue #85 §8 (no utility-side `MIN_NUMERIC_BAND_WIDTH` check) is
+moved to its own new issue, scoped to `scoring/exposure.py` rather than `utility.py` — see
+`docs/research/post-pilot-protocol-v4.md` §8. A separate, unreachable finding (the v3 fidelity
+regexes' `\d` pattern also matches non-ASCII Unicode digits) is recorded, not fixed, in its own
+new issue (`docs/research/post-pilot-protocol-v4.md` §11).
 
 **Findings recorded, not fixed** (see `corpus/contracts/v1/README.md`):
 
