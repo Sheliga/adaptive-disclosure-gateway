@@ -1,7 +1,7 @@
 # Implementation status
 
 Last updated: 2026-09-21 — M3 Gate 6 / Issue #38 (date-aware GENERALIZE utility scoring,
-`post-pilot-v2`) merged into `develop` via PR #86 (merge commit `d1583f6`). M3 / Issue #85
+`post-pilot-v2`) merged into `master` via PR #86 (merge commit `d1583f6`). M3 / Issue #85
 (numeric-band GENERALIZE fidelity, `post-pilot-v3`) is now **in validation** in an open PR to
 `develop`, resolving the related defect Gate 6 deliberately left open. T30 / Issue #82 (guided
 demo UX with progressive disclosure) merged to `master` in PR #83. T29 / Issue #72 (local Vault
