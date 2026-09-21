@@ -384,21 +384,25 @@ of those ids it already names.
 
 ## 10. Separate issues filed (recorded, not fixed here)
 
-1. **Detector keeps a trailing `\r` on a CRLF-terminated labeled line** (§5) — the real
-   `application/ingestion.py` plain-text path does not normalize line endings before detection,
-   so a CRLF-authored upload with a numeric `GENERALIZE` field now blocks under the stricter v5
-   grammar where it previously might have silently misparsed. Filed as its own issue rather than
-   fixed here (an ingestion-boundary change, not an amount-grammar change).
-2. **Manifests do not record the actual code commit or per-row treatment provenance** — decided
-   at Gate 8, not here; `NUMERIC_AMOUNT_GRAMMAR_ID` (§7) is the one new provenance field this
-   ticket adds, and it is a free-form `reproducibility` value, not a schema change.
-3. **`MonthYearDateStrategy` (`transformations/generalization.py`, `strptime`) accepts Unicode
-   digits** (e.g. a date string using Eastern Arabic-Indic digits parses successfully) — the
-   *treatment*-side counterpart of the same Issue #91 class this document resolves for the
-   *scorer*'s amount/date grammars. Recorded as its own issue rather than fixed here: it is a
-   `datetime.strptime` behavior, not a regex this ticket's grammar governs, and touches the
-   `deadline`/`birth_date` treatment path rather than the numeric-amount contract this ticket is
-   scoped to.
+1. **[Issue #94](https://github.com/Sheliga/adaptive-disclosure-gateway/issues/94) — detector
+   keeps a trailing `\r` on a CRLF-terminated labeled line** (§5) — the real
+   `application/ingestion.py` plain-text path does not normalize line endings before detection
+   (verified for this ticket), so a CRLF-authored upload with a numeric `GENERALIZE` field now
+   blocks under the stricter v5 grammar where it previously might have silently misparsed. Filed
+   as its own issue rather than fixed here (an ingestion-boundary change, not an amount-grammar
+   change).
+2. **[Issue #95](https://github.com/Sheliga/adaptive-disclosure-gateway/issues/95) — manifests do
+   not record the actual code commit or per-row treatment provenance** — decided at Gate 8, not
+   here; `NUMERIC_AMOUNT_GRAMMAR_ID` (§7) is the one new provenance field this ticket adds, and it
+   is a free-form `reproducibility` value, not a schema change.
+3. **[Issue #96](https://github.com/Sheliga/adaptive-disclosure-gateway/issues/96) —
+   `MonthYearDateStrategy` (`transformations/generalization.py`, `strptime`) accepts Unicode
+   digits** (e.g. a date string using Eastern Arabic-Indic digits parses successfully, verified for
+   this ticket) — the *treatment*-side counterpart of the same Issue #91 class this document
+   resolves for the *scorer*'s amount/date grammars. Recorded as its own issue rather than fixed
+   here: it is a `datetime.strptime` behavior, not a regex this ticket's grammar governs, and
+   touches the `deadline`/`birth_date` treatment path rather than the numeric-amount contract this
+   ticket is scoped to.
 
 ## 11. Anti-tuning statement
 

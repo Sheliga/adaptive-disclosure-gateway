@@ -459,9 +459,12 @@ against the live implementation: all 33 numeric-category oracle spans across bot
 corpora parse to the identical band under the new grammar as under the old one, and a full
 `post-pilot-v3` run over both corpora (125 case executions) is unaffected. Three further,
 narrower findings surfaced during this work and are recorded as their own new issues rather than
-fixed here (CRLF trailing `\r` on a detected labeled-line value; manifest code-commit/per-row
-treatment provenance for Gate 8; `MonthYearDateStrategy` accepting Unicode digits via
-`strptime`) -- see `docs/research/post-pilot-protocol-v5.md` §10/§12.
+fixed here: [Issue #94](https://github.com/Sheliga/adaptive-disclosure-gateway/issues/94) (CRLF
+trailing `\r` on a detected labeled-line value), [Issue
+#95](https://github.com/Sheliga/adaptive-disclosure-gateway/issues/95) (manifest
+code-commit/per-row treatment provenance for Gate 8), and [Issue
+#96](https://github.com/Sheliga/adaptive-disclosure-gateway/issues/96) (`MonthYearDateStrategy`
+accepting Unicode digits via `strptime`) -- see `docs/research/post-pilot-protocol-v5.md` §10/§12.
 
 **Findings recorded, not fixed** (see `corpus/contracts/v1/README.md`):
 
