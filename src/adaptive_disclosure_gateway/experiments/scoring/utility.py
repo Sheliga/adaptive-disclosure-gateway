@@ -250,6 +250,7 @@ def _classify_structured_sufficiency(
         return "answerable", "generalized_band_decidable"
     return "indeterminate", "generalized_band_ambiguous"
 
+
 # Per-category required GENERALIZE granularity for date-shaped categories
 # (M3 Gate 6 / Issue #38). "day" is the finest granularity this registry
 # ever names (a day-precision GENERALIZE is never actually a generalization

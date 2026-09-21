@@ -5,8 +5,12 @@ Last updated: 2026-09-21 — M3 Gate 6 / Issue #38 (date-aware GENERALIZE utilit
 (numeric-band GENERALIZE fidelity, `post-pilot-v3`) **merged into `develop` via PR #89** (merge
 commit `7d3644e8e2bf9e1c903b21be753c5c999f127e66`), resolving the related defect Gate 6
 deliberately left open. M3 / Issue #87 (structured numeric utility references, `post-pilot-v4`)
-is now **in validation** in an open PR to `develop`, resolving the two remaining Issue #85 §8
-findings that were not fixed by `post-pilot-v3` itself. T30 / Issue #82 (guided
+**merged into `develop` via PR #92** (merge commit
+`dc2236bc81d16eac7a283edcd30a3ef2769c18ae`), resolving the two remaining Issue #85 §8 findings
+that were not fixed by `post-pilot-v3` itself. M3 / Issue #93 (numeric amount format
+stabilization end-to-end, `post-pilot-v5`) is now **in validation** in an open PR to `develop`
+-- the pre-Gate-7 checkpoint resolving Issue #88 (Brazilian-formatted amount misparse) and
+Issue #91 (non-ASCII-digit/trailing-newline scorer grammar defects). T30 / Issue #82 (guided
 demo UX with progressive disclosure) merged to `master` in PR #83. T29 / Issue #72 (local Vault
 Explorer for demo/debug) is now **in validation** in an open PR to `develop`. Issue #56
 (Contracts domain extensions) **merged into `develop` via PR #59** (merge commit
@@ -428,6 +432,36 @@ replaced by a semantic-grounding rule: a reference's value need not match the te
 every reference must correspond to a condition actually visible to the provider
 (`CorpusCaseInput.text`/`task`), audited at Gate 7 authoring time, never invented solely to make a
 band decidable. See `docs/research/post-pilot-protocol-v4.md` §3a/§3b and `docs/milestone-3-current-plan.md`'s Gate 7 requirement.
+
+**Resolved by M3 / Issue #93 (`post-pilot-v5`, `docs/research/post-pilot-protocol-v5.md`).** The
+pre-Gate-7 numeric-format checkpoint: Issue #88 (`NumericBandStrategy`'s permissive float regex
+misread Brazilian-formatted amounts, e.g. `R$ 125.000,00` as `125.0`, and a huge digit string
+could overflow float to `inf`/`NaN` and raise `ValueError` instead of failing closed) and Issue
+#91 (the frozen v3/v4 fidelity regexes' `\d` also matches non-ASCII Unicode digits, and
+`match`+`$` still accepts a trailing newline) are both resolved by a single closed, ASCII-only,
+`fullmatch`-only amount grammar (`NUMERIC_AMOUNT_GRAMMAR_ID = "amount-grammar-v1"`) shared in
+concept, but independently implemented, by the treatment (`transformations/generalization.py`)
+and a new `post-pilot-v5` scorer path (`experiments/scoring/utility.py`). The grammar accepts
+dotted-decimal (`R$ 125000.00`) and Brazilian (`R$ 125.000,00`, and, per an explicit
+orchestrator decision, ungrouped `R$ 125000,00`) amounts with mandatory cents, NBSP as an
+alternate separator, and rejects negatives, leading zeros, cents-less amounts and amounts over
+15 integer digits; `NumericBandStrategy` now parses to `Decimal` (never `float`) and bands in
+exact integer arithmetic. `post-pilot-v5` is registered as frozen, scorable and current
+(`CURRENT_PROTOCOL_ID`); v3/v4 code paths (`classify_generalized_band`,
+`classify_generalized_date`, their `\d` regexes) are untouched byte-for-byte, and both
+`corpus/hr/v1` and `corpus/contracts/v1` stay refused under v5 (legacy-oracle reason, same as
+v4) and remain scored under `protocol_id="post-pilot-v3"`. A new v5-only pre-run check
+(`check_corpus_protocol_compatibility` → `UnsupportedOriginalAmountFormatError`) rejects, before
+any provider call, any numeric-category oracle span -- blocked cases included -- whose value is
+outside the grammar, so a future Gate 7 corpus cannot be authored against an amount format the
+treatment/scorer contract does not actually support. Historical impact re-verified directly
+against the live implementation: all 33 numeric-category oracle spans across both frozen
+corpora parse to the identical band under the new grammar as under the old one, and a full
+`post-pilot-v3` run over both corpora (125 case executions) is unaffected. Three further,
+narrower findings surfaced during this work and are recorded as their own new issues rather than
+fixed here (CRLF trailing `\r` on a detected labeled-line value; manifest code-commit/per-row
+treatment provenance for Gate 8; `MonthYearDateStrategy` accepting Unicode digits via
+`strptime`) -- see `docs/research/post-pilot-protocol-v5.md` §10/§12.
 
 **Findings recorded, not fixed** (see `corpus/contracts/v1/README.md`):
 

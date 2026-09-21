@@ -61,6 +61,7 @@ PROTOCOL_DOC_V1 = Path(__file__).parents[1] / "docs" / "research" / "post-pilot-
 PROTOCOL_DOC_V2 = Path(__file__).parents[1] / "docs" / "research" / "post-pilot-protocol-v2.md"
 PROTOCOL_DOC_V3 = Path(__file__).parents[1] / "docs" / "research" / "post-pilot-protocol-v3.md"
 PROTOCOL_DOC_V4 = Path(__file__).parents[1] / "docs" / "research" / "post-pilot-protocol-v4.md"
+PROTOCOL_DOC_V5 = Path(__file__).parents[1] / "docs" / "research" / "post-pilot-protocol-v5.md"
 # Backward-compatible alias: PROTOCOL_DOC always names the document this
 # module's older assertions target (v1, whose own frozen content never
 # changes regardless of which id is CURRENT_PROTOCOL_ID).
@@ -169,30 +170,58 @@ def test_frozen_v3_document_still_declares_it_supersedes_v2():
     assert match.group(1) == "post-pilot-v2"
 
 
-def test_current_protocol_document_declares_the_same_protocol_id_as_the_code():
-    """The *current* frozen document (v4, since Issue #87) must declare
-    exactly ``CURRENT_PROTOCOL_ID`` -- unlike the version-specific tests
-    above, this one is meant to keep tracking whichever document is current
-    as new versions are frozen in the future.
+def test_frozen_v4_document_still_declares_its_own_original_protocol_id():
+    """``post-pilot-v4.md`` is superseded by ``post-pilot-v5`` (Issue #93)
+    but, exactly like v1/v2/v3 above, is never edited in place once
+    superseded. Asserts the literal, historical id, never
+    ``CURRENT_PROTOCOL_ID``, for the same reason the v1/v2/v3 pins do: a
+    future v6 moving ``CURRENT_PROTOCOL_ID`` again must never make this test
+    pass by accident merely because the two constants happen to match again.
     """
     text = PROTOCOL_DOC_V4.read_text(encoding="utf-8")
     match = re.search(r"^protocol_id:\s*(\S+)\s*$", text, re.MULTILINE)
     assert match is not None, "post-pilot-protocol-v4.md must declare protocol_id: <id>"
-    assert match.group(1) == CURRENT_PROTOCOL_ID
+    assert match.group(1) == "post-pilot-v4"
 
 
-def test_current_protocol_document_status_is_frozen():
+def test_frozen_v4_document_status_is_still_frozen():
     text = PROTOCOL_DOC_V4.read_text(encoding="utf-8")
     match = re.search(r"^status:\s*(\S+)\s*$", text, re.MULTILINE)
     assert match is not None, "post-pilot-protocol-v4.md must declare status: <STATUS>"
     assert match.group(1) == "FROZEN"
 
 
-def test_current_protocol_document_declares_it_supersedes_v3():
+def test_frozen_v4_document_still_declares_it_supersedes_v3():
     text = PROTOCOL_DOC_V4.read_text(encoding="utf-8")
     match = re.search(r"^supersedes:\s*(\S+)\s*$", text, re.MULTILINE)
     assert match is not None, "post-pilot-protocol-v4.md must declare supersedes: <id>"
     assert match.group(1) == "post-pilot-v3"
+
+
+def test_current_protocol_document_declares_the_same_protocol_id_as_the_code():
+    """The *current* frozen document (v5, since Issue #93) must declare
+    exactly ``CURRENT_PROTOCOL_ID`` -- unlike the version-specific tests
+    above, this one is meant to keep tracking whichever document is current
+    as new versions are frozen in the future.
+    """
+    text = PROTOCOL_DOC_V5.read_text(encoding="utf-8")
+    match = re.search(r"^protocol_id:\s*(\S+)\s*$", text, re.MULTILINE)
+    assert match is not None, "post-pilot-protocol-v5.md must declare protocol_id: <id>"
+    assert match.group(1) == CURRENT_PROTOCOL_ID
+
+
+def test_current_protocol_document_status_is_frozen():
+    text = PROTOCOL_DOC_V5.read_text(encoding="utf-8")
+    match = re.search(r"^status:\s*(\S+)\s*$", text, re.MULTILINE)
+    assert match is not None, "post-pilot-protocol-v5.md must declare status: <STATUS>"
+    assert match.group(1) == "FROZEN"
+
+
+def test_current_protocol_document_declares_it_supersedes_v4():
+    text = PROTOCOL_DOC_V5.read_text(encoding="utf-8")
+    match = re.search(r"^supersedes:\s*(\S+)\s*$", text, re.MULTILINE)
+    assert match is not None, "post-pilot-protocol-v5.md must declare supersedes: <id>"
+    assert match.group(1) == "post-pilot-v4"
 
 
 IMPLEMENTATION_STATUS_DOC = Path(__file__).parents[1] / "docs" / "implementation-status.md"
@@ -233,7 +262,7 @@ def test_frozen_v3_document_frozen_date_is_the_issue_85_freeze_date():
     assert match.group(1) == "2026-09-21"
 
 
-def test_current_protocol_frozen_date_is_the_issue_87_freeze_date():
+def test_frozen_v4_document_frozen_date_is_the_issue_87_freeze_date():
     """Same immutability pin as above, applied to v4's own frozen_date
     (2026-09-21, the date Issue #87's fix froze this document)."""
     text = PROTOCOL_DOC_V4.read_text(encoding="utf-8")
@@ -242,8 +271,17 @@ def test_current_protocol_frozen_date_is_the_issue_87_freeze_date():
     assert match.group(1) == "2026-09-21"
 
 
-def test_all_frozen_protocol_ids_remain_registered_after_v4_supersedes_v3():
-    """v1, v2 and v3 are superseded as ``CURRENT_PROTOCOL_ID`` but must
+def test_current_protocol_frozen_date_is_the_issue_93_freeze_date():
+    """Same immutability pin as above, applied to v5's own frozen_date
+    (2026-09-21, the date Issue #93's fix froze this document)."""
+    text = PROTOCOL_DOC_V5.read_text(encoding="utf-8")
+    match = re.search(r"^frozen_date:\s*(\S+)\s*$", text, re.MULTILINE)
+    assert match is not None, "post-pilot-protocol-v5.md must declare frozen_date: <DATE>"
+    assert match.group(1) == "2026-09-21"
+
+
+def test_all_frozen_protocol_ids_remain_registered_after_v5_supersedes_v4():
+    """v1, v2, v3 and v4 are superseded as ``CURRENT_PROTOCOL_ID`` but must
     never be removed from the registry -- each stays the historical record
     of what governed every run produced under it (v1 section 0's own
     append-only rule).
@@ -252,7 +290,8 @@ def test_all_frozen_protocol_ids_remain_registered_after_v4_supersedes_v3():
     assert "post-pilot-v2" in FROZEN_PROTOCOL_IDS
     assert "post-pilot-v3" in FROZEN_PROTOCOL_IDS
     assert "post-pilot-v4" in FROZEN_PROTOCOL_IDS
-    assert CURRENT_PROTOCOL_ID == "post-pilot-v4"
+    assert "post-pilot-v5" in FROZEN_PROTOCOL_IDS
+    assert CURRENT_PROTOCOL_ID == "post-pilot-v5"
 
 
 # --- 2b. scorable-protocol registry (Issue #87 / M3) -------------------------
@@ -262,21 +301,22 @@ def test_scorable_protocol_ids_are_a_subset_of_frozen_ids():
     assert SCORABLE_PROTOCOL_IDS <= FROZEN_PROTOCOL_IDS
 
 
-def test_scorable_protocol_ids_are_exactly_v3_and_v4():
+def test_scorable_protocol_ids_are_exactly_v3_v4_and_v5():
     """Pins the concrete membership, not just the subset relationship: v1
     and v2 are frozen historical record but this codebase's scorer no
     longer implements either of them (their numeric-band rule was replaced
     in place by post-pilot-v3's ``classify_generalized_band``)."""
-    assert SCORABLE_PROTOCOL_IDS == {"post-pilot-v3", "post-pilot-v4"}
+    assert SCORABLE_PROTOCOL_IDS == {"post-pilot-v3", "post-pilot-v4", "post-pilot-v5"}
 
 
 def test_current_protocol_id_is_scorable():
     assert CURRENT_PROTOCOL_ID in SCORABLE_PROTOCOL_IDS
 
 
-def test_validate_scorable_protocol_id_accepts_v3_and_v4():
+def test_validate_scorable_protocol_id_accepts_v3_v4_and_v5():
     validate_scorable_protocol_id("post-pilot-v3")  # must not raise
     validate_scorable_protocol_id("post-pilot-v4")  # must not raise
+    validate_scorable_protocol_id("post-pilot-v5")  # must not raise
 
 
 def test_validate_scorable_protocol_id_rejects_frozen_but_unscorable_v1_and_v2():
@@ -412,6 +452,20 @@ def test_current_protocol_document_no_longer_claims_no_grounding_requirement():
     the semantic-grounding rule that replaces it.
     """
     text = PROTOCOL_DOC_V4.read_text(encoding="utf-8").lower()
+    assert "no grounding requirement" not in text
+    assert 'no "grounding" requirement' not in text
+    assert "no text-grounding" not in text
+    assert "semantic grounding" in text
+    assert "provider-visible" in text
+
+
+def test_current_protocol_document_states_the_semantic_grounding_rule():
+    """Same check as above, for the current document (v5, Issue #93): the
+    semantic-grounding rule Issue #87/PR #92's review established must
+    survive into v5's own document, not merely stay documented in the
+    now-historical v4 one.
+    """
+    text = PROTOCOL_DOC_V5.read_text(encoding="utf-8").lower()
     assert "no grounding requirement" not in text
     assert 'no "grounding" requirement' not in text
     assert "no text-grounding" not in text

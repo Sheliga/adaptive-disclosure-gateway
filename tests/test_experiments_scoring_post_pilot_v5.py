@@ -70,7 +70,9 @@ def _synthetic_case(
         value=span_value,
         start=0,
         end=len(span_value),
-        task_necessity=TaskNecessity.NOT_REQUIRED if expected_block_request else TaskNecessity.REQUIRED,
+        task_necessity=TaskNecessity.NOT_REQUIRED
+        if expected_block_request
+        else TaskNecessity.REQUIRED,
         expected_actions=(
             [DisclosureAction.BLOCK_REQUEST]
             if expected_block_request
@@ -131,9 +133,7 @@ def test_v5_accepts_a_brazilian_original_that_v4_rejects_as_unscorable():
 
 
 def test_v5_correct_band_accepted():
-    outcome, reason = classify_generalized_band_against_references_v5(
-        "R$ 520000,00", _BAND, []
-    )
+    outcome, reason = classify_generalized_band_against_references_v5("R$ 520000,00", _BAND, [])
     assert (outcome, reason) == ("indeterminate", "generalized_band_no_reference")
 
 
@@ -162,12 +162,18 @@ def test_v5_band_with_trailing_newline_is_rejected():
 def test_v5_every_reason_is_in_the_closed_set():
     cases = [
         ("R$ 520000,00", _BAND, []),
-        ("R$ 520000,00", _BAND, [_ref("contract_value", ReferenceOperator.GREATER_THAN, "500000.00")]),
+        (
+            "R$ 520000,00",
+            _BAND,
+            [_ref("contract_value", ReferenceOperator.GREATER_THAN, "500000.00")],
+        ),
         ("not an amount", _BAND, []),
         ("R$ 520000,00", "not a band", []),
     ]
     for original, transformed, references in cases:
-        _, reason = classify_generalized_band_against_references_v5(original, transformed, references)
+        _, reason = classify_generalized_band_against_references_v5(
+            original, transformed, references
+        )
         assert reason in NUMERIC_BAND_UTILITY_REASONS
 
 
@@ -181,7 +187,10 @@ def test_v5_date_grammar_rejects_non_ascii_digits_where_v3_v4_accept_them():
 
     # Documents the pre-#91 behavior, frozen for v3/v4: `\d` happily matches
     # the Arabic-Indic digits, and Python's own `int()` happily parses them.
-    assert (v3_v4_outcome, v3_v4_reason) == ("answerable", "generalized_date_sufficient_granularity")
+    assert (v3_v4_outcome, v3_v4_reason) == (
+        "answerable",
+        "generalized_date_sufficient_granularity",
+    )
     assert (v5_outcome, v5_reason) == ("not_answerable", "generalized_date_invalid")
 
 
@@ -197,8 +206,14 @@ def test_v5_date_grammar_accepts_the_same_valid_forms_as_v3_v4():
     ]:
         v3_v4_outcome, v3_v4_reason = classify_generalized_date(original, transformed, required)
         v5_outcome, v5_reason = classify_generalized_date_v5(original, transformed, required)
-        assert (v5_outcome, v5_reason) == (v3_v4_outcome, v3_v4_reason) == (
-            ("answerable", expected) if "sufficient" in expected else ("not_answerable", expected)
+        assert (
+            (v5_outcome, v5_reason)
+            == (v3_v4_outcome, v3_v4_reason)
+            == (
+                ("answerable", expected)
+                if "sufficient" in expected
+                else ("not_answerable", expected)
+            )
         )
 
 
@@ -210,11 +225,15 @@ def test_score_utility_dispatches_v5_band_rule_for_v5_protocol():
         sample_id="synthetic-v5-dispatch",
         category="contract_value",
         span_value="R$ 520000,00",
-        utility_references=[_ref("contract_value", ReferenceOperator.GREATER_THAN_OR_EQUAL, "500000.00")],
+        utility_references=[
+            _ref("contract_value", ReferenceOperator.GREATER_THAN_OR_EQUAL, "500000.00")
+        ],
     )
     result = _result(_band_transformation("contract_value", _BAND, "R$ 520000,00"))
 
-    score = score_utility(case_input, oracle, result, Treatment.TASK_AWARE, protocol_id="post-pilot-v5")
+    score = score_utility(
+        case_input, oracle, result, Treatment.TASK_AWARE, protocol_id="post-pilot-v5"
+    )
     contract_value = next(c for c in score.by_category if c.category == "contract_value")
     assert contract_value.outcome == "answerable"
     assert contract_value.reason == "generalized_band_decidable"
@@ -225,11 +244,15 @@ def test_score_utility_v4_still_rejects_the_same_brazilian_original():
         sample_id="synthetic-v4-unchanged",
         category="contract_value",
         span_value="R$ 520000,00",
-        utility_references=[_ref("contract_value", ReferenceOperator.GREATER_THAN_OR_EQUAL, "500000.00")],
+        utility_references=[
+            _ref("contract_value", ReferenceOperator.GREATER_THAN_OR_EQUAL, "500000.00")
+        ],
     )
     result = _result(_band_transformation("contract_value", _BAND, "R$ 520000,00"))
 
-    score = score_utility(case_input, oracle, result, Treatment.TASK_AWARE, protocol_id="post-pilot-v4")
+    score = score_utility(
+        case_input, oracle, result, Treatment.TASK_AWARE, protocol_id="post-pilot-v4"
+    )
     contract_value = next(c for c in score.by_category if c.category == "contract_value")
     assert contract_value.outcome == "not_answerable"
     assert contract_value.reason == "generalized_band_unscorable_original"
@@ -242,7 +265,9 @@ def test_numeric_band_outcome_dispatch_never_falls_through_to_v4_for_an_unhandle
     import adaptive_disclosure_gateway.experiments.post_pilot_protocol as protocol_module
     import adaptive_disclosure_gateway.experiments.scoring.utility as utility_module
 
-    fake_ids = frozenset({"post-pilot-v3", "post-pilot-v4", "post-pilot-v5", "post-pilot-v6-not-real"})
+    fake_ids = frozenset(
+        {"post-pilot-v3", "post-pilot-v4", "post-pilot-v5", "post-pilot-v6-not-real"}
+    )
     monkeypatch.setattr(protocol_module, "FROZEN_PROTOCOL_IDS", fake_ids)
     monkeypatch.setattr(protocol_module, "SCORABLE_PROTOCOL_IDS", fake_ids)
     monkeypatch.setattr(utility_module, "_check_case_protocol_compatibility", lambda *a, **k: None)
@@ -251,7 +276,9 @@ def test_numeric_band_outcome_dispatch_never_falls_through_to_v4_for_an_unhandle
         sample_id="synthetic-unhandled-id",
         category="contract_value",
         span_value="R$ 520000.00",
-        utility_references=[_ref("contract_value", ReferenceOperator.GREATER_THAN_OR_EQUAL, "500000.00")],
+        utility_references=[
+            _ref("contract_value", ReferenceOperator.GREATER_THAN_OR_EQUAL, "500000.00")
+        ],
     )
     result = _result(_band_transformation("contract_value", _BAND, "R$ 520000.00"))
 
@@ -264,14 +291,18 @@ def test_numeric_band_outcome_dispatch_never_falls_through_to_v4_for_an_unhandle
 def test_case_protocol_compatibility_never_falls_through_for_an_unhandled_scorable_id(monkeypatch):
     import adaptive_disclosure_gateway.experiments.post_pilot_protocol as protocol_module
 
-    fake_ids = frozenset({"post-pilot-v3", "post-pilot-v4", "post-pilot-v5", "post-pilot-v6-not-real"})
+    fake_ids = frozenset(
+        {"post-pilot-v3", "post-pilot-v4", "post-pilot-v5", "post-pilot-v6-not-real"}
+    )
     monkeypatch.setattr(protocol_module, "FROZEN_PROTOCOL_IDS", fake_ids)
     monkeypatch.setattr(protocol_module, "SCORABLE_PROTOCOL_IDS", fake_ids)
     case_input, oracle = _synthetic_case(
         sample_id="synthetic-unhandled-id-compat",
         category="contract_value",
         span_value="R$ 520000.00",
-        utility_references=[_ref("contract_value", ReferenceOperator.GREATER_THAN_OR_EQUAL, "500000.00")],
+        utility_references=[
+            _ref("contract_value", ReferenceOperator.GREATER_THAN_OR_EQUAL, "500000.00")
+        ],
     )
     result = _result(_band_transformation("contract_value", _BAND, "R$ 520000.00"))
     with pytest.raises(UnsupportedScoringProtocolError):
