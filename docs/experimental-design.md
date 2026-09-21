@@ -291,6 +291,39 @@ not edited; `CURRENT_PROTOCOL_ID` is now `post-pilot-v4`. See
 fix's one case of *adding* credit relative to v3, and the item (c)/Unicode-`\d` findings moved to
 their own issues rather than fixed here.
 
+**Numeric amount format contract, end to end (frozen by Issue #93, `post-pilot-v5`).** Issue #88
+found that `NumericBandStrategy`'s treatment-side amount parser
+(`transformations/generalization.py`) misreads a Brazilian-formatted amount (`R$ 125.000,00` read
+as `125.0`) and could overflow `float` to `inf`/`NaN` on an oversized digit string, raising an
+unhandled exception instead of failing closed; Issue #91 separately found that the frozen v3/v4
+fidelity regexes use `\d`, which also matches non-ASCII Unicode digits, and `match`+`$`, which
+still accepts a trailing newline. Fixing either issue alone is insufficient: the treatment and the
+scorer must agree on one amount format, or a value the treatment can correctly generalize can
+still be unscorable. `post-pilot-v5` (delta on v4) freezes a single closed, versioned grammar
+(`NUMERIC_AMOUNT_GRAMMAR_ID = "amount-grammar-v1"`, `docs/research/post-pilot-protocol-v5.md` §2)
+— dotted-decimal or Brazilian, mandatory cents, NBSP accepted as an alternate separator, ungrouped
+Brazilian amounts accepted, negatives/leading-zeros/no-cents rejected — implemented
+**independently twice** (the treatment's single alternation regex; a new v5-only scorer path,
+`_parse_original_amount_v5`, two patterns tried in order) so a shared-parser bug cannot make
+fidelity circularly agree with a wrong band. `NumericBandStrategy` now parses to `Decimal`, never
+`float`, and bands in exact integer arithmetic; the emitted band's own string shape is unchanged.
+A new, ASCII-only/`fullmatch`-only date grammar (`classify_generalized_date_v5`) closes the same
+Unicode-digit/trailing-newline defect class for the date path. `score_utility`'s and
+`_check_case_protocol_compatibility`'s dispatch, previously an unconditional "not-v3-means-v4"
+fallback, is now exhaustive per protocol id (raising `UnsupportedScoringProtocolError` for any
+id with no matching branch). A new, v5-only pre-run check
+(`check_corpus_protocol_compatibility` → `UnsupportedOriginalAmountFormatError`) rejects, before
+any provider call, any numeric-category oracle span outside the grammar in **any** case — blocked
+cases included — so a future confirmatory corpus cannot be authored against a format the
+treatment/scorer contract does not support. `post-pilot-v1`–`v4` are not edited;
+`CURRENT_PROTOCOL_ID` is now `post-pilot-v5`. Neither registered corpus is scorable under v5 (same
+legacy-oracle refusal as v4); both remain scored under `protocol_id="post-pilot-v3"`, and
+re-verification found all 33 numeric-category oracle spans across both corpora produce identical
+bands under the new grammar. See `docs/research/post-pilot-protocol-v5.md` for the full grammar,
+the independence argument, the dispatch/compatibility matrix and the three further findings
+(CRLF-on-detected-value, manifest code-commit provenance, `MonthYearDateStrategy` Unicode digits)
+filed as separate issues rather than fixed here.
+
 ### Reconstruction
 
 - reconstruction success rate;
