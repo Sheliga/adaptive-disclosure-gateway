@@ -16,6 +16,7 @@ touch `test.yml` or `publish-images.yml`.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import yaml
@@ -24,6 +25,25 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _WORKFLOW_PATH = _REPO_ROOT / ".github" / "workflows" / "deploy.yml"
 _PUBLISH_WORKFLOW_PATH = _REPO_ROOT / ".github" / "workflows" / "publish-images.yml"
 _TEST_WORKFLOW_PATH = _REPO_ROOT / ".github" / "workflows" / "test.yml"
+_COMPOSE_PATH = _REPO_ROOT / "compose.prod.yaml"
+
+# The exact `grep -vE` argument pinned in deploy.yml's "Deploy project
+# (create/replace)" step: drop any line that, after optional leading
+# whitespace, is a comment (`#...`) or blank. compose.prod.yaml has no inline
+# comments, so this is a whole-line filter only.
+_BASH_FILTER_REGEX = "^[[:space:]]*(#|$)"
+# Same regex for Python's `re`, which has no [[:space:]] POSIX class -- the
+# bracket expression is rewritten to [ \t], everything else is identical.
+_PY_FILTER_REGEX = re.compile(r"^[ \t]*(#|$)")
+
+# The Hostinger API's real, undocumented limit: creating/replacing the
+# `disclosure-gateway` project with compose.prod.yaml's full 9020-byte
+# content (comments included) returned, from the live API in run
+# 35585709567:
+#   HTTP 422 {"message":"The content field must not be greater than 8192
+#   characters.", ...}
+# This is not in openapi.json; it only surfaced against the real endpoint.
+_MAX_CONTENT_CHARS = 8192
 
 
 def _load_workflow() -> dict:
@@ -47,6 +67,21 @@ def _all_steps(workflow: dict) -> list[dict]:
     for job in workflow.get("jobs", {}).values():
         steps.extend(job.get("steps", []))
     return steps
+
+
+def _deploy_step(workflow: dict) -> dict:
+    for step in _all_steps(workflow):
+        if step.get("name") == "Deploy project (create/replace)":
+            return step
+    raise AssertionError("deploy.yml must have a 'Deploy project (create/replace)' step")
+
+
+def _filter_comments_and_blank_lines(text: str) -> str:
+    """Python-side equivalent of `grep -vE '^[[:space:]]*(#|$)'`, applied
+    per-line exactly like grep would (a leading match anywhere on the line
+    is enough to drop it; no inline-comment stripping)."""
+    kept = [line for line in text.splitlines() if not _PY_FILTER_REGEX.match(line)]
+    return "\n".join(kept) + "\n"
 
 
 class TestWorkflowFileExists:
@@ -255,3 +290,80 @@ class TestVerification:
             "trust the API-reported container health"
         )
         assert "https://srv1994437.hstgr.cloud" in text
+
+
+class TestComposeContentSizeLimit:
+    """The Hostinger API rejects a `content` field over 8192 characters (a
+    real 422 in run 35585709567, not documented in openapi.json).
+    compose.prod.yaml is kept versioned WITH its explanatory comments; the
+    deploy step must strip comment/blank lines before building the payload,
+    and refuse to call the API at all if the filtered content still doesn't
+    fit -- so a compose file that grows too large fails the PR/local run,
+    not a live deploy.
+    """
+
+    def test_deploy_step_filters_comments_and_blank_lines_before_building_payload(
+        self,
+    ) -> None:
+        workflow = _load_workflow()
+        run = _deploy_step(workflow).get("run", "")
+        assert f"grep -vE '{_BASH_FILTER_REGEX}'" in run, (
+            "deploy step must filter compose.prod.yaml through the pinned "
+            f"comment/blank-line regex {_BASH_FILTER_REGEX!r} before building the API "
+            f"payload; got: {run!r}"
+        )
+        filter_pos = run.find("grep -vE")
+        rawfile_pos = run.find("--rawfile")
+        assert filter_pos != -1 and rawfile_pos != -1 and filter_pos < rawfile_pos, (
+            "the filtered copy must be produced before jq --rawfile reads it"
+        )
+        rawfile_line = next(line for line in run.splitlines() if "--rawfile content" in line)
+        assert "compose.prod.yaml" not in rawfile_line, (
+            "--rawfile must read the filtered copy, not compose.prod.yaml directly -- "
+            f"otherwise the size guard below never protects the real payload: {rawfile_line!r}"
+        )
+
+    def test_filtering_compose_prod_yaml_preserves_semantics(self) -> None:
+        """Guards against a future literal block (`|`/`>`) whose *content*
+        line happens to start with `#`: a naive line filter would silently
+        drop it from the deployed compose without showing up as a diff
+        anywhere except a runtime config drift on the VPS. Filtering the
+        actual committed file and parsing both with yaml.safe_load is what
+        would catch that before merge.
+        """
+        original = _COMPOSE_PATH.read_text(encoding="utf-8")
+        filtered = _filter_comments_and_blank_lines(original)
+        assert yaml.safe_load(filtered) == yaml.safe_load(original), (
+            "filtering comment/blank lines out of compose.prod.yaml must not change the "
+            "parsed compose document"
+        )
+
+    def test_filtered_compose_prod_yaml_is_within_the_api_content_limit(self) -> None:
+        """Pins the 8192-char API limit against the actual committed file so
+        a compose.prod.yaml that grows too large fails this test in the PR,
+        not the live deploy."""
+        original = _COMPOSE_PATH.read_text(encoding="utf-8")
+        filtered = _filter_comments_and_blank_lines(original)
+        assert len(filtered) <= _MAX_CONTENT_CHARS, (
+            f"filtered compose.prod.yaml is {len(filtered)} chars, over the Hostinger "
+            f"API's {_MAX_CONTENT_CHARS}-char content limit (see the 422 in run "
+            "35585709567) -- trim compose.prod.yaml before merging, or this same deploy "
+            "will fail against the real API"
+        )
+
+    def test_deploy_step_aborts_before_calling_the_api_if_filtered_content_is_too_large(
+        self,
+    ) -> None:
+        workflow = _load_workflow()
+        run = _deploy_step(workflow).get("run", "")
+        assert str(_MAX_CONTENT_CHARS) in run, (
+            "deploy step must check the filtered content length against the pinned "
+            f"{_MAX_CONTENT_CHARS}-char API limit"
+        )
+        assert "wc -m" in run, "deploy step must measure the filtered content with wc -m"
+        wc_pos = run.find("wc -m")
+        curl_pos = run.find("developers.hostinger.com")
+        assert wc_pos != -1 and curl_pos != -1 and wc_pos < curl_pos, (
+            "the size check must run before the deploy API call, not after"
+        )
+        assert "exit 1" in run, "deploy step must actually fail the job when over the limit"
