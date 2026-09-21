@@ -842,6 +842,7 @@ describe("GuidedFlow -- demo transparency feature flag (T28)", () => {
 
     await goToReview();
 
+    await userEvent.click(await screen.findByText(copy.review.technicalToolsToggle));
     expect(await screen.findByText(copy.exportRestorePanel.heading)).toBeInTheDocument();
   });
 
@@ -851,6 +852,7 @@ describe("GuidedFlow -- demo transparency feature flag (T28)", () => {
     mockedExecuteDisclosure.mockResolvedValue({ ok: true, data: executeResponse() });
 
     await goToReview();
+    await userEvent.click(await screen.findByText(copy.review.technicalToolsToggle));
     await screen.findByText(copy.exportRestorePanel.heading);
     await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
     await screen.findByRole("heading", { name: copy.result.heading });
@@ -907,6 +909,7 @@ describe("GuidedFlow -- demo vault explorer feature flag (T29)", () => {
     mockedExecuteDisclosure.mockResolvedValue({ ok: true, data: executeResponse() });
 
     await goToReview();
+    await userEvent.click(await screen.findByText(copy.review.technicalToolsToggle));
     expect(await screen.findByText(copy.vaultExplorerPanel.heading)).toBeInTheDocument();
     expect(screen.getByText(copy.vaultExplorerPanel.toggleLabel)).toBeInTheDocument();
 
