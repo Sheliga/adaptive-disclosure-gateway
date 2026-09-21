@@ -419,6 +419,16 @@ moved to its own new issue, scoped to `scoring/exposure.py` rather than `utility
 regexes' `\d` pattern also matches non-ASCII Unicode digits) is recorded, not fixed, in its own
 new issue (`docs/research/post-pilot-protocol-v4.md` §11).
 
+**PR #92 review round 2 (2026-09-21).** Two corrections before merge: (1) the `post-pilot-v3`
+compatibility check now refuses any opted-in oracle (`utility_references is not None`, an empty
+list `[]` included), not only a non-empty list — `None` (legacy) and `[]` (opted in, explicitly
+declares no reference) are distinct and must never be conflated; (2) `docs/research/
+post-pilot-protocol-v4.md`'s earlier "no grounding requirement" wording was too strong and is
+replaced by a semantic-grounding rule: a reference's value need not match the text lexically, but
+every reference must correspond to a condition actually visible to the provider
+(`CorpusCaseInput.text`/`task`), audited at Gate 7 authoring time, never invented solely to make a
+band decidable. See `docs/research/post-pilot-protocol-v4.md` §3a/§3b and `docs/milestone-3-current-plan.md`'s Gate 7 requirement.
+
 **Findings recorded, not fixed** (see `corpus/contracts/v1/README.md`):
 
 - ~~`experiments/scoring/utility.py`'s GENERALIZE decidability rule is numeric-band-specific, so

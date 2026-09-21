@@ -222,6 +222,25 @@ version, but that is out of scope for `post-pilot-v3` itself.
 guard's registered-corpus list (`REGISTERED_CORPUS_DIRS` or equivalent in the corresponding test
 file), so that the applicable format constraint is actually enforced on it.
 
+**Gate 7 requirement (PR #92 review, blocker 2): per-reference semantic-grounding audit.**
+Dropping the *lexical* match requirement for `NumericUtilityReference.value` (a reference need
+not textually appear in `input.text` — see `docs/research/post-pilot-protocol-v4.md` §3a's two
+examples) does not mean a reference may state a condition absent from the case entirely. Every
+`utility_reference` a Gate 7 case declares must be audited, before freeze, against the
+provider-visible condition it grounds in (`CorpusCaseInput.text`/`task` — never `context`, which
+the provider never sees): correct category, correct operator (the exact ambiguity Issue #87
+(a) found — "no less than" is `greater_than_or_equal`, never `greater_than`), correct value, the
+condition actually present in the visible text/task in *some* form, and no invented
+evaluation-only references. This is a human/methodological audit step (interpreting whether a
+prose sentence expresses a given threshold is not something a regex or NLP heuristic should do —
+exactly why `_reference_values`'s heuristic alternative was rejected in the first place), not a
+scorer check; Gate 7 tooling is expected to enforce only the audit's *record-keeping* — that a
+per-reference audit record exists and its `(category, operator, value)` triple matches the
+declared reference — never the semantic judgment itself. See
+`docs/research/post-pilot-protocol-v4.md` §3a/§3b for the full rule and the audit-record
+contract. **The Gate 7 corpus cannot be frozen until this audit is evidenced for every declared
+reference.**
+
 **Owner-decided resulting order:** Gate 6 ✅ → #85 (`post-pilot-v3`) ✅ MERGED → #87
 (`post-pilot-v4`, structured oracle references, in review) → #88 (decision/fix) → Gate 7 → Gate 8.
 
