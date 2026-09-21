@@ -280,21 +280,34 @@ def score_utility(
         if expectation.expected_reconstructable
     }
 
-    by_category_transformations: dict[str, list] = {}
+    # Pairs the oracle span alongside its matched transformation (rather than
+    # the transformation alone) so a category's ground-truth *value* --
+    # never a transformation's own, treatment-reported `original` field --
+    # is what any oracle-value-dependent rule (classify_generalized_date
+    # below) is judged against. `transformation.original` reflects whatever
+    # the detector/treatment actually read, which is exactly the value this
+    # scorer must NOT trust as ground truth (Gate 6 review finding, PR #86):
+    # a detector misread or a span-matching mismatch would otherwise let a
+    # wrong transformed date validate against its own wrong original,
+    # silently passing the oracle<->scorer coherence this scorer exists to
+    # check.
+    by_category_span_transformations: dict[str, list] = {}
     for span, transformation in zip(oracle.expected_spans, transformations):
-        by_category_transformations.setdefault(span.category, []).append(transformation)
+        by_category_span_transformations.setdefault(span.category, []).append(
+            (span, transformation)
+        )
 
     category_scores: list[CategoryUtility] = []
     for category in depends_on:
-        entries = by_category_transformations.get(category, [])
-        if not entries or any(entry is None for entry in entries):
+        entries = by_category_span_transformations.get(category, [])
+        if not entries or any(transformation is None for _, transformation in entries):
             category_scores.append(
                 CategoryUtility(category=category, outcome="not_answerable", reason="unscorable")
             )
             continue
 
         outcomes: list[tuple[str, str]] = []
-        for transformation in entries:
+        for span, transformation in entries:
             action = transformation.action
             if action is DisclosureAction.PRESERVE:
                 outcomes.append(("answerable", "preserved"))
@@ -303,7 +316,7 @@ def score_utility(
                 if required_granularity is not None:
                     outcomes.append(
                         classify_generalized_date(
-                            transformation.original,
+                            span.value,
                             transformation.transformed,
                             required_granularity,
                         )

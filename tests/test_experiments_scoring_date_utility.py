@@ -191,6 +191,56 @@ def test_real_obligation_relation_001_removed_deadline_stays_removed():
     assert category_utility.reason == "removed"
 
 
+# --- c'. oracle<->scorer coherence: the date rule must compare against the
+# oracle span's own value, never the transformation's own `original` field
+# (Gate 6 review finding, PR #86) ---------------------------------------
+
+
+def test_generalized_date_is_judged_against_the_oracle_span_value_not_the_transformation_original():
+    """A real regression pin for the review finding: ``classify_generalized_date``
+    must be called with the oracle's own ``ExpectedSpan.value`` (ground
+    truth), never ``Transformation.original`` (whatever the detector/
+    treatment happened to read). If a treatment's own ``original`` disagreed
+    with the oracle -- a real possible defect: a detector misread, or a
+    span-matching mismatch -- comparing against the transformation's own
+    field would silently validate the *wrong* ground truth.
+
+    Constructed here as a distinctive, deliberately wrong ``original`` on a
+    real corpus case's oracle: the oracle's own deadline is
+    ``2026-02-27`` (year 2026), but the transformation claims a completely
+    different ``original`` of ``2099-09-09`` (year 2099) with a
+    ``transformed`` value (``"2099-09"``) consistent with *that* wrong
+    original, not with the oracle's. If the scorer used the oracle's own
+    value (correct), the year mismatch (2026 vs 2099) makes this
+    ``generalized_date_wrong_value``. If it used the transformation's own
+    ``original`` (the bug), the transformed value would agree with it and
+    score ``generalized_date_insufficient_granularity`` instead -- which is
+    exactly why this test can fail from the real defect.
+    """
+    case = _load_case(CONTRACTS_CORPUS_DIR, "contracts_deadline_tracking_001")
+    oracle_deadline = next(s for s in case.oracle.expected_spans if s.category == "deadline")
+    assert oracle_deadline.value == "2026-02-27"
+
+    result = DisclosureResult(
+        external_payload="irrelevant to score_utility",
+        decisions=[],
+        transformations=[
+            Transformation(
+                category="deadline",
+                original="2099-09-09",
+                transformed="2099-09",
+                action=DisclosureAction.GENERALIZE,
+            )
+        ],
+        status="allowed",
+    )
+    score = score_utility(case.input, case.oracle, result, Treatment.TASK_AWARE)
+    category_utility = next(c for c in score.by_category if c.category == "deadline")
+
+    assert category_utility.outcome == "not_answerable"
+    assert category_utility.reason == "generalized_date_wrong_value"
+
+
 # --- d. equivalence: component-consistent, never string-equal to original --
 
 
