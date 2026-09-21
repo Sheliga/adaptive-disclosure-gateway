@@ -1,0 +1,183 @@
+name: deploy
+
+# Rolls out the images `publish-images.yml` just built and pushed to GHCR on
+# the Hostinger VPS (srv1994437.hstgr.cloud), by resubmitting the
+# `disclosure-gateway` Docker Manager project through the Hostinger API's
+# "Create new project" endpoint (POST .../virtual-machines/{id}/docker).
+#
+# WHY CREATE (REPLACE), NEVER `.../docker/{project}/update`: `update` only
+# re-pulls whatever image tags the CURRENTLY STORED project compose already
+# references. This project is deliberately pinned to an explicit commit SHA
+# (compose.prod.yaml's `ADG_IMAGE_TAG`, never `:latest`), so calling
+# `update` after a new image lands would just re-pull the SAME,
+# already-running SHA -- a silent no-op that looks like a successful
+# deploy. Only resubmitting the whole project (new `content` +new
+# `environment` with the new `ADG_IMAGE_TAG`) actually changes what runs.
+# The Hostinger API documents this replace-on-create behavior explicitly:
+# "If project with the same name already exists, existing project will be
+# replaced." This is the central design decision in this file.
+#
+# CONSEQUENCE OF REPLACE: recreating the project recreates both containers,
+# so there is a short availability gap -- roughly the ~120s healthcheck
+# start_period plus however long the ~2.6 GB api image takes to pull, on
+# top of teardown of the old containers -- between the old project going
+# away and the new one reporting healthy. Accepted for now: a single
+# 1-vCPU VPS has no blue/green or rolling-update mechanism to fall back on.
+#
+# ROLLBACK: re-run this workflow manually (workflow_dispatch) with `sha` set
+# to any commit SHA `publish-images.yml` has already pushed to GHCR (i.e.
+# any prior master commit). Omit it to redeploy the current master commit
+# as-is (e.g. to recover from a Hostinger-side failure without a new push).
+#
+# NOT SSH-based on purpose: the VPS's `disclosure-gateway` project is a
+# Docker Manager project (visible/editable in the Hostinger panel); driving
+# it through the same API the panel uses keeps that single source of truth,
+# rather than a parallel `ssh`+`docker compose` path the panel doesn't know
+# about and that would drift from what the UI shows.
+on:
+  workflow_run:
+    workflows: [publish-images]
+    types: [completed]
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Commit SHA to (re)deploy; defaults to the current master commit"
+        required: false
+        type: string
+
+# Nothing in this workflow needs to write to the repository -- it only
+# reads compose.prod.yaml from the checkout and talks to the Hostinger API.
+permissions:
+  contents: read
+
+# A fixed group serializes deploys so two never race against the same
+# Hostinger project; `cancel-in-progress: false` because a deploy already in
+# flight is mutating a live production project -- aborting it mid-rollout
+# would leave the project in whatever partial state the last API call left
+# it in, which is worse than letting it finish and queuing the next one.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  ADG_VPS_HOSTNAME: srv1994437.hstgr.cloud
+  ADG_DOCKER_PROJECT: disclosure-gateway
+
+jobs:
+  deploy:
+    # workflow_run fires for both a successful and a failed publish-images
+    # run; only a successful one should trigger a deploy. workflow_dispatch
+    # has no `conclusion` to check, so it is always allowed through.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://srv1994437.hstgr.cloud/disclosure-gateway
+    steps:
+      - name: Resolve target SHA
+        id: target
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            SHA="${{ github.event.inputs.sha }}"
+            if [ -z "$SHA" ]; then
+              SHA="${{ github.sha }}"
+            fi
+          else
+            SHA="${{ github.event.workflow_run.head_sha }}"
+          fi
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      # Checked out at the exact SHA being deployed, not whatever ref the
+      # runner defaults to -- compose.prod.yaml must be read from the same
+      # commit the images were built from, never a copy edited in place.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.target.outputs.sha }}
+
+      - name: Resolve Hostinger VM id
+        id: vm
+        env:
+          HOSTINGER_API_TOKEN: ${{ secrets.HOSTINGER_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          response=$(curl --fail-with-body -sS \
+            -H "Authorization: Bearer ${HOSTINGER_API_TOKEN}" \
+            "https://developers.hostinger.com/api/vps/v1/virtual-machines")
+          vm_id=$(echo "$response" | jq -r --arg host "$ADG_VPS_HOSTNAME" \
+            '[.[] | select(.hostname == $host)] | if length == 1 then .[0].id else "" end')
+          if [ -z "$vm_id" ]; then
+            echo "::error::expected exactly one VM with hostname $ADG_VPS_HOSTNAME, found $(echo "$response" | jq '[.[] | select(.hostname == "'"$ADG_VPS_HOSTNAME"'")] | length')"
+            exit 1
+          fi
+          echo "id=$vm_id" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy project (create/replace)
+        env:
+          HOSTINGER_API_TOKEN: ${{ secrets.HOSTINGER_API_TOKEN }}
+          ADG_TARGET_SHA: ${{ steps.target.outputs.sha }}
+        run: |
+          set -euo pipefail
+          # ADG_PROVIDER=fake keeps the public demo on the deterministic,
+          # credential-free provider. Switching to `anthropic` here would
+          # also require ANTHROPIC_API_KEY and
+          # ADG_PREVIEW_CONFIRMATION_SECRET in this environment payload,
+          # both out of scope for this ticket.
+          environment_body=$(printf 'ADG_IMAGE_TAG=%s\nADG_PROVIDER=fake\n' "$ADG_TARGET_SHA")
+          # jq --rawfile reads compose.prod.yaml's raw bytes into the JSON
+          # body -- never string-concatenation, which would silently break
+          # on the file's own quoting/newlines and risk sending a mangled
+          # compose file to a production project.
+          payload=$(jq -n \
+            --rawfile content compose.prod.yaml \
+            --arg env "$environment_body" \
+            --arg name "$ADG_DOCKER_PROJECT" \
+            '{project_name: $name, content: $content, environment: $env}')
+          curl --fail-with-body -sS -X POST \
+            -H "Authorization: Bearer ${HOSTINGER_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$payload" \
+            "https://developers.hostinger.com/api/vps/v1/virtual-machines/${{ steps.vm.outputs.id }}/docker"
+
+      # The create call above only returns an async Action (id/name/state) --
+      # it does NOT mean the new containers are already up. Poll the actual
+      # container list until every container in the project is running the
+      # SHA just deployed and reports healthy, then confirm from outside the
+      # VPS too: the containers API can say "healthy" while nginx in front
+      # of it is still misrouting, so a real request through the public URL
+      # is the only check that reflects what an advisor would actually see.
+      - name: Verify deployment
+        env:
+          HOSTINGER_API_TOKEN: ${{ secrets.HOSTINGER_API_TOKEN }}
+          ADG_TARGET_SHA: ${{ steps.target.outputs.sha }}
+        run: |
+          set -euo pipefail
+          containers_url="https://developers.hostinger.com/api/vps/v1/virtual-machines/${{ steps.vm.outputs.id }}/docker/${ADG_DOCKER_PROJECT}/containers"
+          deadline=$((SECONDS + 720))
+          containers="[]"
+          # ~15s poll interval, ~12min budget: the api image is ~2.6 GB to
+          # pull and its healthcheck alone has a 120s start_period, on top
+          # of whatever the old containers take to tear down first.
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            containers=$(curl --fail-with-body -sS \
+              -H "Authorization: Bearer ${HOSTINGER_API_TOKEN}" \
+              "$containers_url")
+            if echo "$containers" | jq -e --arg sha "$ADG_TARGET_SHA" \
+              '(length > 0) and all(.[]; (.image | endswith(":" + $sha)) and (.health == "healthy"))' \
+              >/dev/null 2>&1; then
+              ready_status=$(curl -s -o /dev/null -w '%{http_code}' "https://${ADG_VPS_HOSTNAME}/disclosure-gateway/api/ready")
+              root_status=$(curl -s -o /dev/null -w '%{http_code}' "https://${ADG_VPS_HOSTNAME}/disclosure-gateway")
+              if [ "$ready_status" = "200" ] && [ "$root_status" = "200" ]; then
+                echo "deployment verified: containers healthy at $ADG_TARGET_SHA, /disclosure-gateway/api/ready=200, /disclosure-gateway=200"
+                exit 0
+              fi
+              echo "containers healthy but public URL not yet 200 (ready=$ready_status, root=$root_status) -- retrying"
+            fi
+            sleep 15
+          done
+          echo "::error::deployment did not become healthy within the timeout"
+          echo "$containers" | jq -r '.[] | "name=\(.name) state=\(.state) health=\(.health) status=\(.status) image=\(.image)"'
+          exit 1

@@ -488,6 +488,34 @@ anyone operating it:
   `ADG_ENABLE_DEMO_VAULT_EXPLORER` to `1`, and this deployment does not
   enable them either.
 
+**Continuous deployment.** The rollout from a merged commit to this URL is
+fully automatic, with no manual panel step: a push to `master` runs
+`test.yml` (already required at the `develop -> master` boundary), then
+`.github/workflows/publish-images.yml` builds and pushes both images to
+GHCR, then `.github/workflows/deploy.yml` fires on that publish's
+`workflow_run` completion and rolls the new SHA out. `deploy.yml` resolves
+the target Hostinger VM by hostname, then calls the Hostinger API's
+"Create new project" endpoint for the `disclosure-gateway` project with the
+repository's own `compose.prod.yaml` (read at the same commit the images
+were built from, never a modified copy) and an `environment` payload of
+exactly `ADG_IMAGE_TAG=<sha>` and `ADG_PROVIDER=fake` -- never the demo
+transparency/vault-explorer flags. That endpoint *replaces* the existing
+project rather than updating it in place, because `update` only re-pulls
+whatever tag the current (SHA-pinned) project already references and would
+be a silent no-op here; replacing it is the only way to actually change
+which image tag runs. The project keeps belonging to the Docker Manager the
+whole time -- it stays visible and editable in the Hostinger panel exactly
+as before, this workflow just drives the same API the panel does. The
+trade-off is a short availability gap on every deploy (roughly the api
+image's 120s healthcheck `start_period` plus the time to pull the ~2.6 GB
+api image and tear down the old containers) while the replacement project
+comes up; `deploy.yml`'s verify step polls both the Hostinger containers
+API and the public `/disclosure-gateway` and `/disclosure-gateway/api/ready`
+URLs before declaring success. Requires the `HOSTINGER_API_TOKEN` repository
+secret (Hostinger API bearer token; no other secret is introduced). Rollback
+is `workflow_dispatch` on `deploy.yml` with `sha` set to any prior published
+commit SHA (omit it to redeploy the current `master` commit as-is).
+
 ### Health checks
 
 Two distinct endpoints, deliberately not one (T25 review finding 2):
