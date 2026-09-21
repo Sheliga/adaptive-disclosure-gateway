@@ -232,6 +232,14 @@ confirmatory batch.
 
 For FakeProvider M2 runs, utility is an information-sufficiency proxy based on whether the controlled payload retains the information required for the answer. Real-provider runs must score actual provider output under the frozen T23 procedure.
 
+**Date-aware GENERALIZE decidability (frozen by Gate 6 / Issue #38, `post-pilot-v2`).** The
+GENERALIZE decidability rule above was numeric-band-only; applied to a month-year date it was a
+type error, not a calibration choice (a month-coarsened deadline was scored `answerable`
+regardless of correctness). `docs/research/post-pilot-protocol-v2.md` freezes a separate,
+date-aware rule (`DATE_UTILITY_REQUIRED_GRANULARITY`, `classify_generalized_date`) for
+categories registered as date-shaped (`deadline`, required to the day); every other GENERALIZE
+category keeps the numeric-band rule unchanged. `post-pilot-v1` is not edited; `CURRENT_PROTOCOL_ID` is now `post-pilot-v2`.
+
 ### Reconstruction
 
 - reconstruction success rate;

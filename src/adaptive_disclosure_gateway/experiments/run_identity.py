@@ -51,7 +51,13 @@ from typing import Literal
 # every serialized CaseResult. They are None under FakeProvider -- the shape
 # changed, so the version changes; the M2/HR and Contracts v1 artifacts
 # already on disk stay correctly labeled v2 and are not rewritten.
-SCHEMA_VERSION = "t10-experiment-runner-v3"
+# Bumped to v4 for M3 Gate 6 / issue #38: RunIdentity gained protocol_id
+# (docs/research/post-pilot-protocol-v2.md's provenance/version-boundary
+# section) -- every result row now names the post-pilot protocol version
+# that scored it, never left implicit or only present at the manifest
+# level. Every artifact already on disk (schema v2/v3) stays exactly as
+# written and is not rewritten.
+SCHEMA_VERSION = "t10-experiment-runner-v4"
 
 # T07/B3's frozen baseline commit (docs/experimental-design.md, issue #8):
 # every B3 -- and, since B4 retains B3's analyzer/action-space machinery,
@@ -92,6 +98,13 @@ class RunIdentity:
     B3 baseline its analyzer/action-space machinery still depends on) -- see
     the module docstring for why conflating them was PR #35 review's
     blocker 1.
+
+    ``protocol_id`` (M3 Gate 6 / issue #38) is the post-pilot protocol
+    version (``post_pilot_protocol.CURRENT_PROTOCOL_ID``) that scored this
+    result -- validated against ``FROZEN_PROTOCOL_IDS`` at construction time
+    (``execution.py``), never a free string a caller could misspell. It is
+    always populated (never ``None``): every result produced by this
+    codebase is scored under exactly one, known protocol version.
     """
 
     schema_version: str
@@ -107,6 +120,7 @@ class RunIdentity:
     provider_name: str
     provider_model_id: str
     provider_model_snapshot: str
+    protocol_id: str
 
 
 @dataclass(frozen=True)

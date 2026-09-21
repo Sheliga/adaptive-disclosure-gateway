@@ -26,6 +26,7 @@ This file pins:
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 
@@ -39,8 +40,14 @@ from adaptive_disclosure_gateway.experiments.contextual_matrix import (
     run_contextual_comparison,
 )
 from adaptive_disclosure_gateway.experiments.corpus_source import load_hr_v1_cases
+from adaptive_disclosure_gateway.experiments.execution import execute_case
+from adaptive_disclosure_gateway.experiments.post_pilot_protocol import (
+    CURRENT_PROTOCOL_ID,
+    FROZEN_PROTOCOL_IDS,
+)
 from adaptive_disclosure_gateway.experiments.run_identity import (
     PILOT_DEVELOPMENT,
+    RunIdentity,
     new_experiment_run_id,
     new_run_metadata,
 )
@@ -233,6 +240,74 @@ def test_manifest_reproducibility_defaults_to_an_empty_mapping_when_not_supplied
     )
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["reproducibility"] == {}
+
+
+# --- M3 Gate 6 / issue #38: protocol_id provenance ---------------------------
+
+
+def test_run_identity_protocol_id_is_the_current_frozen_protocol():
+    """Every case execution's own RunIdentity.protocol_id is populated with
+    the current, registered post-pilot protocol id -- never left unset, and
+    never a value outside FROZEN_PROTOCOL_IDS.
+    """
+    cases_by_id = {c.input.sample_id: c for c in load_hr_v1_cases(CORPUS_DIR)}
+    case = next(iter(cases_by_id.values()))
+    execution = execute_case(
+        case_input=case.input,
+        treatment=Treatment.DIRECT,
+        corpus_version="hr/v1",
+        run_classification=PILOT_DEVELOPMENT,
+        policy_repository=_policy_repo(),
+    )
+    assert execution.identity.protocol_id == CURRENT_PROTOCOL_ID
+    assert execution.identity.protocol_id in FROZEN_PROTOCOL_IDS
+
+
+def test_manifest_and_rows_agree_on_protocol_id(_small_pilot):
+    _experiment_run_id, run_dir = _small_pilot
+    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["protocol_id"] == CURRENT_PROTOCOL_ID
+
+    with (run_dir / "results.jsonl").open(encoding="utf-8") as handle:
+        lines = [json.loads(line) for line in handle]
+    assert lines
+    for record in lines:
+        assert record["identity"]["protocol_id"] == manifest["protocol_id"]
+
+
+def test_run_identity_rejects_an_unregistered_protocol_id_at_construction():
+    """RunIdentity itself has no validation logic (it is a plain frozen
+    dataclass), but the one place this codebase builds one
+    (``execution.execute_case``) must fail closed before doing so if the
+    protocol id it would stamp is not registered. This is a real behavioral
+    pin, not apparatus: it fails if a future edit stops calling
+    ``validate_protocol_id`` before constructing ``RunIdentity``.
+    """
+    import adaptive_disclosure_gateway.experiments.execution as execution_module
+    from adaptive_disclosure_gateway.experiments.post_pilot_protocol import (
+        UnknownProtocolIdError,
+    )
+
+    original = execution_module.CURRENT_PROTOCOL_ID
+    execution_module.CURRENT_PROTOCOL_ID = "post-pilot-not-a-real-version"
+    try:
+        cases_by_id = {c.input.sample_id: c for c in load_hr_v1_cases(CORPUS_DIR)}
+        case = next(iter(cases_by_id.values()))
+        with pytest.raises(UnknownProtocolIdError):
+            execute_case(
+                case_input=case.input,
+                treatment=Treatment.DIRECT,
+                corpus_version="hr/v1",
+                run_classification=PILOT_DEVELOPMENT,
+                policy_repository=_policy_repo(),
+            )
+    finally:
+        execution_module.CURRENT_PROTOCOL_ID = original
+
+
+def test_run_identity_has_a_protocol_id_field_never_none():
+    field_names = {f.name for f in dataclasses.fields(RunIdentity)}
+    assert "protocol_id" in field_names
 
 
 def test_manifest_and_results_never_leak_a_raw_span_value_or_requester_id(_small_pilot):
