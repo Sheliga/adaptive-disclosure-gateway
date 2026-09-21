@@ -43,7 +43,13 @@ import { useCopy } from "@/i18n/useLocale";
 import { describeCategory } from "@/lib/categoryLabels";
 import type { AppCopy } from "@/lib/copy";
 import type { DisplayError } from "@/lib/api";
-import type { CategoryDisclosureSummary, ExecuteResponse } from "@/lib/contracts";
+import { KNOWN_DISCLOSURE_OUTCOMES } from "@/lib/contracts";
+import type {
+  CategoryDisclosureSummary,
+  ExecuteResponse,
+  KnownDisclosureOutcome,
+  ReconstructionStage,
+} from "@/lib/contracts";
 import { describeCategoryOutcome } from "@/lib/outcomes";
 import { describeProviderMode, type ProviderModeState } from "@/lib/providerMode";
 
@@ -51,35 +57,69 @@ import { VaultExplorerPanel } from "../VaultExplorerPanel/VaultExplorerPanel";
 import styles from "./ResultScreen.module.css";
 
 /**
- * T30 / issue #82: "N itens protegidos[; M pseudônimos reconstruídos
- * localmente]" -- both numbers come ONLY from data already on
- * `ExecuteResponse.summary.categories`/`reconstruction`
- * (`occurrence_count`, `reconstruction.attempted`), never invented or
- * estimated. `protected` counts every detected occurrence (each category
- * received SOME governed treatment, whether it stayed local or crossed the
- * boundary in a controlled form); `reconstructed` counts only occurrences
- * whose outcome is `"pseudonymized"`, and is rendered only when
- * `reconstruction.attempted` is true -- claiming a reconstruction count
- * when none was attempted would itself be an invented claim.
+ * T30 / issue #82 review follow-up (Finding 1): the previous single
+ * headline ("N itens protegidos") summed `occurrence_count` over EVERY
+ * category regardless of outcome -- including `preserved` ones (sent to
+ * the provider unchanged) and any outcome this UI does not recognize --
+ * which misrepresented what actually happened and violated the fail-closed
+ * convention `lib/outcomes.ts` establishes for unknown outcomes.
+ *
+ * This instead groups `occurrence_count` by the SAME fail-closed
+ * `describeCategoryOutcome(category, copy)` label every per-category row
+ * already renders -- presenting an existing mapping, never re-deriving
+ * boundary semantics from the raw outcome code -- in the canonical order
+ * `KNOWN_DISCLOSURE_OUTCOMES` already defines (removed, pseudonymized,
+ * generalized, preserved, blocked), with a final "unknown" bucket for any
+ * outcome `describeCategoryOutcome` did not recognize. An unknown outcome
+ * therefore always renders under its own unknown/"verify" label and can
+ * never be folded into a protective group.
  */
-function buildProtectionsSummary(
-  categories: CategoryDisclosureSummary[],
-  reconstructionAttempted: boolean,
-  copy: AppCopy,
-): string | null {
+function buildProtectionsBreakdown(categories: CategoryDisclosureSummary[], copy: AppCopy): string | null {
   if (categories.length === 0) {
     return null;
   }
-  const protectedCount = categories.reduce((total, category) => total + category.occurrence_count, 0);
-  if (!reconstructionAttempted) {
-    return copy.result.protectionsSummaryNoReconstruction.replace("{protected}", String(protectedCount));
+
+  const counts = new Map<KnownDisclosureOutcome | "unknown", number>();
+  for (const category of categories) {
+    const descriptor = describeCategoryOutcome(category, copy);
+    const key: KnownDisclosureOutcome | "unknown" = descriptor.known
+      ? (category.outcome as KnownDisclosureOutcome)
+      : "unknown";
+    counts.set(key, (counts.get(key) ?? 0) + category.occurrence_count);
   }
-  const reconstructedCount = categories
-    .filter((category) => category.outcome === "pseudonymized")
-    .reduce((total, category) => total + category.occurrence_count, 0);
-  return copy.result.protectionsSummaryTemplate
-    .replace("{protected}", String(protectedCount))
-    .replace("{reconstructed}", String(reconstructedCount));
+
+  const orderedKeys: (KnownDisclosureOutcome | "unknown")[] = [...KNOWN_DISCLOSURE_OUTCOMES, "unknown"];
+  const parts = orderedKeys
+    .map((key) => {
+      const count = counts.get(key);
+      if (!count) {
+        return null;
+      }
+      const label = key === "unknown" ? copy.outcomes.unknown.label : copy.outcomes[key].label;
+      return `${label}: ${count}`;
+    })
+    .filter((part): part is string => part !== null);
+
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+/**
+ * T30 / issue #82 review follow-up (Finding 1): `ReconstructionStage` never
+ * reports HOW MANY pseudonyms were reconstructed -- only `attempted`,
+ * `reconstructed_hash`, and `changed_from_provider_response`. A pseudonym
+ * the model never echoed back was never "reconstructed", so this renders a
+ * plain, count-free statement, and only when the API affirmatively says
+ * the final answer actually differed from the provider's raw response
+ * after local reconstruction (`attempted && changed_from_provider_response
+ * === true`). `attempted` alone (with `changed` false or unknown/`null`)
+ * proves nothing was reconstructed, so it renders nothing rather than
+ * invent a claim.
+ */
+function buildReconstructionNote(reconstruction: ReconstructionStage, copy: AppCopy): string | null {
+  if (!reconstruction.attempted || reconstruction.changed_from_provider_response !== true) {
+    return null;
+  }
+  return copy.result.reconstructionApplied;
 }
 
 export interface ResultScreenProps {
@@ -133,11 +173,8 @@ export function ResultScreen({
   const isBlocked = execute.summary.status === "blocked";
   const providerFailed = execute.provider.failed;
   const providerModeNotice = describeProviderMode(health, copy);
-  const protectionsSummary = buildProtectionsSummary(
-    execute.summary.categories,
-    execute.reconstruction.attempted,
-    copy,
-  );
+  const protectionsBreakdown = buildProtectionsBreakdown(execute.summary.categories, copy);
+  const reconstructionNote = buildReconstructionNote(execute.reconstruction, copy);
 
   return (
     <section aria-labelledby="result-heading" className={styles.section}>
@@ -180,7 +217,8 @@ export function ResultScreen({
           <p>{copy.review.noneDetected}</p>
         ) : (
           <>
-            {protectionsSummary && <p className={styles.protectionsSummary}>{protectionsSummary}</p>}
+            {protectionsBreakdown && <p className={styles.protectionsSummary}>{protectionsBreakdown}</p>}
+            {reconstructionNote && <p className={styles.explanation}>{reconstructionNote}</p>}
             <ul className={styles.protectionsList}>
               {execute.summary.categories.map((category) => {
                 const descriptor = describeCategoryOutcome(category, copy);

@@ -237,15 +237,16 @@ const ptBR = {
     pathProvider: "Provedor externo",
     protectionsAppliedHeading: "Proteções aplicadas",
     /**
-     * T30 / issue #82: a short, data-derived headline above the
-     * category-by-category list -- "{protected} itens protegidos; {reconstructed}
-     * pseudônimos reconstruídos localmente". Both numbers come only from
-     * `ExecuteResponse.summary.categories`/`reconstruction` (occurrence
-     * counts already on the wire), never invented -- see `ResultScreen`'s
-     * `buildProtectionsSummary`.
+     * T30 / issue #82 review follow-up (Finding 1): the previous single
+     * headline ("N itens protegidos") summed `occurrence_count` over EVERY
+     * category, including `preserved` ones (sent unchanged) and unknown
+     * outcomes -- both false "protected" claims. Replaced with a per-action
+     * breakdown built from `describeCategoryOutcome`'s own fail-closed
+     * label (see `ResultScreen`'s `buildProtectionsBreakdown`), so a
+     * preserved-only or unknown-only execution never claims protection it
+     * did not provide.
      */
-    protectionsSummaryTemplate: "{protected} itens protegidos; {reconstructed} pseudônimos reconstruídos localmente",
-    protectionsSummaryNoReconstruction: "{protected} itens protegidos",
+    reconstructionApplied: "Pseudônimos presentes na resposta foram substituídos localmente pelos valores originais.",
     blockedHeading: "Execução bloqueada",
     blockedExplanation:
       "A política de divulgação bloqueou esta execução. Nenhum conteúdo foi enviado ao provedor externo.",

@@ -173,8 +173,7 @@ export const en: AppCopy = {
     pathLocal: "Local",
     pathProvider: "External provider",
     protectionsAppliedHeading: "Protections applied",
-    protectionsSummaryTemplate: "{protected} items protected; {reconstructed} pseudonyms reconstructed locally",
-    protectionsSummaryNoReconstruction: "{protected} items protected",
+    reconstructionApplied: "Pseudonyms present in the response were replaced locally with their original values.",
     blockedHeading: "Execution blocked",
     blockedExplanation:
       "The disclosure policy blocked this execution. No content was sent to the external provider.",

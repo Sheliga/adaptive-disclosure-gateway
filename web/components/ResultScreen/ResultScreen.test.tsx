@@ -146,20 +146,23 @@ describe("ResultScreen -- hierarchy order (T30)", () => {
 });
 
 /**
- * T30 / issue #82: "N itens protegidos; M pseudônimos reconstruídos
- * localmente" -- derived ONLY from data already on `ExecuteResponse`
- * (`occurrence_count` per category, `reconstruction.attempted`), never
- * invented. This can fail from a real defect: hardcoding the numbers,
- * miscounting, or claiming reconstruction happened when it was not
- * attempted.
+ * T30 / issue #82 review follow-up (Finding 1): the protections summary
+ * must be a TRUTHFUL, data-derived breakdown -- never a single headline
+ * that sums `occurrence_count` across every category regardless of
+ * outcome (that folded `preserved`, sent-unchanged data, and even unknown
+ * outcomes into a "protected" count), and never an invented reconstruction
+ * COUNT the API does not report (`ReconstructionStage` only has
+ * `attempted`/`reconstructed_hash`/`changed_from_provider_response`, no
+ * count of successful reconstructions). Each case below fails against the
+ * pre-fix implementation.
  */
-describe("ResultScreen -- protections summary (T30)", () => {
+describe("ResultScreen -- protections breakdown (T30 review follow-up)", () => {
   function categoriesFor(occurrences: { outcome: string; action: string; count: number }[]) {
     return occurrences.map(({ outcome, action, count }, index) => ({
       category: `cat_${index}`,
       outcome,
       action,
-      crosses_trust_boundary: outcome === "pseudonymized" ? true : false,
+      crosses_trust_boundary: outcome === "pseudonymized",
       occurrence_count: count,
       required_for_task: null,
       technical_reason: "rule",
@@ -169,16 +172,18 @@ describe("ResultScreen -- protections summary (T30)", () => {
     }));
   }
 
-  it("counts protected items and reconstructed pseudonyms from occurrence_count only", () => {
+  it("shows a per-action breakdown built only from occurrence_count, in canonical order", () => {
     const e = execute({
       summary: {
         status: "allowed",
         categories: categoriesFor([
           { outcome: "removed", action: "remove", count: 2 },
           { outcome: "pseudonymized", action: "pseudonymize", count: 3 },
+          { outcome: "generalized", action: "generalize", count: 1 },
+          { outcome: "preserved", action: "preserve", count: 2 },
         ]),
-        detected_span_count: 5,
-        detected_categories: ["cat_0", "cat_1"],
+        detected_span_count: 8,
+        detected_categories: ["cat_0", "cat_1", "cat_2", "cat_3"],
       },
       reconstruction: { attempted: true, reconstructed_hash: "x", changed_from_provider_response: false },
     });
@@ -187,31 +192,102 @@ describe("ResultScreen -- protections summary (T30)", () => {
       <ResultScreen execute={e} health={{ status: "loading" }} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} onViewTechnicalDetails={vi.fn()} />,
     );
 
-    const expected = copy.result.protectionsSummaryTemplate
-      .replace("{protected}", "5")
-      .replace("{reconstructed}", "3");
+    const expected = [
+      `${copy.outcomes.removed.label}: 2`,
+      `${copy.outcomes.pseudonymized.label}: 3`,
+      `${copy.outcomes.generalized.label}: 1`,
+      `${copy.outcomes.preserved.label}: 2`,
+    ].join(" · ");
     expect(screen.getByText(expected)).toBeInTheDocument();
   });
 
-  it("omits the reconstruction clause when reconstruction was not attempted", () => {
+  it("never renders a 'protegido(s)' claim when every category is preserved (sent unchanged)", () => {
     const e = execute({
       summary: {
         status: "allowed",
-        categories: categoriesFor([{ outcome: "removed", action: "remove", count: 4 }]),
-        detected_span_count: 4,
+        categories: categoriesFor([{ outcome: "preserved", action: "preserve", count: 3 }]),
+        detected_span_count: 3,
         detected_categories: ["cat_0"],
       },
-      reconstruction: { attempted: false, reconstructed_hash: null, changed_from_provider_response: false },
     });
 
     render(
       <ResultScreen execute={e} health={{ status: "loading" }} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} onViewTechnicalDetails={vi.fn()} />,
     );
 
-    const expected = copy.result.protectionsSummaryNoReconstruction.replace("{protected}", "4");
-    expect(screen.getByText(expected)).toBeInTheDocument();
-    expect(screen.queryByText(/reconstru[ií]dos localmente/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/protegid[oa]s?/i)).not.toBeInTheDocument();
+    expect(screen.getByText(`${copy.outcomes.preserved.label}: 3`)).toBeInTheDocument();
   });
+
+  it("counts an unknown outcome under its own unknown bucket, never folded into a protective group", () => {
+    const e = execute({
+      summary: {
+        status: "allowed",
+        categories: categoriesFor([
+          { outcome: "removed", action: "remove", count: 1 },
+          { outcome: "a_future_outcome_this_ui_does_not_know", action: "mystery", count: 5 },
+        ]),
+        detected_span_count: 6,
+        detected_categories: ["cat_0", "cat_1"],
+      },
+    });
+
+    render(
+      <ResultScreen execute={e} health={{ status: "loading" }} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} onViewTechnicalDetails={vi.fn()} />,
+    );
+
+    const expected = [`${copy.outcomes.removed.label}: 1`, `${copy.outcomes.unknown.label}: 5`].join(" · ");
+    expect(screen.getByText(expected)).toBeInTheDocument();
+    expect(screen.queryByText(/protegid[oa]s?:\s*5/i)).not.toBeInTheDocument();
+  });
+
+  it("shows the reconstruction note only when reconstruction was attempted AND the answer actually changed", () => {
+    const e = execute({
+      summary: {
+        status: "allowed",
+        categories: categoriesFor([{ outcome: "pseudonymized", action: "pseudonymize", count: 2 }]),
+        detected_span_count: 2,
+        detected_categories: ["cat_0"],
+      },
+      reconstruction: { attempted: true, reconstructed_hash: "x", changed_from_provider_response: true },
+    });
+
+    render(
+      <ResultScreen execute={e} health={{ status: "loading" }} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} onViewTechnicalDetails={vi.fn()} />,
+    );
+
+    expect(screen.getByText(copy.result.reconstructionApplied)).toBeInTheDocument();
+  });
+
+  it.each([
+    [false, false as boolean | null],
+    [true, false as boolean | null],
+    [true, null as boolean | null],
+  ])(
+    "shows no reconstruction line and no numeric 'reconstruídos' count (attempted=%s, changed=%s)",
+    (attempted, changed_from_provider_response) => {
+      const e = execute({
+        summary: {
+          status: "allowed",
+          categories: categoriesFor([{ outcome: "pseudonymized", action: "pseudonymize", count: 2 }]),
+          detected_span_count: 2,
+          detected_categories: ["cat_0"],
+        },
+        reconstruction: {
+          attempted,
+          reconstructed_hash: attempted ? "x" : null,
+          changed_from_provider_response,
+        },
+      });
+
+      render(
+        <ResultScreen execute={e} health={{ status: "loading" }} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} onViewTechnicalDetails={vi.fn()} />,
+      );
+
+      expect(screen.queryByText(copy.result.reconstructionApplied)).not.toBeInTheDocument();
+      expect(screen.queryByText(/reconstru[ií]dos?/i)).not.toBeInTheDocument();
+    },
+  );
 });
 
 describe("ResultScreen -- blocked execution", () => {
