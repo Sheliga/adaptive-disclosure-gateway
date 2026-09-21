@@ -53,8 +53,7 @@ from adaptive_disclosure_gateway.experiments.artifacts import (
     write_pilot_artifacts,
 )
 from adaptive_disclosure_gateway.experiments.post_pilot_protocol import (
-    CURRENT_PROTOCOL_ID,
-    validate_protocol_id,
+    validate_scorable_protocol_id,
 )
 from adaptive_disclosure_gateway.experiments.run_identity import (
     B3_TASK_AWARE_BASELINE_COMMIT,
@@ -104,6 +103,17 @@ CORPUS_FREEZE_DATE = "2026-09-12"
 # provenance.
 PARSER_INGESTION_VERSION = "not_applicable_plain_text_corpus"
 
+# Issue #87 / M3: corpus/contracts/v1 is a frozen, legacy (schema-v2) corpus
+# -- no case file has an opted-in CaseOracle.utility_references, and several
+# depend on a numeric category (contract_value/penalty_amount). Pinned
+# explicitly rather than left to resolve to whatever CURRENT_PROTOCOL_ID
+# happens to be going forward: this corpus can never be scored under
+# post-pilot-v4 at all (it would be refused outright,
+# MissingUtilityReferencesError, before any provider call), and
+# post-pilot-v3 is a real, currently-scorable protocol id
+# (`SCORABLE_PROTOCOL_IDS`), not merely the last one that happened to work.
+PROTOCOL_ID = "post-pilot-v3"
+
 
 def _policy_versions_available(policy_dir: Path) -> list[str]:
     """Every policy version's own declared ``version:`` field, read directly
@@ -126,7 +136,7 @@ def _reproducibility_manifest(*, results, policy_dir: Path) -> dict[str, object]
     content, or a publicly reproducible hash of any of those: every value here
     is an identifier, version string, commit, date or classification label.
     """
-    validate_protocol_id(CURRENT_PROTOCOL_ID)
+    validate_scorable_protocol_id(PROTOCOL_ID)
 
     policy_versions_used = sorted(
         {
@@ -147,7 +157,7 @@ def _reproducibility_manifest(*, results, policy_dir: Path) -> dict[str, object]
         "corpus_freeze_base_commit": CORPUS_FREEZE_BASE_COMMIT,
         "contracts_domain_freeze_commit": CONTRACTS_DOMAIN_FREEZE_COMMIT,
         # --- protocol ---
-        "protocol_id": CURRENT_PROTOCOL_ID,
+        "protocol_id": PROTOCOL_ID,
         "parser_ingestion_version": PARSER_INGESTION_VERSION,
         # --- run classification, and the fact it was fixed in advance ---
         "run_classification": PILOT_DEVELOPMENT,
@@ -201,6 +211,7 @@ def main() -> None:
         corpus_version=CORPUS_VERSION,
         run_classification=PILOT_DEVELOPMENT,
         experiment_run_id=experiment_run_id,
+        protocol_id=PROTOCOL_ID,
     )
 
     reproducibility = _reproducibility_manifest(results=results, policy_dir=POLICY_DIR)

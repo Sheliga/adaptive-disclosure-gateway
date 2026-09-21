@@ -33,6 +33,9 @@ from adaptive_disclosure_gateway.experiments.contextual_matrix import (
     run_contextual_comparison,
 )
 from adaptive_disclosure_gateway.experiments.corpus_source import load_hr_v1_cases
+from adaptive_disclosure_gateway.experiments.post_pilot_protocol import (
+    validate_scorable_protocol_id,
+)
 from adaptive_disclosure_gateway.experiments.run_identity import (
     B3_TASK_AWARE_BASELINE_COMMIT,
     B4_POLICY_GOVERNED_COMMIT,
@@ -49,6 +52,16 @@ CORPUS_DIR = REPO_ROOT / "corpus" / "hr" / "v1" / "cases"
 POLICY_DIR = REPO_ROOT / "configs" / "policies"
 OUTPUT_ROOT = REPO_ROOT / "artifacts" / "experiments" / "hr" / "v1"
 CORPUS_VERSION = "hr/v1"
+
+# Issue #87 / M3: corpus/hr/v1 is a frozen, legacy (schema-v2) corpus -- no
+# case file has an opted-in CaseOracle.utility_references, and several
+# depend on a numeric category (salary). Pinned explicitly rather than left
+# to resolve to whatever CURRENT_PROTOCOL_ID happens to be going forward:
+# this corpus can never be scored under post-pilot-v4 at all (it would be
+# refused outright, MissingUtilityReferencesError, before any provider
+# call), and post-pilot-v3 is a real, currently-scorable protocol id
+# (`SCORABLE_PROTOCOL_IDS`), not merely the last one that happened to work.
+PROTOCOL_ID = "post-pilot-v3"
 
 
 def _policy_versions_available(policy_dir: Path) -> list[str]:
@@ -69,6 +82,8 @@ def _reproducibility_manifest(*, results, policy_dir: Path) -> dict[str, object]
     pilot run reproducible (PR #35 review, blocker 5) -- never raw task
     text, a sensitive value, ``requester_id`` or vault content.
     """
+    validate_scorable_protocol_id(PROTOCOL_ID)
+
     policy_versions_used = sorted(
         {
             result.identity.policy_version
@@ -80,6 +95,7 @@ def _reproducibility_manifest(*, results, policy_dir: Path) -> dict[str, object]
     fake_provider = FakeProvider()
 
     return {
+        "protocol_id": PROTOCOL_ID,
         "b3_treatment_version": B3_TASK_AWARE_BASELINE_COMMIT,
         "b4_treatment_version": B4_POLICY_GOVERNED_COMMIT,
         "b4_task_aware_baseline_version": B3_TASK_AWARE_BASELINE_COMMIT,
@@ -112,6 +128,7 @@ def main() -> None:
         corpus_version=CORPUS_VERSION,
         run_classification=PILOT_DEVELOPMENT,
         experiment_run_id=experiment_run_id,
+        protocol_id=PROTOCOL_ID,
     )
 
     cases_by_id = {case.input.sample_id: case for case in load_hr_v1_cases(CORPUS_DIR)}
