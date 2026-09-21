@@ -398,6 +398,27 @@ def test_binary_unnecessary_disclosure_still_treats_remove_as_not_transmitted():
     assert score.rate == 0.0
 
 
+# --- 4. PR #92 review, blocker 2: grounding wording ------------------------
+
+
+def test_current_protocol_document_no_longer_claims_no_grounding_requirement():
+    """PR #92 review, blocker 2: an earlier draft of the v4 document claimed
+    "no grounding requirement" / "no text-grounding" as if dropping the
+    *lexical* match requirement meant no grounding constraint existed at
+    all. That claim was too strong -- a reference stating a condition
+    absent from anything the provider was ever shown would be privileged
+    evaluator information used to grant utility. The corrected document
+    must never restate either phrase (case-insensitive), and must state
+    the semantic-grounding rule that replaces it.
+    """
+    text = PROTOCOL_DOC_V4.read_text(encoding="utf-8").lower()
+    assert "no grounding requirement" not in text
+    assert 'no "grounding" requirement' not in text
+    assert "no text-grounding" not in text
+    assert "semantic grounding" in text
+    assert "provider-visible" in text
+
+
 def test_binary_unnecessary_disclosure_keeps_blocked_span_in_denominator():
     """A blocked NOT_REQUIRED span remains in the historical denominator.
 

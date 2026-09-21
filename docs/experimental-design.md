@@ -272,17 +272,24 @@ with the frozen `post-pilot-v3` `classify_generalized_band` and replaces only th
 with the structured per-operator table (`greater_than`/`greater_than_or_equal`/`less_than`/
 `less_than_or_equal`). Deliberately **no load-time coverage requirement** (an opted-in case whose
 numeric-dependent category has no reference scores `indeterminate`/`generalized_band_no_reference`
-at score time, not a schema violation) and **no text-grounding check** (a reference's value need
-not appear anywhere in `input.text` — enforcing that would recouple the oracle to the case's exact
-surface phrasing and conflicts with Issue #88's Brazilian-format-parsing decision). Protocol
-dispatch (`SCORABLE_PROTOCOL_IDS`, `check_corpus_protocol_compatibility`) refuses to score a legacy
-oracle (no opted-in `utility_references`) that depends on a numeric category under `post-pilot-v4`
-— `corpus/hr/v1` and `corpus/contracts/v1` are neither edited nor scorable under v4, and remain
-scored under `protocol_id="post-pilot-v3"` explicitly. `post-pilot-v1`, `-v2` and `-v3` are not
-edited; `CURRENT_PROTOCOL_ID` is now `post-pilot-v4`. See `docs/research/post-pilot-protocol-v4.md`
-for the full rule, the anti-tuning justification for the fix's one case of *adding* credit
-relative to v3, and the item (c)/Unicode-`\d` findings moved to their own issues rather than fixed
-here.
+at score time, not a schema violation) and **no lexical-match requirement, but semantic grounding
+is required** (a reference's value need not appear textually in `input.text` — a canonical
+`500000.00` may correspond to `R$ 500.000,00` or a prose statement of the same threshold in the
+text — but every reference must correspond to a condition actually visible to the provider
+(`CorpusCaseInput.text`/`task`), never an evaluation-only threshold invented solely to make a band
+decidable; enforced as a Gate 7 authoring/audit requirement, not a scorer heuristic, since checking
+semantic correspondence to prose is exactly the kind of judgment call this ticket declined to
+automate — see `docs/research/post-pilot-protocol-v4.md` §3a/§3b). Protocol dispatch
+(`SCORABLE_PROTOCOL_IDS`, `check_corpus_protocol_compatibility`) refuses to score a legacy oracle
+(`utility_references is None`) under `post-pilot-v4` when it depends on a numeric category, and
+separately refuses **any** opted-in oracle — an empty list included, not only a non-empty one —
+under `post-pilot-v3` (an explicit but empty opt-in must never silently fall back to free-text
+extraction). `corpus/hr/v1` and `corpus/contracts/v1` are neither edited nor scorable under v4, and
+remain scored under `protocol_id="post-pilot-v3"` explicitly. `post-pilot-v1`, `-v2` and `-v3` are
+not edited; `CURRENT_PROTOCOL_ID` is now `post-pilot-v4`. See
+`docs/research/post-pilot-protocol-v4.md` for the full rule, the anti-tuning justification for the
+fix's one case of *adding* credit relative to v3, and the item (c)/Unicode-`\d` findings moved to
+their own issues rather than fixed here.
 
 ### Reconstruction
 

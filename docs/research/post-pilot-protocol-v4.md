@@ -175,13 +175,13 @@ defined independently (the corpus package must never import `experiments`; see
 read by a human author, and a mistyped symbol (`=>` for `>=`) is a schema violation waiting to
 happen that a long, unambiguous name avoids entirely.
 
-**Value grammar: canonical decimal, ASCII digits only, no currency, no text-grounding.**
+**Value grammar: canonical decimal, ASCII digits only, no currency, no lexical-match requirement.**
 `^(0|[1-9][0-9]*)\.[0-9]{2}$` — explicit `[0-9]`, never `\d` (which also matches non-ASCII
 Unicode digit characters; see §11's note on the *separate*, unfixed `\d` finding in the v3
 fidelity regexes). No `R$` prefix, no thousands separator, no sign: this is the scorer's own
 canonical amount, independent of whatever surface format `input.text` happens to use for the same
 figure. **There is deliberately no check that a reference's value textually appears anywhere in
-`input.text`** — no "grounding" requirement. Two reasons:
+`input.text`** — no *lexical* ("textual") grounding requirement. Two reasons:
 
 1. It would force every case's prose into this scorer's own canonical surface format (`R$
    <digits>.<2 digits>`) merely to satisfy a structural check unrelated to what the reference
@@ -189,6 +189,116 @@ figure. **There is deliberately no check that a reference's value textually appe
 2. It directly conflicts with Issue #88 (Brazilian-formatted amount parsing): a case author must
    remain free to write `R$ 5.000,00` in the prose while the oracle states `5000.00` as the
    canonical reference value, with no requirement that the two strings match syntactically.
+
+**Dropping the lexical match requirement is not the same as dropping every grounding
+requirement.** An earlier draft of this section stated the absence of a lexical check as if it
+meant the reference could state anything at all, independent of the case's own content — that
+was too strong and wrong (corrected here per PR #92 review, blocker 2): a reference stating a
+condition that exists only in the evaluator's head, absent from anything the provider was ever
+shown, would be privileged evaluator information used to grant utility credit the disclosed
+payload never actually earned. §3a below states the rule this section actually enforces:
+semantic grounding is required, lexical grounding is not.
+
+### 3a. Semantic grounding (not lexical grounding, and not "no grounding")
+
+**The rule.** A structured utility reference is not required to match the surface text
+lexically, but every reference **must be semantically grounded in a condition visible to the
+provider**. The oracle records that condition in canonical structured form; a reference must
+never introduce an evaluation-only threshold or comparison that is absent from the
+provider-visible task/input. Put differently: the reference's *value and operator* may be
+canonicalized freely, but the *condition itself* — "is the salary at least R$5,000?", "is the
+contract value under R$700,000?" — must be a condition the case's own text or task actually
+poses, not one invented solely to make a band decidable.
+
+**"Provider-visible", precisely.** Per the current architecture, a treatment's
+`ProviderRequest` (`providers/base.py`) carries exactly two fields — `payload` (the disclosed,
+possibly-transformed text) and `task` (the instruction, held identical across treatments) — and
+`DisclosureRequest` (`domain.py`), the object a treatment is built from, carries exactly
+`{text, task, context}`. "Provider-visible" for grounding purposes means:
+`CorpusCaseInput.text` (the case's own document text — the pre-treatment source of whatever
+subset of it a treatment eventually discloses as `payload`) and `CorpusCaseInput.task` (passed
+through to every treatment's `ProviderRequest.task` unchanged). `GovernanceContext` fields
+(`domain`, `purpose`, `policy_version`, `requester_role`, ...) are not text the provider reads
+and are not what grounding is about here.
+
+**Semantic grounding ≠ textual grounding — two examples, both acceptable:**
+
+1. Oracle value `500000.00` (canonical) grounded by text stating `R$ 500.000,00` (Brazilian
+   thousands/decimal format) — same amount, different surface format. Acceptable: the *value*
+   the reference states must correspond to the condition in the text; the *string* need not
+   match.
+2. Oracle value `500000.00`, operator `greater_than_or_equal`, grounded by text stating "pelo
+   menos meio milhão de reais" ("at least half a million reais") — a natural-language statement
+   of the same threshold, not a number at all in the source text. Acceptable for the same
+   reason: the canonical reference records the condition the text actually poses, in the
+   scorer's own structured form, independent of whichever way — numeric or prose — the case's
+   author chose to state it.
+
+Neither example requires the reference's *string* to appear in `input.text`; both require the
+*condition* the reference expresses to correspond to something the provider was actually asked
+to reason about.
+
+**Grounding does not mean passing the oracle to the provider.** No-leak is completely unchanged
+by this rule: `utility_references` remains evaluator-only data, read only by
+`experiments/scoring/utility.py`, and is never part of `DisclosureRequest`/`ProviderRequest` or
+any provider-visible surface (§7, unchanged). Grounding is a constraint on what the reference is
+*permitted to state* relative to the case's own provider-visible content, checked by a human
+author (and, at Gate 7, an audit — §3b) *before* the case is frozen — never a constraint enforced
+by handing the provider extra information at run time.
+
+**Enforced as an authoring/methodological rule, not a scorer heuristic.** Grounding is a
+property of how a case is *authored*, verified once, before freeze — not something
+`classify_generalized_band_against_references` or any other scorer code checks against
+`case_input.text` at score time. This is deliberately not a reintroduction of
+`_reference_values`: that mechanism *inferred* a reference's existence and value from the text
+via regex, at score time, for every case, with no human review of whether the inferred figure was
+actually the condition the task posed (the exact category-blind, operator-blind mechanism this
+ticket replaces). Semantic grounding is the reverse direction — a human author *states* the
+canonical reference and independently confirms, once, that it corresponds to a real
+provider-visible condition; the scorer never reads `case_input.text` to derive, validate or
+double-check a reference at run time (unchanged: `classify_generalized_band_against_references`
+and the v4 arm of `score_utility` still never touch `case_input.text` — pinned by
+`tests/test_experiments_scoring_utility_references_v4.py::test_v4_never_reads_case_input_text_by_ast`
+and the legacy-function-raises monkeypatch test).
+
+### 3b. Gate 7 requirement: per-reference grounding audit
+
+**A confirmatory corpus cannot be frozen until every `utility_reference` in it has been audited
+against its provider-visible semantic condition.** This is a new, binding Gate 7 authoring
+requirement (also recorded in `docs/milestone-3-current-plan.md`), not merely a recommendation.
+For each reference, the audit must confirm:
+
+1. **category** — the reference's `category` is the numeric category the condition is actually
+   about;
+2. **operator** — the reference's `operator` matches the relational reading of the
+   provider-visible condition (a "no less than" reading is `greater_than_or_equal`, never
+   `greater_than`, etc. — this is exactly where Issue #87 (a) found v3's rule undecidable);
+3. **value** — the reference's canonical `value` equals the amount the provider-visible
+   condition states, independent of the text's own surface format (§3a's two examples);
+4. **presence** — the condition is actually present in `input.text` or `task`, in *some* form
+   (numeric or prose) — not invented solely to make a band decidable;
+5. **no invented references** — the corpus contains no `utility_reference` for which step 4 does
+   not hold;
+6. **format-independence** — the audit confirms (4) and (3) hold independent of whichever
+   lexical representation the text happens to use, so a corpus that later gets re-worded (e.g. by
+   Issue #88's eventual fix normalizing surface formats) does not silently invalidate a
+   previously-audited reference.
+
+This audit is a human/methodological review step, not automatable by regex or NLP (interpreting
+whether a prose sentence expresses a given threshold is exactly the kind of judgment call this
+ticket declined to automate in §1/§2 above, for the same reasons `_reference_values`'s heuristic
+alternative — Option 2 there — was rejected). What Gate 7 tooling *can* automate, and is expected
+to, is the audit's **record-keeping contract**, not the semantic judgment itself: each
+`utility_reference` a Gate 7 case declares should be accompanied by a corresponding audit record
+(a sibling YAML/Markdown field or a per-case checklist entry — the exact file format is a Gate 7
+authoring decision, not fixed here) naming, at minimum: the reference's `(category, operator,
+value)` triple, a quote or paraphrase of the provider-visible condition it grounds in, and the
+auditor's confirmation of steps 1–6 above. A coherence guard *can* then be written — at Gate 7,
+against Gate 7's own corpus — to check structurally that every declared `utility_reference` has a
+matching audit record (existence and triple-match are checkable without NLP); the guard cannot
+itself judge whether the audit's semantic content is correct, only that the audit step was not
+skipped. This contract is documented here so Gate 7 tooling has a fixed target; it is not built by
+this ticket (no Gate 7 corpus, fixture or coherence guard is added here).
 
 **No load-time coverage requirement.** An opted-in case (a list, however empty) is not required
 to state a reference for every numeric category it depends on. **Rejected as an authoring
@@ -501,10 +611,13 @@ date-vs-numeric type-error fix than to any adjustment of an existing numeric rul
 
 ## 11. Limitations
 
-- **A reference's value has no requirement to appear anywhere in `input.text`.** This is
-  deliberate (§3) but means a Gate 7 case author must take independent care that a stated
-  reference actually reflects what the case's prose says, since no structural check enforces
-  agreement between them.
+- **A reference's value has no requirement to appear *lexically* in `input.text`, but it must be
+  semantically grounded in a provider-visible condition (§3a).** This is deliberate, but the
+  semantic-grounding check itself is a human authoring/audit step (§3b), not a structural or
+  scorer-enforced one — a Gate 7 case author (and the Gate 7 audit) must independently confirm
+  each reference actually reflects a condition the case's text or task poses, since no
+  code-level check can verify a semantic correspondence between a canonical amount and a prose
+  sentence without reintroducing the NLP-heuristic mechanism §1's Option 2 already rejected.
 - **No aggregate or disjunctive semantics.** A case cannot state "the answer is decidable if
   either of these two thresholds resolves it" — every reference for a category is combined by AND
   (§4), never OR. A future task needing disjunctive semantics would require its own protocol
@@ -537,6 +650,7 @@ date-vs-numeric type-error fix than to any adjustment of an existing numeric rul
 | Protocol registry (`FROZEN_PROTOCOL_IDS`, `SCORABLE_PROTOCOL_IDS`, document drift) | `tests/test_post_pilot_protocol.py` |
 | No-leak marker run, AST allowlist | `tests/test_corpus_utility_references.py` |
 | Fidelity unchanged (v3 pin) | `tests/test_experiments_scoring_numeric_band_utility.py` (unchanged assertions; `protocol_id="post-pilot-v3"` call args only) |
+| `None`/`[]` protocol-compatibility parity (PR #92 review, blocker 1) | `tests/test_experiments_scoring_utility_references_v4.py`, section "Blocker 1 regression" |
 
 ## 13. Change log
 
@@ -552,5 +666,13 @@ date-vs-numeric type-error fix than to any adjustment of an existing numeric rul
   Contracts 0 -- and files
   [Issue #91](https://github.com/Sheliga/adaptive-disclosure-gateway/issues/91) for the
   pre-existing, unreachable `\d` finding in the v3 fidelity regexes (§11).
+- 2026-09-21 — PR #92 review round 2, two corrections before this document's own freeze is
+  final (this ticket has not yet merged; `post-pilot-v1`/`-v2`/`-v3` remain untouched throughout):
+  (1) §6's compatibility matrix corrected so `post-pilot-v3` refuses `utility_references is not
+  None` (an empty list `[]` included) rather than only a non-empty list — `None` and `[]` are not
+  interchangeable (§6, `MissingUtilityReferencesError`/`StructuredReferencesRequireV4Error`
+  docstrings); (2) §3's earlier "no grounding" wording was too strong and is replaced by §3a's
+  semantic-grounding rule (lexical grounding is not required; semantic grounding — a reference
+  must correspond to a provider-visible condition — is) and §3b's new Gate 7 audit requirement.
   No other methodological content changes; `post-pilot-v1`, `post-pilot-v2` and `post-pilot-v3`
   remain the frozen historical record of what governed every run before this date.

@@ -158,8 +158,12 @@ class ReferenceOperator(StrEnum):
 # Issue #87's separate, filed-not-fixed finding about the v3 fidelity
 # regexes using `\d`). No currency prefix, no thousands separator, no sign:
 # this is a scorer-internal canonical amount, independent of whatever
-# surface format the case's own `input.text` happens to use (deliberately,
-# per the spec's "no text-grounding check" decision -- see `oracle.py`).
+# lexical surface format the case's own `input.text` happens to use for the
+# same figure (deliberately -- no *lexical* match is required). The
+# canonical value must still be semantically grounded in a condition
+# actually visible to the provider (CorpusCaseInput.text/task) -- lexical
+# grounding is not required, semantic grounding is; see
+# docs/research/post-pilot-protocol-v4.md sections 3a/3b and `oracle.py`.
 _CANONICAL_DECIMAL_PATTERN = r"^(0|[1-9][0-9]*)\.[0-9]{2}$"
 
 
