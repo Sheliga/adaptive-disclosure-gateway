@@ -84,6 +84,7 @@ export function TechnicalDetailsScreen({ execute, onBack }: TechnicalDetailsScre
   const copy = useCopy();
   return (
     <section aria-labelledby="technical-details-heading" className={styles.section}>
+      <p className={styles.surfaceLabel}>{copy.technicalDetails.surfaceLabel}</p>
       <h1 id="technical-details-heading" className={styles.heading}>
         {copy.sectionHeadings.technicalDetails}
       </h1>

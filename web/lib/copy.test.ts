@@ -211,6 +211,42 @@ describe("copy.en.technicalDetails.timingExplanation", () => {
   });
 });
 
+/**
+ * PR #83 review follow-up (Finding 2): the welcome screen's
+ * `howItWorks.transformations` before/after examples must match the REAL
+ * output shapes the pipeline produces, not an invented placeholder --
+ * `src/adaptive_disclosure_gateway/transformations/generalization.py`'s
+ * `NumericBandStrategy.generalize` returns `f"{prefix}{int(lower)}-{int(upper)}"`
+ * (e.g. `"R$ 125000-130000"`, never a "Between X and Y" sentence);
+ * `decision_application.py`'s `_allowed_result` (shared by every treatment
+ * beyond B1) sets `transformed = None` for `DisclosureAction.REMOVE`, which
+ * is joined into the payload as `""` -- there is no `[REDACTED:...]` or
+ * `[removido]` placeholder anywhere in the pipeline, the value is simply
+ * gone; and `vault/in_memory.py`'s `_make_pseudonym` mints
+ * `f"PSEUDO-{category}-{token}"` with a 32-hex-character CSPRNG token, never
+ * an `EMPLOYEE_XXXX`/`FUNCIONARIO_XXXX`-shaped string. This pins the real
+ * shapes so a future edit cannot silently reintroduce the old, fabricated
+ * examples.
+ */
+describe.each([
+  ["pt-BR", ptBR],
+  ["en", en],
+] as const)("copy.%s.howItWorks.transformations -- examples match real pipeline output shapes", (_locale, table) => {
+  const { remove, pseudonymize, generalize } = table.howItWorks.transformations;
+
+  it("REMOVE's 'after' has no bracketed placeholder -- the value is simply gone", () => {
+    expect(remove.after).not.toMatch(/\[.*\]/);
+  });
+
+  it("PSEUDONYMIZE's 'after' matches the real PSEUDO-{category}-{32 hex chars} vault token shape", () => {
+    expect(pseudonymize.after).toMatch(/^PSEUDO-[a-z_]+-[0-9a-f]{32}$/);
+  });
+
+  it("GENERALIZE's 'after' matches the real NumericBandStrategy '{prefix}{int}-{int}' band shape", () => {
+    expect(generalize.after).toMatch(/^R\$ \d+-\d+$/);
+  });
+});
+
 /** Type-level parity check: this line only compiles if AppCopy structurally
  * matches both tables -- see `Widen<T>` in `copy.ts`. Kept as a value (not
  * just a type assertion) so it participates in the module the way any other

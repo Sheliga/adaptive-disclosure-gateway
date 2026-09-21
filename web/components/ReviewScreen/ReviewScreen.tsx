@@ -29,6 +29,26 @@
  * feature flag itself; the server-side route gate
  * (`lib/demoTransparency.ts`) remains the actual security boundary
  * regardless of what this prop says.
+ *
+ * T30 / issue #82 restructured this screen into progressive-disclosure
+ * levels, WITHOUT touching the confirmation-token/preview-execute binding
+ * or any gating condition above -- only where each already-gated panel is
+ * mounted in the JSX tree changed:
+ *
+ *  - Level 1 (always visible): what was detected, what stays local, and
+ *    -- prominently, under `copy.review.willBeSentHeading` -- exactly what
+ *    will cross the trust boundary, including the payload disclosure
+ *    (still kept OUT of the DOM until its own toggle is opened, unchanged).
+ *  - Level 2: the T27 transformation inspector, now itself behind an outer
+ *    `copy.review.understandChangesToggle` disclosure -- so understanding
+ *    *why* something changed is one click deeper than seeing *what* will be
+ *    sent.
+ *  - Level 3: the T28 export/restore panel and the T29 Vault Explorer,
+ *    together behind one `copy.review.technicalToolsToggle` disclosure,
+ *    collapsed by default -- framed explicitly as a research/technical
+ *    surface. This wrapper itself is only rendered when at least one of the
+ *    two panels would actually show something, so a deployment with both
+ *    demo flags off renders no empty "technical tools" toggle at all.
  */
 
 import { useState } from "react";
@@ -84,11 +104,17 @@ export function ReviewScreen({
 }: ReviewScreenProps) {
   const copy = useCopy();
   const [payloadOpen, setPayloadOpen] = useState(false);
+  const [changesOpen, setChangesOpen] = useState(false);
+  const [technicalToolsOpen, setTechnicalToolsOpen] = useState(false);
 
   const isBlocked = preview.summary.status === "blocked";
   const categories = preview.summary.categories;
   const localCategories = categories.filter((category) => !category.crosses_trust_boundary);
   const sentCategories = categories.filter((category) => category.crosses_trust_boundary);
+
+  const showExportRestore = demoTransparencyEnabled && !isBlocked;
+  const showVaultExplorer = demoVaultExplorerEnabled;
+  const showTechnicalTools = showExportRestore || showVaultExplorer;
 
   return (
     <section aria-labelledby="review-heading" className={styles.section}>
@@ -128,7 +154,7 @@ export function ReviewScreen({
       </div>
 
       <div>
-        <h2 className={styles.subheading}>{copy.sectionHeadings.whatWasSent}</h2>
+        <h2 className={styles.subheading}>{copy.review.willBeSentHeading}</h2>
         {sentCategories.length === 0 ? (
           <p>{copy.review.nothingInSection}</p>
         ) : (
@@ -138,32 +164,54 @@ export function ReviewScreen({
             ))}
           </ul>
         )}
+
+        <details open={payloadOpen} onToggle={(event) => setPayloadOpen(event.currentTarget.open)}>
+          <summary>{copy.review.showPayloadToggle}</summary>
+          {payloadOpen && (
+            <>
+              <pre className={styles.payload}>{preview.external_payload}</pre>
+              <p>
+                {preview.payload_byte_count} {copy.review.payloadByteCountLabel}
+              </p>
+            </>
+          )}
+        </details>
       </div>
 
-      <details open={payloadOpen} onToggle={(event) => setPayloadOpen(event.currentTarget.open)}>
-        <summary>{copy.review.showPayloadToggle}</summary>
-        {payloadOpen && (
-          <>
-            <pre className={styles.payload}>{preview.external_payload}</pre>
-            <p>
-              {preview.payload_byte_count} {copy.review.payloadByteCountLabel}
-            </p>
-          </>
-        )}
-      </details>
-
       {preview.inspection !== null && (
-        <DisclosureInspector
-          inspection={preview.inspection}
-          categories={preview.summary.categories}
-          treatment={preview.treatment}
-          strategy={preview.strategy}
-        />
+        <details
+          className={styles.levelDisclosure}
+          open={changesOpen}
+          onToggle={(event) => setChangesOpen(event.currentTarget.open)}
+        >
+          <summary>{copy.review.understandChangesToggle}</summary>
+          {changesOpen && (
+            <DisclosureInspector
+              inspection={preview.inspection}
+              categories={preview.summary.categories}
+              treatment={preview.treatment}
+              strategy={preview.strategy}
+            />
+          )}
+        </details>
       )}
 
-      {demoTransparencyEnabled && !isBlocked && <ExportRestorePanel compose={compose} />}
-
-      {demoVaultExplorerEnabled && <VaultExplorerPanel token={preview.vault_explorer_token} />}
+      {showTechnicalTools && (
+        <details
+          className={styles.levelDisclosure}
+          open={technicalToolsOpen}
+          onToggle={(event) => setTechnicalToolsOpen(event.currentTarget.open)}
+        >
+          <summary>{copy.review.technicalToolsToggle}</summary>
+          {technicalToolsOpen && (
+            <div className={styles.technicalTools}>
+              <p className={styles.explanation}>{copy.review.technicalToolsIntro}</p>
+              {showExportRestore && <ExportRestorePanel compose={compose} />}
+              {showVaultExplorer && <VaultExplorerPanel token={preview.vault_explorer_token} />}
+            </div>
+          )}
+        </details>
+      )}
 
       {executeError && (
         <p role="alert" className={styles.error}>

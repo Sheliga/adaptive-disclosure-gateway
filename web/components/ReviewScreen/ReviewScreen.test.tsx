@@ -61,6 +61,55 @@ function preview(
   };
 }
 
+/**
+ * T30 / issue #82: the review hierarchy must read, in DOM order, "what was
+ * detected" -> "what stays local" -> "exactly what will be sent" -> confirm
+ * -- the decision the reviewer is being asked to make. This can fail from a
+ * real defect: reordering sections, or losing the prominent "will be sent"
+ * heading, breaks it.
+ */
+describe("ReviewScreen -- hierarchy order (T30)", () => {
+  it("orders detected -> stays local -> will be sent -> confirm in the DOM", () => {
+    render(
+      <ReviewScreen
+        preview={preview([category({ category: "cpf", crosses_trust_boundary: false })])}
+        executeError={null}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    const detected = screen.getByText(copy.sectionHeadings.whatWasDetected);
+    const stayLocal = screen.getByText(copy.sectionHeadings.whatStaysLocal);
+    const willBeSent = screen.getByText(copy.review.willBeSentHeading);
+    const confirm = screen.getByRole("button", { name: copy.review.confirmSend });
+
+    const positions = [detected, stayLocal, willBeSent, confirm];
+    for (let i = 0; i < positions.length - 1; i += 1) {
+      expect(
+        positions[i].compareDocumentPosition(positions[i + 1]) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    }
+  });
+
+  it("renders the prominent, unambiguously labelled 'will be sent' heading", () => {
+    render(
+      <ReviewScreen preview={preview([category({})])} executeError={null} onConfirm={vi.fn()} onCancel={vi.fn()} />,
+    );
+    expect(screen.getByRole("heading", { name: copy.review.willBeSentHeading })).toBeInTheDocument();
+  });
+
+  it("never renders a b0-b4 identifier in the level-1 region before any technical disclosure is opened", () => {
+    render(
+      <ReviewScreen preview={preview([category({})])} executeError={null} onConfirm={vi.fn()} onCancel={vi.fn()} />,
+    );
+    const text = document.body.textContent?.toLowerCase() ?? "";
+    for (const code of ["b0", "b1", "b2", "b3", "b4"]) {
+      expect(text).not.toContain(code);
+    }
+  });
+});
+
 describe("ReviewScreen -- local vs sent split follows crosses_trust_boundary", () => {
   it("groups a removed category with crosses_trust_boundary=false under 'what stays local'", () => {
     render(
@@ -334,16 +383,17 @@ describe("ReviewScreen -- switches to English (T21 fourth slice)", () => {
  * collapsed disclosure -- its content must stay out of the DOM here too,
  * for the same reason `external_payload` does.
  */
-describe("ReviewScreen -- disclosure inspector (T27)", () => {
-  it("renders no inspector toggle when inspection is null", () => {
+describe("ReviewScreen -- disclosure inspector (T27), now behind a Level-2 disclosure (T30)", () => {
+  it("renders no Level-2 disclosure at all when inspection is null", () => {
     render(
       <ReviewScreen preview={preview([category({})])} executeError={null} onConfirm={vi.fn()} onCancel={vi.fn()} />,
     );
 
+    expect(screen.queryByText(copy.review.understandChangesToggle)).not.toBeInTheDocument();
     expect(screen.queryByText(copy.disclosureInspector.toggleLabel)).not.toBeInTheDocument();
   });
 
-  it("renders the inspector toggle when inspection is provided, with its content absent until opened", async () => {
+  it("keeps the inspector's own toggle out of the DOM until the Level-2 disclosure is opened", async () => {
     const inspection = {
       available: true,
       unavailable_reason: null,
@@ -358,6 +408,11 @@ describe("ReviewScreen -- disclosure inspector (T27)", () => {
       />,
     );
 
+    expect(screen.getByText(copy.review.understandChangesToggle)).toBeInTheDocument();
+    expect(screen.queryByText(copy.disclosureInspector.toggleLabel)).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByText(copy.review.understandChangesToggle));
+
     expect(screen.getByText(copy.disclosureInspector.toggleLabel)).toBeInTheDocument();
     expect(screen.queryByText(copy.disclosureInspector.originalColumnHeading)).not.toBeInTheDocument();
 
@@ -366,7 +421,7 @@ describe("ReviewScreen -- disclosure inspector (T27)", () => {
     expect(screen.getByText(copy.disclosureInspector.originalColumnHeading)).toBeInTheDocument();
   });
 
-  it("renders the unavailable message when inspection.available is false", () => {
+  it("renders the unavailable message once the Level-2 disclosure is opened, when inspection.available is false", async () => {
     const inspection = { available: false as const, unavailable_reason: "blocked" as const, segments: [] };
     render(
       <ReviewScreen
@@ -376,6 +431,8 @@ describe("ReviewScreen -- disclosure inspector (T27)", () => {
         onCancel={vi.fn()}
       />,
     );
+
+    await userEvent.click(screen.getByText(copy.review.understandChangesToggle));
 
     expect(screen.getByText(copy.disclosureInspector.unavailableBlockedHeading)).toBeInTheDocument();
   });
@@ -387,12 +444,13 @@ describe("ReviewScreen -- disclosure inspector (T27)", () => {
  * defaults to `false`, so every existing render call in this file (which
  * never passes it) already proves the "disabled" half of this pin.
  */
-describe("ReviewScreen -- export/restore panel (T28)", () => {
-  it("does not render the panel when demoTransparencyEnabled is not passed (defaults to disabled)", () => {
+describe("ReviewScreen -- export/restore panel (T28), now behind a Level-3 disclosure (T30)", () => {
+  it("does not render the panel or the Level-3 disclosure when demoTransparencyEnabled is not passed (defaults to disabled)", () => {
     render(
       <ReviewScreen preview={preview([category({})])} executeError={null} onConfirm={vi.fn()} onCancel={vi.fn()} />,
     );
 
+    expect(screen.queryByText(copy.review.technicalToolsToggle)).not.toBeInTheDocument();
     expect(screen.queryByText(copy.exportRestorePanel.heading)).not.toBeInTheDocument();
   });
 
@@ -407,10 +465,11 @@ describe("ReviewScreen -- export/restore panel (T28)", () => {
       />,
     );
 
+    expect(screen.queryByText(copy.review.technicalToolsToggle)).not.toBeInTheDocument();
     expect(screen.queryByText(copy.exportRestorePanel.heading)).not.toBeInTheDocument();
   });
 
-  it("renders the panel when enabled and the preview is allowed", () => {
+  it("renders the Level-3 disclosure, collapsed, then the panel once opened, when enabled and the preview is allowed", async () => {
     render(
       <ReviewScreen
         preview={preview([category({})], "allowed")}
@@ -420,6 +479,11 @@ describe("ReviewScreen -- export/restore panel (T28)", () => {
         demoTransparencyEnabled={true}
       />,
     );
+
+    expect(screen.getByText(copy.review.technicalToolsToggle)).toBeInTheDocument();
+    expect(screen.queryByText(copy.exportRestorePanel.heading)).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByText(copy.review.technicalToolsToggle));
 
     expect(screen.getByText(copy.exportRestorePanel.heading)).toBeInTheDocument();
   });
@@ -435,6 +499,7 @@ describe("ReviewScreen -- export/restore panel (T28)", () => {
       />,
     );
 
+    expect(screen.queryByText(copy.review.technicalToolsToggle)).not.toBeInTheDocument();
     expect(screen.queryByText(copy.exportRestorePanel.heading)).not.toBeInTheDocument();
   });
 });
@@ -448,8 +513,8 @@ describe("ReviewScreen -- export/restore panel (T28)", () => {
  * `false`, so every existing render call in this file already proves the
  * "disabled" half of this pin.
  */
-describe("ReviewScreen -- Vault Explorer panel (T29)", () => {
-  it("does not render the panel when demoVaultExplorerEnabled is not passed (defaults to disabled), and makes no fetch call", () => {
+describe("ReviewScreen -- Vault Explorer panel (T29), now behind a Level-3 disclosure (T30)", () => {
+  it("does not render the panel or the Level-3 disclosure when demoVaultExplorerEnabled is not passed (defaults to disabled), and makes no fetch call", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
@@ -462,6 +527,7 @@ describe("ReviewScreen -- Vault Explorer panel (T29)", () => {
       />,
     );
 
+    expect(screen.queryByText(copy.review.technicalToolsToggle)).not.toBeInTheDocument();
     expect(screen.queryByText(copy.vaultExplorerPanel.heading)).not.toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
@@ -478,10 +544,11 @@ describe("ReviewScreen -- Vault Explorer panel (T29)", () => {
       />,
     );
 
+    expect(screen.queryByText(copy.review.technicalToolsToggle)).not.toBeInTheDocument();
     expect(screen.queryByText(copy.vaultExplorerPanel.heading)).not.toBeInTheDocument();
   });
 
-  it("renders the panel with its unavailable note when enabled but the token is null", () => {
+  it("renders the panel with its unavailable note, once the Level-3 disclosure is opened, when enabled but the token is null", async () => {
     render(
       <ReviewScreen
         preview={preview([category({})], "allowed", null, null)}
@@ -492,11 +559,13 @@ describe("ReviewScreen -- Vault Explorer panel (T29)", () => {
       />,
     );
 
+    await userEvent.click(screen.getByText(copy.review.technicalToolsToggle));
+
     expect(screen.getByText(copy.vaultExplorerPanel.heading)).toBeInTheDocument();
     expect(screen.getByText(copy.vaultExplorerPanel.unavailableForDecision)).toBeInTheDocument();
   });
 
-  it("renders the interactive panel when enabled and the token is non-null, collapsed by default", () => {
+  it("renders the interactive panel when enabled and the token is non-null, still collapsed by its own toggle after the Level-3 disclosure is opened", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
@@ -509,6 +578,10 @@ describe("ReviewScreen -- Vault Explorer panel (T29)", () => {
         demoVaultExplorerEnabled={true}
       />,
     );
+
+    expect(screen.queryByText(copy.vaultExplorerPanel.heading)).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByText(copy.review.technicalToolsToggle));
 
     expect(screen.getByText(copy.vaultExplorerPanel.heading)).toBeInTheDocument();
     expect(screen.getByText(copy.vaultExplorerPanel.toggleLabel)).toBeInTheDocument();

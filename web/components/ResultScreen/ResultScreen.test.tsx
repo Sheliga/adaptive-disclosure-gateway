@@ -75,14 +75,219 @@ function healthBody(deterministicDemoMode: boolean): HealthResponse {
 }
 
 describe("ResultScreen -- final answer is the primary output", () => {
-  it("renders the final answer and the trust-boundary path on success", () => {
+  it("renders the final answer directly, and the trust-boundary path once the 'entender o que aconteceu' disclosure is opened", async () => {
     const e = execute();
     render(<ResultScreen execute={e} health={{ status: "loading" }} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} onViewTechnicalDetails={vi.fn()} />);
 
     expect(screen.getByText(e.final_answer as string)).toBeInTheDocument();
+    expect(screen.queryByText(copy.result.pathProvider)).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByText(copy.result.whatHappenedToggle));
+
     expect(screen.getAllByText(copy.result.pathLocal).length).toBe(2);
     expect(screen.getByText(copy.result.pathProvider)).toBeInTheDocument();
   });
+});
+
+/**
+ * T30 / issue #82: the result hierarchy must read, in DOM order, the final
+ * answer -> the protections summary -> "entender o que aconteceu" ->
+ * the research surface ("Comparar estratégias experimentais") -> the
+ * technical/audit surface ("Ver detalhes técnicos") -> restart. This can
+ * fail from a real defect: putting technical metadata above the answer, or
+ * losing the explicit research/technical framing headings.
+ */
+describe("ResultScreen -- hierarchy order (T30)", () => {
+  it("orders answer -> protections -> entender o que aconteceu -> research -> technical -> restart", () => {
+    render(
+      <ResultScreen
+        execute={execute()}
+        health={{ status: "loading" }}
+        onRestart={vi.fn()}
+        compareError={null}
+        onCompareStrategies={vi.fn()}
+        onViewTechnicalDetails={vi.fn()}
+      />,
+    );
+
+    const answer = screen.getByText("Esta é a resposta final reconstruída.");
+    const protections = screen.getByText(copy.result.protectionsAppliedHeading);
+    const whatHappened = screen.getByText(copy.result.whatHappenedToggle);
+    const research = screen.getByRole("heading", { name: copy.result.researchHeading });
+    const technical = screen.getByRole("heading", { name: copy.result.technicalToolsHeading });
+    const restart = screen.getByRole("button", { name: copy.result.restart });
+
+    const ordered = [answer, protections, whatHappened, research, technical, restart];
+    for (let i = 0; i < ordered.length - 1; i += 1) {
+      expect(ordered[i].compareDocumentPosition(ordered[i + 1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+  });
+
+  it("groups Comparar estratégias under the research heading, and Ver detalhes técnicos under the technical heading", () => {
+    render(
+      <ResultScreen
+        execute={execute()}
+        health={{ status: "loading" }}
+        onRestart={vi.fn()}
+        compareError={null}
+        onCompareStrategies={vi.fn()}
+        onViewTechnicalDetails={vi.fn()}
+      />,
+    );
+
+    const research = screen.getByRole("heading", { name: copy.result.researchHeading });
+    const compareButton = screen.getByRole("button", { name: copy.buttons.compareStrategies });
+    expect(research.compareDocumentPosition(compareButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    const technical = screen.getByRole("heading", { name: copy.result.technicalToolsHeading });
+    const technicalButton = screen.getByRole("button", { name: copy.buttons.viewTechnicalDetails });
+    expect(technical.compareDocumentPosition(technicalButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
+/**
+ * T30 / issue #82 review follow-up (Finding 1): the protections summary
+ * must be a TRUTHFUL, data-derived breakdown -- never a single headline
+ * that sums `occurrence_count` across every category regardless of
+ * outcome (that folded `preserved`, sent-unchanged data, and even unknown
+ * outcomes into a "protected" count), and never an invented reconstruction
+ * COUNT the API does not report (`ReconstructionStage` only has
+ * `attempted`/`reconstructed_hash`/`changed_from_provider_response`, no
+ * count of successful reconstructions). Each case below fails against the
+ * pre-fix implementation.
+ */
+describe("ResultScreen -- protections breakdown (T30 review follow-up)", () => {
+  function categoriesFor(occurrences: { outcome: string; action: string; count: number }[]) {
+    return occurrences.map(({ outcome, action, count }, index) => ({
+      category: `cat_${index}`,
+      outcome,
+      action,
+      crosses_trust_boundary: outcome === "pseudonymized",
+      occurrence_count: count,
+      required_for_task: null,
+      technical_reason: "rule",
+      policy_version: null,
+      policy_restricted: null,
+      impossible_under_policy: null,
+    }));
+  }
+
+  it("shows a per-action breakdown built only from occurrence_count, in canonical order", () => {
+    const e = execute({
+      summary: {
+        status: "allowed",
+        categories: categoriesFor([
+          { outcome: "removed", action: "remove", count: 2 },
+          { outcome: "pseudonymized", action: "pseudonymize", count: 3 },
+          { outcome: "generalized", action: "generalize", count: 1 },
+          { outcome: "preserved", action: "preserve", count: 2 },
+        ]),
+        detected_span_count: 8,
+        detected_categories: ["cat_0", "cat_1", "cat_2", "cat_3"],
+      },
+      reconstruction: { attempted: true, reconstructed_hash: "x", changed_from_provider_response: false },
+    });
+
+    render(
+      <ResultScreen execute={e} health={{ status: "loading" }} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} onViewTechnicalDetails={vi.fn()} />,
+    );
+
+    const expected = [
+      `${copy.outcomes.removed.label}: 2`,
+      `${copy.outcomes.pseudonymized.label}: 3`,
+      `${copy.outcomes.generalized.label}: 1`,
+      `${copy.outcomes.preserved.label}: 2`,
+    ].join(" · ");
+    expect(screen.getByText(expected)).toBeInTheDocument();
+  });
+
+  it("never renders a 'protegido(s)' claim when every category is preserved (sent unchanged)", () => {
+    const e = execute({
+      summary: {
+        status: "allowed",
+        categories: categoriesFor([{ outcome: "preserved", action: "preserve", count: 3 }]),
+        detected_span_count: 3,
+        detected_categories: ["cat_0"],
+      },
+    });
+
+    render(
+      <ResultScreen execute={e} health={{ status: "loading" }} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} onViewTechnicalDetails={vi.fn()} />,
+    );
+
+    expect(screen.queryByText(/protegid[oa]s?/i)).not.toBeInTheDocument();
+    expect(screen.getByText(`${copy.outcomes.preserved.label}: 3`)).toBeInTheDocument();
+  });
+
+  it("counts an unknown outcome under its own unknown bucket, never folded into a protective group", () => {
+    const e = execute({
+      summary: {
+        status: "allowed",
+        categories: categoriesFor([
+          { outcome: "removed", action: "remove", count: 1 },
+          { outcome: "a_future_outcome_this_ui_does_not_know", action: "mystery", count: 5 },
+        ]),
+        detected_span_count: 6,
+        detected_categories: ["cat_0", "cat_1"],
+      },
+    });
+
+    render(
+      <ResultScreen execute={e} health={{ status: "loading" }} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} onViewTechnicalDetails={vi.fn()} />,
+    );
+
+    const expected = [`${copy.outcomes.removed.label}: 1`, `${copy.outcomes.unknown.label}: 5`].join(" · ");
+    expect(screen.getByText(expected)).toBeInTheDocument();
+    expect(screen.queryByText(/protegid[oa]s?:\s*5/i)).not.toBeInTheDocument();
+  });
+
+  it("shows the reconstruction note only when reconstruction was attempted AND the answer actually changed", () => {
+    const e = execute({
+      summary: {
+        status: "allowed",
+        categories: categoriesFor([{ outcome: "pseudonymized", action: "pseudonymize", count: 2 }]),
+        detected_span_count: 2,
+        detected_categories: ["cat_0"],
+      },
+      reconstruction: { attempted: true, reconstructed_hash: "x", changed_from_provider_response: true },
+    });
+
+    render(
+      <ResultScreen execute={e} health={{ status: "loading" }} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} onViewTechnicalDetails={vi.fn()} />,
+    );
+
+    expect(screen.getByText(copy.result.reconstructionApplied)).toBeInTheDocument();
+  });
+
+  it.each([
+    [false, false as boolean | null],
+    [true, false as boolean | null],
+    [true, null as boolean | null],
+  ])(
+    "shows no reconstruction line and no numeric 'reconstruídos' count (attempted=%s, changed=%s)",
+    (attempted, changed_from_provider_response) => {
+      const e = execute({
+        summary: {
+          status: "allowed",
+          categories: categoriesFor([{ outcome: "pseudonymized", action: "pseudonymize", count: 2 }]),
+          detected_span_count: 2,
+          detected_categories: ["cat_0"],
+        },
+        reconstruction: {
+          attempted,
+          reconstructed_hash: attempted ? "x" : null,
+          changed_from_provider_response,
+        },
+      });
+
+      render(
+        <ResultScreen execute={e} health={{ status: "loading" }} onRestart={vi.fn()} compareError={null} onCompareStrategies={vi.fn()} onViewTechnicalDetails={vi.fn()} />,
+      );
+
+      expect(screen.queryByText(copy.result.reconstructionApplied)).not.toBeInTheDocument();
+      expect(screen.queryByText(/reconstru[ií]dos?/i)).not.toBeInTheDocument();
+    },
+  );
 });
 
 describe("ResultScreen -- blocked execution", () => {
@@ -392,6 +597,7 @@ describe("ResultScreen -- switches to English (T21 fourth slice)", () => {
     );
 
     expect(screen.getByRole("heading", { name: en.result.heading })).toBeInTheDocument();
+    await userEvent.click(screen.getByText(en.result.whatHappenedToggle));
     expect(screen.getByText(en.result.pathProvider)).toBeInTheDocument();
     expect(screen.getByText(en.provider.deterministicDemoLabel)).toBeInTheDocument();
     expect(screen.getByText(en.categories.labels.employee_name, { exact: false })).toBeInTheDocument();

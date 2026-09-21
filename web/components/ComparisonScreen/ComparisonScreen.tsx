@@ -58,6 +58,7 @@ export function ComparisonScreen({ comparison, onBack }: ComparisonScreenProps) 
   const copy = useCopy();
   return (
     <section aria-labelledby="comparison-heading" className={styles.section}>
+      <p className={styles.surfaceLabel}>{copy.comparison.surfaceLabel}</p>
       <h1 id="comparison-heading" className={styles.heading}>
         {copy.comparison.heading}
       </h1>

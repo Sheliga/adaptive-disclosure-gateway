@@ -55,6 +55,22 @@ function execute(overrides: Partial<ExecuteResponse> = {}): ExecuteResponse {
   };
 }
 
+/**
+ * T30 / issue #82: this screen frames itself explicitly as the technical/
+ * audit level, ahead of its own heading, so a visitor who lands here (e.g.
+ * from Result's "Detalhes técnicos e ferramentas de pesquisa") never
+ * mistakes it for part of the primary task flow.
+ */
+describe("TechnicalDetailsScreen -- technical/audit surface framing (T30)", () => {
+  it("renders a technical-level eyebrow label before the heading", () => {
+    render(<TechnicalDetailsScreen execute={execute()} onBack={vi.fn()} />);
+
+    const surfaceLabel = screen.getByText(copy.technicalDetails.surfaceLabel);
+    const heading = screen.getByRole("heading", { name: copy.sectionHeadings.technicalDetails });
+    expect(surfaceLabel.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
 describe("TechnicalDetailsScreen -- Execução: strategy vs treatment", () => {
   it("renders both the requested strategy and the executed treatment as raw codes", () => {
     render(<TechnicalDetailsScreen execute={execute()} onBack={vi.fn()} />);
