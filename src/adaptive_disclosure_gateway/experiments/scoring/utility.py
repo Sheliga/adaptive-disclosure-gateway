@@ -83,8 +83,9 @@ from adaptive_disclosure_gateway.corpus.loader import CorpusCase
 from adaptive_disclosure_gateway.corpus.models import NumericUtilityReference, ReferenceOperator
 from adaptive_disclosure_gateway.corpus.oracle import CaseOracle
 from adaptive_disclosure_gateway.domain import DisclosureAction, DisclosureResult, Treatment
+from adaptive_disclosure_gateway.transformations.generalization import NUMERIC_AMOUNT_GRAMMAR_ID
 
-from ..post_pilot_protocol import validate_scorable_protocol_id
+from ..post_pilot_protocol import UnsupportedScoringProtocolError, validate_scorable_protocol_id
 from .span_matching import resolve_span_transformations
 
 UtilityOutcome = Literal["answerable", "not_answerable", "indeterminate", "not_applicable"]
@@ -138,6 +139,117 @@ NUMERIC_BAND_UTILITY_REASONS: frozenset[str] = frozenset(
     }
 )
 
+# --- post-pilot-v5 original-amount grammar (Issue #88 / #91 / #93, M3) -----
+#
+# The scorer's own, independent re-derivation of
+# ``transformations/generalization.py``'s closed amount grammar
+# (``NUMERIC_AMOUNT_GRAMMAR_ID = "amount-grammar-v1"``). Deliberately a
+# *different* implementation technique from the treatment's single
+# alternation regex with named groups: two separate patterns (dotted, then
+# Brazilian), each `fullmatch`-ed in turn, so a bug shared between the two
+# parsers cannot make this fidelity check circularly agree with a wrong
+# treatment output (see this module's own historical
+# ``_ORIGINAL_AMOUNT_PATTERN`` docstring for why that circularity would be a
+# real defect, not merely inelegant). ASCII ``[0-9]`` only, never ``\d``
+# (Issue #91); ``fullmatch`` only, never ``match``+``$`` (which still accepts
+# one trailing ``\n``) -- unlike ``_ORIGINAL_AMOUNT_PATTERN`` above, which is
+# frozen ``post-pilot-v3`` code and keeps both of those defects on purpose.
+_V5_DOTTED_ORIGINAL_PATTERN = re.compile(r"R\$[  ](0|[1-9][0-9]{0,14})\.([0-9]{2})")
+_V5_BRAZIL_ORIGINAL_PATTERN = re.compile(
+    r"R\$[  ]((?:0)|(?:[1-9][0-9]{0,2}(?:\.[0-9]{3}){0,4})|(?:[1-9][0-9]{3,14})),([0-9]{2})"
+)
+
+# The v5 transformed-band grammar: identical shape to ``_BAND_STRING_PATTERN``
+# (``NumericBandStrategy`` always emits ``R$ <lower>-<upper>`` in ASCII with a
+# plain space, regardless of which original-amount family produced it --
+# Issue #93's canonical band representation is unchanged), but matched with
+# ``fullmatch`` rather than ``match``+``$`` so a trailing ``\n`` is rejected.
+_V5_BAND_PATTERN = re.compile(r"R\$ (0|[1-9][0-9]*)-(0|[1-9][0-9]*)")
+
+
+def _parse_original_amount_v5(original: str | None) -> Decimal | None:
+    """The oracle span's own numeric value under the ``post-pilot-v5``
+    grammar: dotted-decimal or Brazilian, tried in that order. Returns
+    ``None`` for anything outside the closed grammar -- callers treat that
+    as ``generalized_band_unscorable_original``, exactly like
+    ``_parse_strict_original_amount``.
+    """
+    if not isinstance(original, str):
+        return None
+    match = _V5_DOTTED_ORIGINAL_PATTERN.fullmatch(original)
+    if match is not None:
+        return Decimal(f"{match.group(1)}.{match.group(2)}")
+    match = _V5_BRAZIL_ORIGINAL_PATTERN.fullmatch(original)
+    if match is not None:
+        integer_part = match.group(1).replace(".", "")
+        return Decimal(f"{integer_part}.{match.group(2)}")
+    return None
+
+
+def _parse_band_v5(transformed: str | None) -> tuple[int, int] | None:
+    """The v5 counterpart of ``_parse_band``: same closed band grammar,
+    matched with ``fullmatch``."""
+    if not isinstance(transformed, str):
+        return None
+    match = _V5_BAND_PATTERN.fullmatch(transformed)
+    if match is None:
+        return None
+    lower, upper = int(match.group(1)), int(match.group(2))
+    if lower >= upper:
+        return None
+    return lower, upper
+
+
+def _check_band_fidelity_v5(
+    original: str | None, transformed: str | None
+) -> tuple[UtilityOutcome, str] | tuple[int, int]:
+    """The ``post-pilot-v5`` counterpart of ``_check_band_fidelity``, using
+    the v5 original/band parsers above. Same three sub-cases, same closed
+    reason set.
+    """
+    original_amount = _parse_original_amount_v5(original)
+    if original_amount is None:
+        return "not_answerable", "generalized_band_unscorable_original"
+
+    band = _parse_band_v5(transformed)
+    if band is None:
+        return "not_answerable", "generalized_band_invalid"
+
+    lower, upper = band
+    if not (lower <= original_amount < upper):
+        return "not_answerable", "generalized_band_excludes_original"
+
+    return lower, upper
+
+
+def _classify_structured_sufficiency(
+    lower: int, upper: int, references: Sequence[NumericUtilityReference]
+) -> tuple[UtilityOutcome, str]:
+    """Steps 4-5 of the structured-reference numeric-band rule (Issue #87 /
+    M3, extracted for Issue #93 / M3 so ``post-pilot-v4``'s
+    ``classify_generalized_band_against_references`` and ``post-pilot-v5``'s
+    ``classify_generalized_band_against_references_v5`` share this exact
+    sufficiency step rather than risking the two silently drifting apart --
+    mirroring why ``_check_band_fidelity`` itself is already shared for
+    fidelity. Takes an already-fidelity-checked ``(lower, upper)`` pair, never
+    a raw original/transformed string.
+
+    No behavior change versus the v4 code this was extracted from: an empty
+    ``references`` -> ``("indeterminate", "generalized_band_no_reference")``;
+    otherwise ``("answerable", "generalized_band_decidable")`` iff every
+    reference is individually decidable (``_reference_is_decidable``),
+    else ``("indeterminate", "generalized_band_ambiguous")``.
+    """
+    if not references:
+        return "indeterminate", "generalized_band_no_reference"
+
+    if all(
+        _reference_is_decidable(reference.operator, reference.amount, lower, upper)
+        for reference in references
+    ):
+        return "answerable", "generalized_band_decidable"
+    return "indeterminate", "generalized_band_ambiguous"
+
 # Per-category required GENERALIZE granularity for date-shaped categories
 # (M3 Gate 6 / Issue #38). "day" is the finest granularity this registry
 # ever names (a day-precision GENERALIZE is never actually a generalization
@@ -169,6 +281,19 @@ _ORIGINAL_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _YEAR_ONLY_PATTERN = re.compile(r"^(\d{4})$")
 _YEAR_MONTH_PATTERN = re.compile(r"^(\d{4})-(\d{2})$")
 _YEAR_MONTH_DAY_PATTERN = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
+
+# ASCII-only, fullmatch-only counterparts of the four date patterns above,
+# used only by the ``post-pilot-v5`` date-grammar functions below (Issue #91
+# / #93, M3). The v2-era patterns above stay byte-for-byte for v3/v4
+# (historical-corpus scoring pins) -- two defects Issue #91 found in them are
+# deliberately NOT backported there: (1) bare ``\d`` also matches non-ASCII
+# Unicode decimal digits under Python's default `re` semantics; (2) `.match`
+# with a `$` anchor still accepts one trailing ``\n``. Both are closed here
+# with explicit ``[0-9]`` classes and ``fullmatch``.
+_V5_ORIGINAL_DATE_PATTERN = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+_V5_YEAR_ONLY_PATTERN = re.compile(r"([0-9]{4})")
+_V5_YEAR_MONTH_PATTERN = re.compile(r"([0-9]{4})-([0-9]{2})")
+_V5_YEAR_MONTH_DAY_PATTERN = re.compile(r"([0-9]{4})-([0-9]{2})-([0-9]{2})")
 
 
 def _parse_original_date(original: str | None) -> tuple[int, int, int] | None:
@@ -248,6 +373,79 @@ def classify_generalized_date(
         return "not_answerable", "generalized_date_unscorable_original"
 
     parsed_transformed = _parse_transformed_date(transformed)
+    if parsed_transformed is None:
+        return "not_answerable", "generalized_date_invalid"
+
+    granularity, t_year, t_month, t_day = parsed_transformed
+    o_year, o_month, o_day = parsed_original
+
+    if t_year != o_year:
+        return "not_answerable", "generalized_date_wrong_value"
+    if granularity in ("month", "day") and t_month != o_month:
+        return "not_answerable", "generalized_date_wrong_value"
+    if granularity == "day" and t_day != o_day:
+        return "not_answerable", "generalized_date_wrong_value"
+
+    if granularity == "day":
+        return "not_answerable", "generalized_date_excess_precision"
+
+    if _DATE_GRANULARITY_ORDER[granularity] > _DATE_GRANULARITY_ORDER[required]:
+        return "not_answerable", "generalized_date_insufficient_granularity"
+
+    return "answerable", "generalized_date_sufficient_granularity"
+
+
+def _parse_original_date_v5(original: str | None) -> tuple[int, int, int] | None:
+    """``post-pilot-v5`` (Issue #91 / #93) counterpart of
+    ``_parse_original_date``: identical semantics, ASCII-only digits and
+    ``fullmatch`` (never a trailing ``\\n``)."""
+    if not isinstance(original, str) or _V5_ORIGINAL_DATE_PATTERN.fullmatch(original) is None:
+        return None
+    year, month, day = (int(part) for part in original.split("-"))
+    try:
+        date(year, month, day)
+    except ValueError:
+        return None
+    return (year, month, day)
+
+
+def _parse_transformed_date_v5(
+    transformed: str | None,
+) -> tuple[str, int, int | None, int | None] | None:
+    """``post-pilot-v5`` counterpart of ``_parse_transformed_date``."""
+    if not transformed or not isinstance(transformed, str):
+        return None
+    if match := _V5_YEAR_MONTH_DAY_PATTERN.fullmatch(transformed):
+        year, month, day = (int(part) for part in match.groups())
+        try:
+            date(year, month, day)
+        except ValueError:
+            return None
+        return ("day", year, month, day)
+    if match := _V5_YEAR_MONTH_PATTERN.fullmatch(transformed):
+        year, month = (int(part) for part in match.groups())
+        if not 1 <= month <= 12:
+            return None
+        return ("month", year, month, None)
+    if match := _V5_YEAR_ONLY_PATTERN.fullmatch(transformed):
+        return ("year", int(match.group(1)), None, None)
+    return None
+
+
+def classify_generalized_date_v5(
+    original: str | None, transformed: str | None, required: str
+) -> tuple[UtilityOutcome, str]:
+    """``post-pilot-v5`` (Issue #91 / #93, M3) counterpart of
+    ``classify_generalized_date``: identical rule and identical closed
+    reason set, using the ASCII-only, ``fullmatch``-only date grammar above
+    instead of the v2-era ``\\d``/``match``+``$`` patterns. ``classify_generalized_date``
+    itself is untouched and stays the v3/v4 historical pin.
+    """
+    parsed_original = _parse_original_date_v5(original)
+    if parsed_original is None:
+        return "not_answerable", "generalized_date_unscorable_original"
+
+    parsed_transformed = _parse_transformed_date_v5(transformed)
     if parsed_transformed is None:
         return "not_answerable", "generalized_date_invalid"
 
@@ -510,16 +708,29 @@ def classify_generalized_band_against_references(
     if isinstance(fidelity[0], str):
         return fidelity
     lower, upper = fidelity
+    return _classify_structured_sufficiency(lower, upper, references)
 
-    if not references:
-        return "indeterminate", "generalized_band_no_reference"
 
-    if all(
-        _reference_is_decidable(reference.operator, reference.amount, lower, upper)
-        for reference in references
-    ):
-        return "answerable", "generalized_band_decidable"
-    return "indeterminate", "generalized_band_ambiguous"
+def classify_generalized_band_against_references_v5(
+    original: str | None,
+    transformed: str | None,
+    references: Sequence[NumericUtilityReference],
+) -> tuple[UtilityOutcome, str]:
+    """Classify one GENERALIZE outcome for a numeric-band category under
+    ``post-pilot-v5`` (Issue #93 / M3): identical structured-reference
+    sufficiency rule as ``classify_generalized_band_against_references``
+    (``post-pilot-v4``, reused unchanged via ``_classify_structured_sufficiency``
+    -- Issue #93's spec: "v5 reuses v4 reference semantics unchanged"), but
+    fidelity is checked with the v5 original/band grammar
+    (``_check_band_fidelity_v5``), which additionally accepts a
+    Brazilian-formatted original amount (Issue #88) and rejects the ASCII/
+    trailing-newline defects Issue #91 found in the v3/v4 grammar.
+    """
+    fidelity = _check_band_fidelity_v5(original, transformed)
+    if isinstance(fidelity[0], str):
+        return fidelity
+    lower, upper = fidelity
+    return _classify_structured_sufficiency(lower, upper, references)
 
 
 class MissingUtilityReferencesError(ValueError):
@@ -531,6 +742,27 @@ class MissingUtilityReferencesError(ValueError):
     this reason -- those frozen files are never edited to add the field;
     they are scored under ``post-pilot-v3`` instead (see
     ``scripts/run_hr_v1_pilot.py``/``run_contracts_v1_pilot.py``).
+    """
+
+
+class UnsupportedOriginalAmountFormatError(ValueError):
+    """Raised (Issue #93 / M3, ``post-pilot-v5`` only) by the pre-run check
+    below when any numeric-category oracle span in a corpus -- **including a
+    span belonging to an ``expected_block_request`` case** -- has a value
+    outside the closed ``post-pilot-v5`` amount grammar
+    (``NUMERIC_AMOUNT_GRAMMAR_ID = "amount-grammar-v1"``,
+    ``transformations/generalization.py``).
+
+    Raised before any treatment or provider call, over the *whole* corpus
+    (mirroring ``check_corpus_protocol_compatibility``'s own "fail fast, zero
+    provider calls" contract): Gate 7 must not author a confirmatory corpus
+    against an amount format the treatment/scorer contract does not actually
+    support, and a blocked case's own oracle value is exactly as much a part
+    of that contract as a disclosed one -- the case's block status has no
+    bearing on whether its annotation is well-formed.
+
+    Names only the case id and the category (CLAUDE.md's no-leak invariant)
+    -- never the offending value.
     """
 
 
@@ -574,31 +806,76 @@ def _check_case_protocol_compatibility(
     depends_on = set(oracle.answer_depends_on_categories or [])
     numeric_depends_on = depends_on & NUMERIC_BAND_UTILITY_CATEGORIES
     location = f"case {case_id!r}: " if case_id is not None else ""
-    if protocol_id == "post-pilot-v4":
+    if protocol_id in ("post-pilot-v4", "post-pilot-v5"):
+        # v5 shares v4's opted-in-oracle requirement verbatim (Issue #93's
+        # spec: "same MissingUtilityReferencesError ... rules; keep class
+        # name, broaden message to 'v4+'") -- the message below is the only
+        # thing that changed for the v4 case versus before this ticket.
         if oracle.utility_references is None and numeric_depends_on:
             raise MissingUtilityReferencesError(
                 f"{location}oracle depends on a numeric category but has no "
-                "utility_references (legacy schema) -- post-pilot-v4 requires an "
+                "utility_references (legacy schema) -- post-pilot-v4+ requires an "
                 "opted-in oracle for a numeric-dependent case"
             )
-    elif protocol_id == "post-pilot-v3" and oracle.utility_references is not None:
-        # `is not None`, never a truthiness check (PR #92 review, blocker
-        # 1): an opted-in but empty list ([]) is still an explicit opt-in
-        # into the structured mechanism, not "no opinion" -- it must be
-        # refused exactly like a non-empty list, never silently treated as
-        # legacy and fall back to _legacy_v3_reference_values.
-        raise StructuredReferencesRequireV4Error(
-            f"{location}oracle has opted in to utility_references (empty or not), "
-            "which post-pilot-v3's scorer cannot honor"
+    elif protocol_id == "post-pilot-v3":
+        if oracle.utility_references is not None:
+            # `is not None`, never a truthiness check (PR #92 review, blocker
+            # 1): an opted-in but empty list ([]) is still an explicit opt-in
+            # into the structured mechanism, not "no opinion" -- it must be
+            # refused exactly like a non-empty list, never silently treated
+            # as legacy and fall back to _legacy_v3_reference_values.
+            raise StructuredReferencesRequireV4Error(
+                f"{location}oracle has opted in to utility_references (empty or not), "
+                "which post-pilot-v3's scorer cannot honor"
+            )
+    else:
+        # Defensive exhaustiveness (Issue #93 / M3 review finding: this used
+        # to be an `if/elif` with no `else`, silently treating any future
+        # scorable id exactly like v3). Unreachable today -- the caller
+        # already validated protocol_id is one of SCORABLE_PROTOCOL_IDS,
+        # currently {v3, v4, v5} -- but guards a future id added there
+        # without a matching branch here.
+        raise UnsupportedScoringProtocolError(
+            "protocol_id is a scorable post-pilot protocol id, but "
+            "_check_case_protocol_compatibility has no rule registered for it"
         )
 
 
+def _check_v5_original_amount_formats(cases: Sequence[CorpusCase]) -> None:
+    """The ``post-pilot-v5``-only pre-run check (Issue #93 / M3): every
+    numeric-category ``ExpectedSpan`` value, in **every** case -- including a
+    case whose oracle expects a block -- must parse under the v5 amount
+    grammar (``_parse_original_amount_v5``). Raises
+    ``UnsupportedOriginalAmountFormatError`` naming only the case id and
+    category (never the value) for the first offending span found, in case
+    order then span order.
+
+    This is deliberately not folded into ``_check_case_protocol_compatibility``
+    above: that function returns immediately for a blocked case (nothing is
+    ever disclosed for one, so no *reference* semantics are exercised), but a
+    blocked case's oracle span is still an annotation that must be
+    well-formed under the grammar the whole pre-Gate-7 checkpoint exists to
+    close -- see ``UnsupportedOriginalAmountFormatError``'s own docstring.
+    """
+    for case in cases:
+        for span in case.oracle.expected_spans:
+            if span.category not in NUMERIC_BAND_UTILITY_CATEGORIES:
+                continue
+            if _parse_original_amount_v5(span.value) is None:
+                raise UnsupportedOriginalAmountFormatError(
+                    f"case {case.input.sample_id!r}: category {span.category!r} has an "
+                    "oracle span value outside the post-pilot-v5 supported amount grammar "
+                    f"({NUMERIC_AMOUNT_GRAMMAR_ID})"
+                )
+
+
 def check_corpus_protocol_compatibility(cases: Sequence[CorpusCase], protocol_id: str) -> None:
-    """Fail-fast, whole-corpus compatibility check (Issue #87 / M3) between
-    every case in ``cases`` and ``protocol_id``, called by
-    ``experiments.runner.run_pilot`` immediately after loading a corpus and
-    before any treatment/provider call -- an incompatible corpus/protocol
-    pairing costs zero provider calls, not a partial run that fails midway.
+    """Fail-fast, whole-corpus compatibility check (Issue #87 / M3, extended
+    by Issue #93 / M3 for ``post-pilot-v5``) between every case in ``cases``
+    and ``protocol_id``, called by ``experiments.runner.run_pilot``
+    immediately after loading a corpus and before any treatment/provider
+    call -- an incompatible corpus/protocol pairing costs zero provider
+    calls, not a partial run that fails midway.
 
     Raises ``UnknownProtocolIdError``/``UnsupportedScoringProtocolError``
     (via ``validate_scorable_protocol_id``) if ``protocol_id`` itself is not
@@ -607,11 +884,16 @@ def check_corpus_protocol_compatibility(cases: Sequence[CorpusCase], protocol_id
     ``StructuredReferencesRequireV4Error`` any case in ``cases`` would raise
     at score time (``_check_case_protocol_compatibility``) -- so a
     caller never needs to execute a single case to discover the corpus is
-    incompatible with the protocol it asked for.
+    incompatible with the protocol it asked for. Under ``post-pilot-v5``
+    only, additionally raises ``UnsupportedOriginalAmountFormatError`` if any
+    case's numeric-category oracle span value is outside the v5 amount
+    grammar (``_check_v5_original_amount_formats``), blocked cases included.
     """
     validate_scorable_protocol_id(protocol_id)
     for case in cases:
         _check_case_protocol_compatibility(case.oracle, protocol_id, case_id=case.input.sample_id)
+    if protocol_id == "post-pilot-v5":
+        _check_v5_original_amount_formats(cases)
 
 
 def score_utility(
@@ -725,8 +1007,16 @@ def score_utility(
             elif action is DisclosureAction.GENERALIZE:
                 required_granularity = DATE_UTILITY_REQUIRED_GRANULARITY.get(category)
                 if required_granularity is not None:
+                    # post-pilot-v5 uses the ASCII-only date grammar (Issue
+                    # #91); v3/v4 share the frozen, byte-for-byte v2-era
+                    # function unchanged.
+                    date_classifier = (
+                        classify_generalized_date_v5
+                        if protocol_id == "post-pilot-v5"
+                        else classify_generalized_date
+                    )
                     outcomes.append(
-                        classify_generalized_date(
+                        date_classifier(
                             span.value,
                             transformation.transformed,
                             required_granularity,
@@ -741,23 +1031,45 @@ def score_utility(
                                 legacy_references,
                             )
                         )
-                    else:
-                        # post-pilot-v4: only this category's own
-                        # structured references -- never an unfiltered
-                        # list -- so a reference stated for a different
-                        # numeric category can never contaminate this
-                        # category's decidability (Issue #87 finding (b)).
+                    elif protocol_id in ("post-pilot-v4", "post-pilot-v5"):
+                        # Structured references only, this category's own --
+                        # never an unfiltered list -- so a reference stated
+                        # for a different numeric category can never
+                        # contaminate this category's decidability (Issue
+                        # #87 finding (b)). Shared by v4 and v5 (Issue #93's
+                        # spec: "v5 reuses v4 reference semantics
+                        # unchanged"); only the fidelity/grammar underneath
+                        # differs (Issue #88/#91).
                         category_references = [
                             reference
                             for reference in (oracle.utility_references or [])
                             if reference.category == category
                         ]
+                        band_classifier = (
+                            classify_generalized_band_against_references_v5
+                            if protocol_id == "post-pilot-v5"
+                            else classify_generalized_band_against_references
+                        )
                         outcomes.append(
-                            classify_generalized_band_against_references(
+                            band_classifier(
                                 span.value,
                                 transformation.transformed,
                                 category_references,
                             )
+                        )
+                    else:
+                        # Defensive exhaustiveness (Issue #93 / M3 review
+                        # finding: this used to be an unconditional `else`
+                        # treating any non-v3 id exactly like v4, which would
+                        # have silently reused v4 semantics for a future
+                        # scorable id added without a matching branch here).
+                        # Unreachable today: the caller already validated
+                        # protocol_id is one of SCORABLE_PROTOCOL_IDS,
+                        # currently {v3, v4, v5}.
+                        raise UnsupportedScoringProtocolError(
+                            "protocol_id is a scorable post-pilot protocol id, but "
+                            "the numeric-band GENERALIZE outcome dispatch has no rule "
+                            "registered for it"
                         )
                 else:
                     # Fail closed (Issue #85's third out-of-scope finding):
