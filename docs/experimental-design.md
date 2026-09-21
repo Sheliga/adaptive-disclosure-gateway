@@ -238,7 +238,23 @@ type error, not a calibration choice (a month-coarsened deadline was scored `ans
 regardless of correctness). `docs/research/post-pilot-protocol-v2.md` freezes a separate,
 date-aware rule (`DATE_UTILITY_REQUIRED_GRANULARITY`, `classify_generalized_date`) for
 categories registered as date-shaped (`deadline`, required to the day); every other GENERALIZE
-category keeps the numeric-band rule unchanged. `post-pilot-v1` is not edited; `CURRENT_PROTOCOL_ID` is now `post-pilot-v2`.
+category kept the numeric-band rule unchanged at that point. `post-pilot-v1` is not edited;
+`CURRENT_PROTOCOL_ID` moved to `post-pilot-v2`.
+
+**Numeric-band GENERALIZE fidelity (frozen by Issue #85, `post-pilot-v3`).** The numeric-band
+rule Gate 6 left unchanged (`salary`, `contract_value`, `penalty_amount`) checked only
+*sufficiency* (can the band be resolved against a stated reference figure) and never *fidelity*
+(does the band actually contain the case's own oracle value at all) — a wrong band could still
+score `answerable` whenever no reference figure happened to fall inside it, and every band was
+vacuously "decidable" with zero references (`all([])` is `True`).
+`docs/research/post-pilot-protocol-v3.md` freezes `NUMERIC_BAND_UTILITY_CATEGORIES` and
+`classify_generalized_band`, which check fidelity first: an invalid, inverted, degenerate or
+non-containing band is `not_answerable` unconditionally, before any reference is even consulted;
+sufficiency (the pre-existing comparison) is only reached once fidelity holds, and a band with no
+stated reference is `indeterminate`, never vacuously `answerable`. Re-scoring both registered
+corpora under the new rule changed zero category-, overall- or B3→B4-level rows (every numeric
+oracle span in both corpora already sits inside its own generated band). `post-pilot-v1` and
+`post-pilot-v2` are not edited; `CURRENT_PROTOCOL_ID` is now `post-pilot-v3`.
 
 ### Reconstruction
 

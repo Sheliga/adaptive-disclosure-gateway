@@ -24,29 +24,49 @@ docs/experimental-design.md's own provider-strategy section already
 anticipates this split (FakeProvider valid for the pilot, a real provider
 required before authoritative utility claims).
 
-GENERALIZE decidability rule (SCHEMA.md's documented pattern, generalized
-rather than special-cased to one sample_id): a generalized numeric band is
-"decidable" against a reference figure stated elsewhere in ``input.text``
-(outside any detected span) only if the reference falls strictly outside
-the band -- if it falls inside, the band alone cannot tell whether the
-original value was above or below the reference, exactly the ambiguity
-``corpus/hr/v1/SCHEMA.md`` documents for ``hr_salary_analysis_003`` and
-``hr_department_aggregation_003``.
+Numeric-band GENERALIZE fidelity rule (M3 / Issue #85, ``post-pilot-v3``):
+a generalized numeric band is scored **fidelity-first, then
+sufficiency**. Fidelity is checked by ``classify_generalized_band`` below,
+against the oracle span's own value (never a transformation's
+self-reported ``original``): the band must be a validly-shaped,
+non-degenerate half-open interval that actually contains the original
+value, or the case is ``not_answerable`` outright -- a wrong band no
+longer scores ``answerable`` merely because no reference figure happens to
+fall inside it. Only once fidelity holds does sufficiency apply: a
+generalized band is "decidable" against a reference figure stated
+elsewhere in ``input.text`` (outside any detected span) only if the
+reference falls strictly outside the band -- if it falls inside, the band
+alone cannot tell whether the original value was above or below the
+reference, exactly the ambiguity ``corpus/hr/v1/SCHEMA.md`` documents for
+``hr_salary_analysis_003`` and ``hr_department_aggregation_003``. With no
+stated reference at all, the outcome is ``indeterminate`` (never vacuously
+``answerable`` -- ``docs/research/post-pilot-protocol-v3.md`` section 2).
+This replaces the pre-``v3`` rule (``_band_is_decidable``), which checked
+sufficiency only and never fidelity -- see
+``docs/research/post-pilot-protocol-v3.md`` for the audit, the minimal
+reproduction and the anti-tuning provenance of this rule.
 
 Date-aware GENERALIZE rule (M3 Gate 6 / Issue #38, ``post-pilot-v2``):
 the numeric-band rule above is a type error when applied to a
 ``MonthYearDateStrategy`` output (a month-year date, e.g. ``"2026-02"``) --
-``_BAND_PATTERN`` happily matches ``2026-02`` as a "band" from 2026 down to
-2, which every reference value trivially falls outside of, so every
+a numeric-band regex happily matches ``2026-02`` as a "band" from 2026 down
+to 2, which every reference value trivially falls outside of, so every
 month-year GENERALIZE was scored ``answerable`` regardless of whether the
 generalization actually served the task. ``DATE_UTILITY_REQUIRED_GRANULARITY``
 and ``classify_generalized_date`` below replace that for the categories
-registered here; every other GENERALIZE keeps the numeric-band path,
-byte-for-byte unchanged. See
+registered here; every other numeric GENERALIZE category is routed through
+the fidelity-first rule above instead. See
 ``docs/research/post-pilot-protocol-v2.md`` section 6.1a for the full
 rationale and ``docs/contracts-policy-matrix.md``'s "deadline as a hard
 preserve" section / commit 66e4677 (2026-09-12, Issue #56) for the
 pre-result provenance of the day-granularity requirement below.
+
+A GENERALIZE on any category that is neither a registered date category nor
+a registered numeric category is rejected outright
+(``generalized_category_unregistered``) rather than silently falling into
+either existing rule -- unreachable today (every registered category is one
+or the other), but named so a future category addition cannot silently
+inherit the wrong semantics by omission (Issue #85).
 """
 
 from __future__ import annotations
@@ -54,6 +74,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import date
+from decimal import Decimal
 from typing import Literal
 
 from adaptive_disclosure_gateway.corpus.case_input import CorpusCaseInput
@@ -65,7 +86,53 @@ from .span_matching import resolve_span_transformations
 UtilityOutcome = Literal["answerable", "not_answerable", "indeterminate", "not_applicable"]
 
 _AMOUNT_PATTERN = re.compile(r"-?\d+(?:\.\d+)?")
-_BAND_PATTERN = re.compile(r"(-?\d+)\s*-\s*(-?\d+)\s*$")
+
+# The categories the numeric-band GENERALIZE fidelity rule
+# (``classify_generalized_band``) governs -- every registered category whose
+# ``transformations/generalization.py`` strategy is ``NumericBandStrategy``.
+# Disjoint from ``DATE_UTILITY_REQUIRED_GRANULARITY`` by construction (pinned
+# by a drift guard in
+# ``tests/test_experiments_scoring_numeric_band_utility.py``): a category is
+# routed through exactly one of the two rules, never both, never neither
+# (Issue #85's third out-of-scope finding).
+NUMERIC_BAND_UTILITY_CATEGORIES: frozenset[str] = frozenset(
+    {"salary", "contract_value", "penalty_amount"}
+)
+
+# The strict grammar a numeric GENERALIZE band's oracle *original* value must
+# take: ``R$ <digits>.<2 digits>`` exactly, matching every numeric oracle
+# span value across both registered corpora. Deliberately not the generator's
+# own ``_parse_amount`` (``transformations/generalization.py``) -- reusing it
+# would make this fidelity check circular (it would inherit that parser's own
+# Brazilian-thousands-format misparse; see the separate issue this ticket
+# files) and would accept shapes (bare numbers, no currency prefix) this
+# scorer has no basis to treat as a real oracle amount.
+_ORIGINAL_AMOUNT_PATTERN = re.compile(r"^R\$ (\d+\.\d{2})$")
+
+# The strict grammar a numeric GENERALIZE band's *transformed* value must
+# take: ``R$ <lower>-<upper>``, both non-negative integers with no leading
+# zero (matching ``NumericBandStrategy.generalize``'s own
+# ``f"{prefix}{int(lower)}-{int(upper)}"`` output exactly). Lower/upper
+# ordering (``lower < upper``) is checked separately below, not by this
+# pattern, so an inverted or degenerate band can be named with its own
+# reason rather than silently failing to match.
+_BAND_STRING_PATTERN = re.compile(r"^R\$ (0|[1-9]\d*)-(0|[1-9]\d*)$")
+
+# The closed set of reasons ``classify_generalized_band`` can return --
+# CLAUDE.md's no-leak invariant: every reason names a category of outcome,
+# never a value. Exists as a real constant (not just literals scattered
+# through the function body) so tests can assert closure without having to
+# enumerate the function's own control flow.
+NUMERIC_BAND_UTILITY_REASONS: frozenset[str] = frozenset(
+    {
+        "generalized_band_unscorable_original",
+        "generalized_band_invalid",
+        "generalized_band_excludes_original",
+        "generalized_band_no_reference",
+        "generalized_band_decidable",
+        "generalized_band_ambiguous",
+    }
+)
 
 # Per-category required GENERALIZE granularity for date-shaped categories
 # (M3 Gate 6 / Issue #38). "day" is the finest granularity this registry
@@ -227,12 +294,101 @@ def _reference_values(text: str, exclude_spans: list[tuple[int, int]]) -> list[f
     return values
 
 
-def _band_is_decidable(transformed: str, references: list[float]) -> bool:
-    match = _BAND_PATTERN.search(transformed)
-    if not match:
-        return False
-    lower, upper = float(match.group(1)), float(match.group(2))
-    return all(reference < lower or reference >= upper for reference in references)
+def _parse_strict_original_amount(original: str | None) -> Decimal | None:
+    """The oracle span's own numeric value, parsed strictly:
+    ``R$ <digits>.<2 digits>`` only. Returns ``None`` for anything else --
+    including a Brazilian-formatted amount (``R$ 9.200,00``), a bare number
+    with no currency prefix, or an amount with a different decimal
+    precision -- callers treat that as
+    ``generalized_band_unscorable_original``, never as a parse the rest of
+    the classification could recover from (mirrors
+    ``_parse_original_date``'s own strictness above).
+    """
+    if original is None:
+        return None
+    match = _ORIGINAL_AMOUNT_PATTERN.match(original)
+    if match is None:
+        return None
+    return Decimal(match.group(1))
+
+
+def _parse_band(transformed: str | None) -> tuple[int, int] | None:
+    """The closed grammar a numeric GENERALIZE band may take:
+    ``R$ <lower>-<upper>``, both non-negative integers, with ``lower``
+    strictly less than ``upper``. Anything else -- a malformed shape, a
+    Brazilian-formatted amount, a different currency, an inverted band, or a
+    degenerate (zero-width) band -- returns ``None``
+    (``generalized_band_invalid``); the strategy that actually produces a
+    band (``NumericBandStrategy``) never emits an inverted or degenerate one,
+    but this grammar must still be total over every string shape a corrupted
+    or future treatment could emit.
+    """
+    if transformed is None:
+        return None
+    match = _BAND_STRING_PATTERN.match(transformed)
+    if match is None:
+        return None
+    lower, upper = int(match.group(1)), int(match.group(2))
+    if lower >= upper:
+        return None
+    return lower, upper
+
+
+def classify_generalized_band(
+    original: str | None, transformed: str | None, references: list[float]
+) -> tuple[UtilityOutcome, str]:
+    """Classify one GENERALIZE outcome for a numeric-band category
+    (Issue #85 / ``post-pilot-v3``).
+
+    ``original`` is the oracle span's own value (never
+    ``Transformation.original`` -- the same ground-truth discipline
+    ``classify_generalized_date`` already follows, for the same reason: a
+    detector misread or a span-matching mismatch must never let a wrong
+    transformed band validate against its own wrong original).
+    ``transformed`` is what the treatment actually produced. ``references``
+    are the candidate reference figures ``_reference_values`` found stated
+    elsewhere in the case text.
+
+    Checked in this order, first match wins -- **fidelity before
+    sufficiency**: whether the band is even a correct representation of the
+    original value is checked before whether it can be resolved against a
+    stated reference, so a wrong band can never be rescued into
+    ``answerable`` merely because no reference happens to fall inside it
+    (the defect this rule replaces):
+
+    1. an unparseable ``original`` -> unscorable_original, evaluated before
+       the band's own shape is even examined (an unscorable original makes
+       the transformed value unevaluable regardless of its own shape);
+    2. a ``transformed`` outside the closed grammar, or with ``lower >=
+       upper`` (inverted or degenerate) -> invalid;
+    3. a validly-shaped band that does not contain ``original`` at the
+       half-open ``[lower, upper)`` interval ``NumericBandStrategy`` itself
+       produces -> excludes_original;
+    4. no reference figure at all -> indeterminate, no_reference (never
+       vacuously ``answerable`` -- ``all([])`` being ``True`` is exactly the
+       defect this rule replaces);
+    5. every reference falls strictly outside the band -> answerable,
+       decidable; otherwise -> indeterminate, ambiguous (unchanged
+       comparison semantics from the pre-``v3`` rule).
+    """
+    original_amount = _parse_strict_original_amount(original)
+    if original_amount is None:
+        return "not_answerable", "generalized_band_unscorable_original"
+
+    band = _parse_band(transformed)
+    if band is None:
+        return "not_answerable", "generalized_band_invalid"
+
+    lower, upper = band
+    if not (lower <= original_amount < upper):
+        return "not_answerable", "generalized_band_excludes_original"
+
+    if not references:
+        return "indeterminate", "generalized_band_no_reference"
+
+    if all(reference < lower or reference >= upper for reference in references):
+        return "answerable", "generalized_band_decidable"
+    return "indeterminate", "generalized_band_ambiguous"
 
 
 def score_utility(
@@ -321,13 +477,22 @@ def score_utility(
                             required_granularity,
                         )
                     )
-                else:
-                    decidable = _band_is_decidable(transformation.transformed or "", references)
+                elif category in NUMERIC_BAND_UTILITY_CATEGORIES:
                     outcomes.append(
-                        ("answerable", "generalized_band_decidable")
-                        if decidable
-                        else ("indeterminate", "generalized_band_ambiguous")
+                        classify_generalized_band(
+                            span.value,
+                            transformation.transformed,
+                            references,
+                        )
                     )
+                else:
+                    # Fail closed (Issue #85's third out-of-scope finding):
+                    # a category with neither a date nor a numeric-band
+                    # registry entry must never silently inherit either
+                    # rule's semantics. Unreachable today -- every
+                    # registered category is one or the other, pinned by
+                    # this module's drift guard test.
+                    outcomes.append(("not_answerable", "generalized_category_unregistered"))
             elif action is DisclosureAction.PSEUDONYMIZE:
                 if category in reconstructable_categories and result.reconstruction_required:
                     outcomes.append(("answerable", "pseudonymized_but_reconstructable"))

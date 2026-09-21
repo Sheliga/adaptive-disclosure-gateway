@@ -1,18 +1,20 @@
 # Implementation status
 
-Last updated: 2026-09-21 — T30 / Issue #82 (guided demo UX with progressive disclosure) is now
-**in validation** in an open PR to `master` (per explicit user direction for this ticket; see
-that section below for scope). T29 / Issue #72 (local Vault Explorer for demo/debug) is now **in
-validation** in an open PR to `develop`. Issue #56 (Contracts domain extensions) **merged into
-`develop` via PR #59** (merge commit `5a67c30daab68d06bbd16d1cf06433de97245910`), which freezes
-the Contracts categories, policies, generalization strategies and relation semantics; T24 / Issue
-#37 (Contracts v1 corpus + frozen oracle) is now **in validation** in an open PR to `develop`.
-T12 / Issue #9 Docling ingestion merged into `develop` via PR #55 (merge commit
-`776e683a49818db35021bb62315dfc1ed7fb00ab`, validated feature head
-`3c93f3297515c99c6fccd4c5e705f1e77cfada78`, real Docling 2.126.0 PDF/DOCX/XLSX validation); T23
-post-pilot protocol remains merged into `develop` via PR #53; T21 fourth slice (pt-BR / English
-localization) completed and integrated into `master` via PRs #51/#52 — T21/Issue #29 remains open
-for the remaining deliberately out-of-scope items.
+Last updated: 2026-09-21 — M3 Gate 6 / Issue #38 (date-aware GENERALIZE utility scoring,
+`post-pilot-v2`) merged into `master` via PR #86 (merge commit `d1583f6`). M3 / Issue #85
+(numeric-band GENERALIZE fidelity, `post-pilot-v3`) is now **in validation** in an open PR to
+`develop`, resolving the related defect Gate 6 deliberately left open. T30 / Issue #82 (guided
+demo UX with progressive disclosure) merged to `master` in PR #83. T29 / Issue #72 (local Vault
+Explorer for demo/debug) is now **in validation** in an open PR to `develop`. Issue #56
+(Contracts domain extensions) **merged into `develop` via PR #59** (merge commit
+`5a67c30daab68d06bbd16d1cf06433de97245910`), which freezes the Contracts categories, policies,
+generalization strategies and relation semantics; T24 / Issue #37 (Contracts v1 corpus + frozen
+oracle) is now **in validation** in an open PR to `develop`. T12 / Issue #9 Docling ingestion
+merged into `develop` via PR #55 (merge commit `776e683a49818db35021bb62315dfc1ed7fb00ab`,
+validated feature head `3c93f3297515c99c6fccd4c5e705f1e77cfada78`, real Docling 2.126.0
+PDF/DOCX/XLSX validation); T23 post-pilot protocol remains merged into `develop` via PR #53; T21
+fourth slice (pt-BR / English localization) completed and integrated into `master` via PRs
+#51/#52 — T21/Issue #29 remains open for the remaining deliberately out-of-scope items.
 
 This file tracks the current engineering/research state and execution order. Architectural decisions belong in ADRs; experimental definitions belong in `docs/experimental-design.md`; factual pilot results belong in `docs/milestone-2-pilot.md`; the frozen confirmatory-analysis protocol belongs in `docs/research/`; the parallel advisor-facing application plan belongs in `docs/advisor-demo.md`; historical PR/Issue descriptions remain in GitHub.
 
@@ -367,12 +369,33 @@ its utility numbers are no longer comparable under the new rule.
 space, generalization strategy or treatment definition was touched, and no metric frozen by
 `post-pilot-v1` was added or redefined.
 
+**Resolved by M3 / Issue #85 (`post-pilot-v3`, `docs/research/post-pilot-protocol-v3.md`).** The
+related, separate defect Gate 6 deliberately left open (`_band_is_decidable` never checked that a
+numeric GENERALIZE band actually contains the case's own oracle value — a wrong band could still
+score `answerable` whenever no stated reference figure happened to fall inside it, and every band
+was vacuously "decidable" with zero references) is fixed: `score_utility` now checks band
+**fidelity** (does the band contain the original value at all) before band **sufficiency** (can it
+be resolved against a stated reference), via the new `classify_generalized_band` rule. Neither
+`post-pilot-v1` nor `post-pilot-v2` is edited — `CURRENT_PROTOCOL_ID` moved to `post-pilot-v3`,
+following v1 §11's change procedure exactly, the same way Gate 6 did. `corpus/hr/v1` and
+`corpus/contracts/v1` both stay `pilot_development`; re-scoring both committed runs under the new
+rule (`docs/research/post-pilot-protocol-v3.md` §9) found **zero** category-, overall- or
+B3→B4-level rows change (every numeric oracle span in both corpora already sits inside its own
+generated band, by the generator's own pre-existing contract) — this ticket closes the gap without
+changing any historical result. A further, separate reference-extraction/sufficiency-semantics
+issue (Issue #87) and a separate treatment-behavior defect in the generator's own Brazilian-format
+amount parsing (Issue #88) were found during this fix and filed as their own issues rather than
+folded into this one; #87 remains open and must be resolved or explicitly accepted before Gate 8,
+and #88 needs its own versioned decision before it can be fixed.
+
 **Findings recorded, not fixed** (see `corpus/contracts/v1/README.md`):
 
 - ~~`experiments/scoring/utility.py`'s GENERALIZE decidability rule is numeric-band-specific, so
   a month-coarsened deadline (`2026-02`) is parsed as a numeric band and scored `answerable`.~~
-  **Resolved in `post-pilot-v2` (Gate 6 / Issue #38)** — see the follow-up note above. The other
-  findings below remain open.
+  **Resolved in `post-pilot-v2` (Gate 6 / Issue #38)** — see the follow-up note above.
+- ~~The same numeric-band rule never checked that a GENERALIZE band actually contains the
+  original value.~~ **Resolved in `post-pilot-v3` (Issue #85)** — see the follow-up note above.
+  The other findings below remain open.
 - `contracts-v1` preserves `deadline` unconditionally, so B4 is nonconformant on the six spans
   where the task does not need it — the documented, identifiable B3→B4 cell in the
   under-studied direction.
