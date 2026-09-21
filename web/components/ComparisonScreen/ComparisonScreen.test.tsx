@@ -78,6 +78,20 @@ describe("ComparisonScreen -- teaches before showing codes", () => {
     expect(screen.getByText(copy.comparison.simulationNotice)).toBeInTheDocument();
   });
 
+  /**
+   * T30 / issue #82: this screen frames itself explicitly as a research
+   * surface, ahead of the heading, so a visitor who lands here (e.g. from
+   * Result's "Comparar estratégias experimentais") never mistakes it for
+   * part of the primary task flow.
+   */
+  it("renders a research-surface eyebrow label before the heading", () => {
+    render(<ComparisonScreen comparison={comparison(fiveCanonicalEntries())} onBack={vi.fn()} />);
+
+    const surfaceLabel = screen.getByText(copy.comparison.surfaceLabel);
+    const heading = screen.getByRole("heading", { name: copy.comparison.heading });
+    expect(surfaceLabel.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("renders exactly five strategies for a five-entry comparison, in the order the API returned them", () => {
     render(<ComparisonScreen comparison={comparison(fiveCanonicalEntries())} onBack={vi.fn()} />);
 

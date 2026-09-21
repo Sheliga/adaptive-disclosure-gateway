@@ -12,6 +12,14 @@
   font-weight: 700;
 }
 
+.surfaceLabel {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin-bottom: -0.75rem;
+}
+
 .sectionHeading {
   font-size: 1.1rem;
   font-weight: 600;
