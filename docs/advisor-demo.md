@@ -91,17 +91,45 @@ Agentic variants may be studied later as separately versioned extensions.
 
 ## MVP v2 experience
 
+T30 / Issue #82 reorganized this experience into three progressive-disclosure levels, kept
+consistent across every screen:
+
+- **Level 1 (user)**: problem, document, question, review, what will be sent, confirmation,
+  answer -- no B0–B4/vault/hash/policy vocabulary required.
+- **Level 2 (explanation/research)**: transformations, diff/inspector, detected categories,
+  strategy comparison, explanation of decisions, B0–B4 when relevant.
+- **Level 3 (technical)**: payloads, IDs, policy versions, hashes, metadata, provider info,
+  audit, vault/restore surfaces.
+
+These are hierarchy rules applied across the existing screens below, not a mandate for exactly
+three components -- a screen may implement more than one level (e.g. Revisão holds Level-1
+content directly and Level-2/3 content behind its own disclosures).
+
 ### 1. Boas-vindas / Como funciona
 
-The first screen explains the concept in three short steps:
+The first screen leads with a **plain-language problem statement**: sending a document directly
+to an external LLM can disclose unnecessary information, and the gateway controls what is
+disclosed before that external call.
 
-1. **Análise local** — the document is inspected before anything leaves the trusted environment.
-2. **Divulgação controlada** — only the allowed/transformed representation is sent to the external provider.
-3. **Reconstrução local** — authorized pseudonyms can be reconstructed after inference.
+It then shows an accessible **trust-boundary flow diagram** (semantic HTML, not an image):
+
+```text
+Documento original → Gateway local → Representação divulgada → LLM externo → Resposta → Reconstrução local
+```
+
+The first two and the last step are grouped as the **local (trusted) environment**; the middle
+three are grouped as **outside the trust boundary** -- each step carries its own group label as
+text, so the boundary is legible without relying on color alone.
+
+A compact **PRESERVE / REMOVE / PSEUDONYMIZE / GENERALIZE** explainer follows, each with a tiny
+synthetic before → after example, at the concept level only (no vault/scope vocabulary here).
 
 Primary CTA: **`Testar agora`**.
 
-An optional **`Como funciona a pesquisa?`** path can explain B0–B4 and the experiment design.
+A closed-by-default **`Como funciona a pesquisa?`** disclosure is the only place on this screen
+where B0–B4 appear, introduced by their semantic names (Direct, Static Sanitization, Reversible
+Pseudonymization, Task-aware, Policy-governed) in canonical order, with an explicit note that a
+normal user does not have to choose among them.
 
 ### 2. Novo teste
 
@@ -113,48 +141,68 @@ The reviewer chooses one of three entry modes:
 
 Then the reviewer states in natural language what the model should do with the content.
 
-The default experience uses the recommended policy-governed strategy. Treatment/provider selection belongs under advanced controls; a new user should not need to know B0–B4 to execute a test.
+The default experience uses the recommended policy-governed strategy. There is no
+treatment/strategy/provider/policy selector on this screen; a new user does not need to know
+B0–B4 to execute a test.
 
 ### 3. Revisão antes do envio
 
-Before the provider call, the application explains:
+This is the screen the whole product exists for. Level-1 content reads, in this order:
 
-- what was detected;
-- what stays local;
-- what is removed;
-- what is pseudonymized/substituted;
-- what is generalized;
-- what is preserved because it is required for the task;
-- why each decision occurred.
+1. what was detected (`O que foi detectado`);
+2. what stays local (`O que permanece local`), each item's outcome label already stating what
+   happened to it (removed / pseudonymized / generalized / preserved) and why;
+3. exactly what will be sent to the external LLM (`O que será enviado ao LLM externo`), including
+   the byte-exact payload behind its own explicit disclosure (`Ver o payload exato que seria
+   enviado`) -- kept out of the DOM, not just visually hidden, until opened.
 
-Human-facing labels are primary; internal action codes remain available in technical details.
+The confirm action states its consequence explicitly (`Confirmar e enviar ao provedor externo`);
+a blocked decision renders no confirm action at all.
 
-This screen makes the trust boundary explicit **before** external disclosure occurs.
+Below that, two further, more advanced disclosures sit at Level 2 and Level 3 respectively:
+
+- **Level 2** — `Entender o que o gateway mudou e por quê`: the T27 transformation inspector
+  (original vs. disclosed, segment by segment).
+- **Level 3** — `Detalhes técnicos e ferramentas de pesquisa`, collapsed by default: the T28
+  export/restore panel and the T29 Vault Explorer, framed as research/technical tooling.
+
+The local-vs-sent split is derived only from `category.crosses_trust_boundary`, never from the
+outcome code -- see `lib/outcomes.ts`.
 
 ### 4. Resultado
 
-The primary output is the **final locally reconstructed answer**.
+The primary output is the **final locally reconstructed answer** -- the single most visually
+prominent element on this screen.
 
-The result also shows a simple visual path:
+Directly under it, a short, data-derived protections summary (e.g. "N itens protegidos; M
+pseudônimos reconstruídos localmente") is computed only from fields already on `ExecuteResponse`
+(`occurrence_count`, `reconstruction.attempted`), never invented.
 
-```text
-Local → Provider externo → Local
-```
+Below that:
 
-The reviewer sees a short summary of protections applied and can optionally choose:
+- an `Entender o que aconteceu` disclosure holds the simple visual path
+  (`Local → Provedor externo → Local`);
+- a research section, headed `Comparar estratégias experimentais (B0–B4)`, frames the strategy
+  comparison explicitly as a research surface;
+- a technical section, headed with the same "Detalhes técnicos e ferramentas de pesquisa"
+  framing as Revisão, holds `Ver detalhes técnicos` and the Vault Explorer.
 
-- **`Comparar estratégias`** — B0–B4 educational/research comparison;
-- **`Ver detalhes técnicos`** — policy/audit/metrics/provenance.
+The provider-mode notice (FakeProvider labelling, required by issue #29) stays visible but is
+styled to never outcompete the answer.
 
 ### 5. Comparar estratégias
 
-B0–B4 are a **secondary explanatory surface**, not the landing experience.
+B0–B4 are a **secondary explanatory surface**, not the landing experience, and this screen now
+opens with an explicit "Superfície de pesquisa" eyebrow label confirming that framing.
 
-Each treatment receives a short human-readable description before codes/metrics are shown. The comparison should make the disclosure/utility trade-off understandable without assuming project vocabulary.
+Each treatment receives a short human-readable description before codes/metrics are shown. The
+comparison should make the disclosure/utility trade-off understandable without assuming project
+vocabulary.
 
 ### 6. Detalhes técnicos
 
-Expose safe technical information when requested:
+Opens with a "Nível técnico / auditoria" eyebrow label. Exposes safe technical information when
+requested:
 
 - treatment/version;
 - B4 policy version/matrix cell;

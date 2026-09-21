@@ -1,6 +1,8 @@
 # Implementation status
 
-Last updated: 2026-09-13 — T29 / Issue #72 (local Vault Explorer for demo/debug) is now **in
+Last updated: 2026-09-21 — T30 / Issue #82 (guided demo UX with progressive disclosure) is now
+**in validation** in an open PR to `master` (per explicit user direction for this ticket; see
+that section below for scope). T29 / Issue #72 (local Vault Explorer for demo/debug) is now **in
 validation** in an open PR to `develop`. Issue #56 (Contracts domain extensions) **merged into
 `develop` via PR #59** (merge commit `5a67c30daab68d06bbd16d1cf06433de97245910`), which freezes
 the Contracts categories, policies, generalization strategies and relation semantics; T24 / Issue
@@ -731,6 +733,51 @@ itself demonstrates.
   configured `session_id` (`demo-session`), so enabling this flag on any shared/hosted deployment
   reveals originals of submitted content to whoever can reach the web origin -- keep it off
   outside a controlled local environment, a constraint the application cannot enforce by itself.
+
+### T30 / Issue #82 — guided demo UX with progressive disclosure
+
+Status: **in validation (open PR to `master`, per explicit user direction for this ticket)**.
+
+Reorganizes the Next.js guided flow's information architecture and copy so a first-time visitor
+(a prospective advisor) understands problem -> proposal -> trust boundary -> transformation ->
+external send -> local reconstruction -> result from the app alone, without first needing
+B0-B4/vault/hash/policy vocabulary. Pure information architecture, copy, hierarchy and
+progressive-disclosure work -- no new technical capability, no API/contract change, no change to
+B0-B4 semantics, no dashboard.
+
+- **Welcome** (`WelcomeScreen`): replaces the thin three-step list with a plain-language problem
+  statement, an accessible semantic-HTML trust-boundary flow diagram (Documento original ->
+  Gateway local -> Representação divulgada -> LLM externo -> Resposta -> Reconstrução local,
+  each step labelled by its own local/external group text so the boundary never depends on color
+  alone), a PRESERVE/REMOVE/PSEUDONYMIZE/GENERALIZE explainer with tiny synthetic before/after
+  examples, and a closed-by-default "Como funciona a pesquisa?" disclosure -- the only place on
+  this screen B0-B4 semantic names/descriptions appear, in canonical B0->B4 order.
+- **Review**: the local/sent split still comes only from `category.crosses_trust_boundary`
+  (unchanged). The "what will be sent" section is now headed by the prominent
+  `copy.review.willBeSentHeading` ("O que será enviado ao LLM externo"), with the existing
+  payload `<details>` (still kept out of the DOM until opened) nested under it, and the confirm
+  button now states the consequence explicitly ("Confirmar e enviar ao provedor externo"). The
+  T27 transformation inspector now sits behind a new Level-2 disclosure ("Entender o que o
+  gateway mudou e por quê"); the T28 export/restore panel and T29 Vault Explorer now sit together
+  behind one new Level-3 disclosure ("Detalhes técnicos e ferramentas de pesquisa"), collapsed by
+  default. No gating condition, feature flag, or the confirmation-token/preview-execute binding
+  changed -- only where each already-gated panel mounts in the JSX tree.
+- **Result**: adds a data-derived protections summary line ("N itens protegidos; M pseudônimos
+  reconstruídos localmente", computed only from `ExecuteResponse.summary.categories.
+  occurrence_count` and `reconstruction.attempted`, never invented) directly under the final
+  answer. The Local -> Provedor externo -> Local recap now sits behind a new "Entender o que
+  aconteceu" disclosure. "Comparar estratégias" is now framed under an explicit research heading
+  ("Comparar estratégias experimentais (B0–B4)"); "Ver detalhes técnicos" and `VaultExplorerPanel`
+  are framed under a technical/audit heading -- both stay directly clickable (this screen's
+  pre-existing "always available, every outcome" contract), the hierarchy is expressed through
+  headings/intro copy and visual secondariness rather than an extra required click. The
+  provider-mode notice is restyled smaller/muted so it never outcompetes the answer.
+- **Comparison / Technical details**: both screens gain a short eyebrow label ("Superfície de
+  pesquisa" / "Nível técnico / auditoria") above their heading; no data-semantics change.
+- i18n: every new string added to both `copy.ts` and `copy.en.ts`; the existing key-parity test
+  (`copy.test.ts`) enforces this stays true.
+- Not in this PR: any backend/API change, any change to detection/policy/treatment logic, any
+  weakening of no-leak/review-before-provider/confirmation-token/panel-gating invariants.
 
 ### Demo completion criterion
 
