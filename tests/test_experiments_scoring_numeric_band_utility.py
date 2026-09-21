@@ -190,7 +190,9 @@ def test_real_contracts_value_audit_002_with_a_wrong_band_is_not_answerable():
         transformations=[_contract_value_transformation("R$ 600000-650000")],
         status="allowed",
     )
-    score = score_utility(case.input, case.oracle, result, Treatment.POLICY_GOVERNED)
+    score = score_utility(
+        case.input, case.oracle, result, Treatment.POLICY_GOVERNED, protocol_id="post-pilot-v3"
+    )
     contract_value_utility = next(c for c in score.by_category if c.category == "contract_value")
     assert contract_value_utility.outcome == "not_answerable"
     assert contract_value_utility.reason == "generalized_band_excludes_original"
@@ -213,7 +215,9 @@ def test_real_hr_salary_analysis_001_with_a_wrong_band_is_not_answerable():
         ],
         status="allowed",
     )
-    score = score_utility(case.input, case.oracle, result, Treatment.TASK_AWARE)
+    score = score_utility(
+        case.input, case.oracle, result, Treatment.TASK_AWARE, protocol_id="post-pilot-v3"
+    )
     salary_utility = next(c for c in score.by_category if c.category == "salary")
     assert salary_utility.outcome == "not_answerable"
     assert salary_utility.reason == "generalized_band_excludes_original"
@@ -241,7 +245,9 @@ def test_ground_truth_is_the_oracle_span_value_never_the_transformations_own_ori
         ],
         status="allowed",
     )
-    score = score_utility(case.input, case.oracle, result, Treatment.POLICY_GOVERNED)
+    score = score_utility(
+        case.input, case.oracle, result, Treatment.POLICY_GOVERNED, protocol_id="post-pilot-v3"
+    )
     contract_value_utility = next(c for c in score.by_category if c.category == "contract_value")
     assert contract_value_utility.outcome == "not_answerable"
     assert contract_value_utility.reason == "generalized_band_excludes_original"
@@ -281,7 +287,9 @@ def test_real_hr_department_aggregation_003_one_wrong_salary_band_fails_the_cate
         transformations=transformations,
         status="allowed",
     )
-    score = score_utility(case.input, case.oracle, result, Treatment.TASK_AWARE)
+    score = score_utility(
+        case.input, case.oracle, result, Treatment.TASK_AWARE, protocol_id="post-pilot-v3"
+    )
     salary_utility = next(c for c in score.by_category if c.category == "salary")
     assert salary_utility.outcome == "not_answerable"
 
@@ -325,7 +333,9 @@ def test_synthetic_generalize_on_an_unregistered_category_fails_closed():
         ],
         status="allowed",
     )
-    score = score_utility(case_input, oracle, result, Treatment.TASK_AWARE)
+    score = score_utility(
+        case_input, oracle, result, Treatment.TASK_AWARE, protocol_id="post-pilot-v3"
+    )
     department_utility = next(c for c in score.by_category if c.category == "department")
     assert department_utility.outcome == "not_answerable"
     assert department_utility.reason == "generalized_category_unregistered"
@@ -339,8 +349,12 @@ def test_score_utility_numeric_band_rule_is_deterministic_across_repeated_calls(
         transformations=[_contract_value_transformation("R$ 600000-650000")],
         status="allowed",
     )
-    first = score_utility(case.input, case.oracle, result, Treatment.POLICY_GOVERNED)
-    second = score_utility(case.input, case.oracle, result, Treatment.POLICY_GOVERNED)
+    first = score_utility(
+        case.input, case.oracle, result, Treatment.POLICY_GOVERNED, protocol_id="post-pilot-v3"
+    )
+    second = score_utility(
+        case.input, case.oracle, result, Treatment.POLICY_GOVERNED, protocol_id="post-pilot-v3"
+    )
     assert first == second
 
 
@@ -434,7 +448,9 @@ def test_score_utility_output_never_contains_a_distinctive_amount_or_band():
         ],
         status="allowed",
     )
-    score = score_utility(case.input, case.oracle, result, Treatment.POLICY_GOVERNED)
+    score = score_utility(
+        case.input, case.oracle, result, Treatment.POLICY_GOVERNED, protocol_id="post-pilot-v3"
+    )
     serialized = repr(dataclasses.asdict(score))
     as_json = json.dumps(dataclasses.asdict(score))
     for haystack in (serialized, as_json):
