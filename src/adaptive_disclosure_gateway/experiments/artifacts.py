@@ -17,6 +17,7 @@ from adaptive_disclosure_gateway.domain import Treatment
 from .aggregation import summarize_b3_to_b4, summarize_pairwise, summarize_treatment
 from .case_result import CaseResult, to_safe_dict
 from .contextual_matrix import ContextualComparisonResult
+from .post_pilot_protocol import CURRENT_PROTOCOL_ID
 from .run_identity import SCHEMA_VERSION, RunClassification
 
 _PAIRWISE_SEQUENCE: tuple[tuple[Treatment, Treatment], ...] = (
@@ -150,6 +151,11 @@ def write_pilot_artifacts(
         "experiment_run_id": experiment_run_id,
         "schema_version": SCHEMA_VERSION,
         "artifact_format_version": ARTIFACT_FORMAT_VERSION,
+        # Top-level, alongside schema_version -- never only nested inside the
+        # free-form reproducibility mapping -- so it is always present and
+        # always sourced from the same CURRENT_PROTOCOL_ID every row's own
+        # RunIdentity.protocol_id is sourced from (M3 Gate 6 / issue #38).
+        "protocol_id": CURRENT_PROTOCOL_ID,
         "corpus_version": corpus_version,
         "run_classification": run_classification,
         "treatments": sorted(t.value for t in results_by_treatment),

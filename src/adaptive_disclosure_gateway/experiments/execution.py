@@ -35,6 +35,7 @@ from adaptive_disclosure_gateway.vault import InMemoryVault, Vault
 from .b4_span_metadata import B4Metadata, extract_b4_metadata
 from .corpus_source import build_request
 from .detector_capture import DetectedSpanRef, RecordingDetector
+from .post_pilot_protocol import CURRENT_PROTOCOL_ID, validate_protocol_id
 from .provider_instrumentation import ProviderCallMetrics, TimingProviderDelegate
 from .resource_metrics import ResourceMetrics, measure_resources
 from .run_identity import (
@@ -231,6 +232,12 @@ def execute_case(
         provider_metrics.model_snapshot if provider_metrics is not None else "not_called"
     )
 
+    # Fail closed against an unregistered/misspelled protocol id rather than
+    # silently stamping every result with an unverified constant (M3 Gate 6
+    # / issue #38, docs/research/post-pilot-protocol-v2.md's provenance
+    # section).
+    validate_protocol_id(CURRENT_PROTOCOL_ID)
+
     identity = RunIdentity(
         schema_version=SCHEMA_VERSION,
         run_classification=run_classification,
@@ -249,6 +256,7 @@ def execute_case(
         provider_name=type(timing_provider._wrapped).__name__,
         provider_model_id=model_id,
         provider_model_snapshot=model_snapshot,
+        protocol_id=CURRENT_PROTOCOL_ID,
     )
 
     payload_echo_reconstructed_text: str | None = None
