@@ -36,20 +36,61 @@ import type { AppCopy } from "./copy";
 export const en: AppCopy = {
   howItWorks: {
     title: "How it works",
-    steps: [
-      {
-        title: "Local analysis",
-        description: "The document is inspected before anything leaves the trusted environment.",
+    problem: {
+      heading: "Why this gateway exists",
+      statement:
+        "Sending a document directly to an external language model can reveal information that is not necessary for the requested task. This gateway analyzes the content locally and controls what is disclosed before any external call.",
+    },
+    trustBoundary: {
+      heading: "The trust boundary",
+      localGroupLabel: "Local environment (trusted)",
+      externalGroupLabel: "Outside the trust boundary",
+      diagramAlt:
+        "Flow: Original document and Local gateway stay inside the trust boundary. Disclosed representation, External LLM, and Response stay outside it. Local reconstruction happens back inside the trust boundary.",
+      steps: {
+        originalDocument: "Original document",
+        localGateway: "Local gateway",
+        disclosedRepresentation: "Disclosed representation",
+        externalLlm: "External LLM",
+        response: "Response",
+        localReconstruction: "Local reconstruction",
       },
-      {
-        title: "Controlled disclosure",
-        description: "Only the permitted/transformed representation is sent to the external provider.",
+    },
+    transformations: {
+      heading: "What can happen to a sensitive value",
+      intro:
+        "Every detected sensitive value receives one of these actions, depending on its category, the task, and the policy in force:",
+      preserve: {
+        label: "PRESERVE — Keep",
+        description: "The value is kept unchanged because it is required for the requested task.",
+        before: "Clause 4.2 of the contract",
+        after: "Clause 4.2 of the contract",
       },
-      {
-        title: "Local reconstruction",
-        description: "Authorized pseudonyms can be reconstructed after the model's response.",
+      remove: {
+        label: "REMOVE — Remove",
+        description: "The value is stripped from the content before anything is sent externally.",
+        before: "SSN: 123-45-6789",
+        after: "SSN: [removed]",
       },
-    ],
+      pseudonymize: {
+        label: "PSEUDONYMIZE — Pseudonymize",
+        description:
+          "The value is swapped for a local pseudonym; the original never leaves the trusted environment.",
+        before: "John Smith",
+        after: "EMPLOYEE_A93F",
+      },
+      generalize: {
+        label: "GENERALIZE — Generalize",
+        description: "The value is swapped for a less specific version before being sent.",
+        before: "$128,450.00",
+        after: "Between $100,000 and $150,000",
+      },
+    },
+    researchDisclosure: {
+      intro: "The gateway implements five experimental treatments, applied in a progressive protection sequence:",
+      noChoiceNeeded:
+        "You do not need to choose between them: the main flow uses the recommended configuration automatically.",
+    },
     ctaPrimary: "Try it now",
     ctaSecondary: "How does the research work?",
   },
@@ -112,13 +153,18 @@ export const en: AppCopy = {
     detectedCountLabel: "sensitive items detected",
     noneDetected: "No sensitive data was detected in this content.",
     nothingInSection: "No items in this category.",
+    willBeSentHeading: "What will be sent to the external LLM",
     showPayloadToggle: "View the exact payload that would be sent",
     payloadByteCountLabel: "bytes",
     blockedHeading: "Request blocked",
     blockedExplanation:
       "The disclosure policy blocked this request. Nothing will be sent to the external provider.",
-    confirmSend: "Confirm and send",
+    confirmSend: "Confirm and send to the external provider",
     backToCompose: "Back and edit",
+    understandChangesToggle: "Understand what the gateway changed and why",
+    technicalToolsToggle: "Technical details and research tools",
+    technicalToolsIntro:
+      "These tools exist for evaluation and research purposes. A final product would restrict or remove this layer.",
   },
 
   result: {
@@ -127,12 +173,21 @@ export const en: AppCopy = {
     pathLocal: "Local",
     pathProvider: "External provider",
     protectionsAppliedHeading: "Protections applied",
+    protectionsSummaryTemplate: "{protected} items protected; {reconstructed} pseudonyms reconstructed locally",
+    protectionsSummaryNoReconstruction: "{protected} items protected",
     blockedHeading: "Execution blocked",
     blockedExplanation:
       "The disclosure policy blocked this execution. No content was sent to the external provider.",
     providerFailedHeading: "Provider call failed",
     providerFailedExplanation: "The external provider did not respond successfully. No answer was fabricated.",
     restart: "Test again",
+    whatHappenedToggle: "Understand what happened",
+    whatHappenedIntro: "See the path the information took between the local environment and the external provider.",
+    researchHeading: "Compare experimental strategies (B0–B4)",
+    researchIntro:
+      "See how the other strategies, including the unprotected control (B0 — Direct), would have treated the same content.",
+    technicalToolsHeading: "Technical details and research tools",
+    technicalToolsIntro: "Execution/audit metadata and the local Vault Explorer — kept out of the main answer's way.",
   },
 
   provider: {
@@ -152,6 +207,7 @@ export const en: AppCopy = {
   },
 
   comparison: {
+    surfaceLabel: "Research surface",
     heading: "How do the strategies differ?",
     intro:
       "The same content was analyzed in five different ways. Below is exactly what each one would send to the external provider.",
@@ -200,6 +256,7 @@ export const en: AppCopy = {
   } as Record<string, { name: string; description: string }>,
 
   technicalDetails: {
+    surfaceLabel: "Technical level / audit",
     executionHeading: "Execution",
     strategyLabel: "Requested strategy",
     treatmentLabel: "Executed treatment",

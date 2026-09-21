@@ -1,8 +1,8 @@
 .section {
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
-  max-width: 40rem;
+  gap: 1.75rem;
+  max-width: 44rem;
   margin: 0 auto;
   padding: 3rem 1.5rem;
 }
@@ -10,6 +10,116 @@
 .heading {
   font-size: 1.75rem;
   font-weight: 700;
+}
+
+.subheading {
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+/* Visible only to assistive technology -- the diagram's text alternative. */
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/*
+ * Trust-boundary flow diagram. Steps read top-to-bottom on narrow
+ * viewports and left-to-right on wide ones; the boundary between local and
+ * external steps is a visible gap plus each step's own `.zoneLabel` TEXT --
+ * never color alone (issue #29/#82's accessibility rule).
+ */
+.flowDiagram {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  list-style: none;
+  padding: 0;
+}
+
+@media (min-width: 40rem) {
+  .flowDiagram {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: stretch;
+  }
+}
+
+.flowStep {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border);
+  flex: 1 1 8rem;
+}
+
+.zoneLocal {
+  border-style: solid;
+  background: var(--tone-protected-surface);
+}
+
+.zoneExternal {
+  border-style: dashed;
+  background: var(--tone-sent-surface);
+}
+
+.zoneLabel {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+
+.flowStepLabel {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.transformationsList {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.75rem;
+  list-style: none;
+  padding: 0;
+  margin-top: 0.75rem;
+}
+
+.transformationCard {
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  background: var(--surface-raised);
+}
+
+.transformationLabel {
+  font-size: 0.95rem;
+  font-weight: 700;
+  margin-bottom: 0.35rem;
+}
+
+.example {
+  margin-top: 0.5rem;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+}
+
+.exampleBefore {
+  color: var(--text-muted);
+}
+
+.exampleAfter {
+  color: var(--accent);
+  font-weight: 600;
 }
 
 .steps {
@@ -31,6 +141,38 @@
   font-size: 1.05rem;
   font-weight: 600;
   margin-bottom: 0.25rem;
+}
+
+.researchDisclosure {
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+}
+
+.researchToggle {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.researchContent {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.treatmentList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  list-style: none;
+  padding: 0;
+}
+
+.treatmentCard {
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--surface-raised);
 }
 
 .actions {

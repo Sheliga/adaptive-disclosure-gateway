@@ -41,22 +41,93 @@ import { en } from "./copy.en";
 const ptBR = {
   howItWorks: {
     title: "Como funciona",
-    steps: [
-      {
-        title: "Análise local",
+    /**
+     * T30 / issue #82: the problem statement a first-time visitor (a
+     * prospective advisor) must read BEFORE any mechanism explanation --
+     * why the gateway exists, in plain language, with no project
+     * vocabulary.
+     */
+    problem: {
+      heading: "Por que este gateway existe",
+      statement:
+        "Enviar um documento diretamente a um modelo de linguagem externo pode revelar informações que não são necessárias para a tarefa pedida. Este gateway analisa o conteúdo localmente e controla o que é divulgado antes de qualquer chamada externa.",
+    },
+    /**
+     * T30 / issue #82: the visual trust-boundary flow diagram. `steps` is
+     * an OBJECT (not an array) keyed by a stable identifier, because each
+     * step also needs a `zone` (local/external) assignment in the
+     * component -- the identifier is what ties the copy value to that
+     * zone, whereas an array index would silently break if a step were
+     * ever reordered here without the component's zone list changing too.
+     */
+    trustBoundary: {
+      heading: "A fronteira de confiança",
+      localGroupLabel: "Ambiente local (confiável)",
+      externalGroupLabel: "Fora da fronteira de confiança",
+      diagramAlt:
+        "Fluxo: Documento original e Gateway local ficam dentro da fronteira de confiança. Representação divulgada, LLM externo e Resposta ficam fora dela. A Reconstrução local volta a acontecer dentro da fronteira de confiança.",
+      steps: {
+        originalDocument: "Documento original",
+        localGateway: "Gateway local",
+        disclosedRepresentation: "Representação divulgada",
+        externalLlm: "LLM externo",
+        response: "Resposta",
+        localReconstruction: "Reconstrução local",
+      },
+    },
+    /**
+     * T30 / issue #82: PRESERVE/REMOVE/PSEUDONYMIZE/GENERALIZE explained at
+     * the CONCEPT level, with tiny synthetic before->after examples --
+     * deliberately no vault/scope vocabulary here (that stays in technical
+     * details/the Vault Explorer). The label keeps the frozen English
+     * action word visible (matching `lib/inspectionActions.ts`'s own
+     * frozen action codes elsewhere in the app) alongside a translated
+     * verb, since a reviewer who later opens the transformation inspector
+     * should recognize the same vocabulary.
+     */
+    transformations: {
+      heading: "O que pode acontecer com um dado sensível",
+      intro:
+        "Cada dado sensível detectado recebe uma destas ações, dependendo da categoria, da tarefa e da política vigente:",
+      preserve: {
+        label: "PRESERVE — Manter",
+        description: "O valor é mantido sem alteração porque é necessário para a tarefa pedida.",
+        before: "Cláusula 4.2 do contrato",
+        after: "Cláusula 4.2 do contrato",
+      },
+      remove: {
+        label: "REMOVE — Remover",
+        description: "O valor é retirado do conteúdo antes de qualquer envio externo.",
+        before: "CPF: 123.456.789-00",
+        after: "CPF: [removido]",
+      },
+      pseudonymize: {
+        label: "PSEUDONYMIZE — Pseudonimizar",
         description:
-          "O documento é inspecionado antes de qualquer coisa sair do ambiente confiável.",
+          "O valor é trocado por um pseudônimo local; o original nunca sai do ambiente confiável.",
+        before: "João da Silva",
+        after: "FUNCIONARIO_A93F",
       },
-      {
-        title: "Divulgação controlada",
-        description:
-          "Apenas a representação permitida/transformada é enviada ao provedor externo.",
+      generalize: {
+        label: "GENERALIZE — Generalizar",
+        description: "O valor é trocado por uma versão menos específica antes do envio.",
+        before: "R$ 128.450,00",
+        after: "Entre R$ 100.000 e R$ 150.000",
       },
-      {
-        title: "Reconstrução local",
-        description: "Pseudônimos autorizados podem ser reconstruídos após a resposta do modelo.",
-      },
-    ],
+    },
+    /**
+     * T30 / issue #82: the collapsible "Como funciona a pesquisa?" section
+     * -- the ONLY place on the welcome screen where B0-B4 vocabulary may
+     * appear, closed by default. `treatments` (already defined below,
+     * keyed by the frozen `b0`-`b4` code) supplies the per-treatment
+     * name/description; this table only holds the framing prose around it.
+     */
+    researchDisclosure: {
+      intro:
+        "O gateway implementa cinco tratamentos experimentais, aplicados numa sequência progressiva de proteção:",
+      noChoiceNeeded:
+        "Você não precisa escolher entre eles: o fluxo principal usa a configuração recomendada automaticamente.",
+    },
     ctaPrimary: "Testar agora",
     ctaSecondary: "Como funciona a pesquisa?",
   },
@@ -121,13 +192,41 @@ const ptBR = {
     detectedCountLabel: "itens sensíveis detectados",
     noneDetected: "Nenhum dado sensível foi detectado neste conteúdo.",
     nothingInSection: "Nenhum item nesta categoria.",
+    /**
+     * T30 / issue #82: the heading over the "exactly what crosses the
+     * boundary" section -- deliberately forward-looking ("será enviado"),
+     * unlike `sectionHeadings.whatWasSent` (used by the Comparação screen,
+     * which describes a simulation of five already-computed strategies).
+     * This is the prominent, unambiguously-labelled disclosure the review
+     * step's confirm decision hinges on.
+     */
+    willBeSentHeading: "O que será enviado ao LLM externo",
     showPayloadToggle: "Ver o payload exato que seria enviado",
     payloadByteCountLabel: "bytes",
     blockedHeading: "Solicitação bloqueada",
     blockedExplanation:
       "A política de divulgação bloqueou esta solicitação. Nada será enviado ao provedor externo.",
-    confirmSend: "Confirmar e enviar",
+    /**
+     * T30 / issue #82: states the consequence explicitly, not just the
+     * mechanical action -- the primary decision this screen exists for.
+     */
+    confirmSend: "Confirmar e enviar ao provedor externo",
     backToCompose: "Voltar e editar",
+    /**
+     * T30 / issue #82: Level-2 disclosure wrapping the T27 transformation
+     * inspector -- "understand what changed and why" sits one level below
+     * the plain-language local/sent lists.
+     */
+    understandChangesToggle: "Entender o que o gateway mudou e por quê",
+    /**
+     * T30 / issue #82: Level-3 disclosure wrapping the T28 export/restore
+     * panel and the T29 Vault Explorer -- collapsed by default, framed
+     * explicitly as a research/technical surface, not part of the primary
+     * decision.
+     */
+    technicalToolsToggle: "Detalhes técnicos e ferramentas de pesquisa",
+    technicalToolsIntro:
+      "Estas ferramentas existem para avaliação e pesquisa. Um produto final restringiria ou removeria esta camada.",
   },
 
   /** Screen 4 -- "Resultado". */
@@ -137,6 +236,16 @@ const ptBR = {
     pathLocal: "Local",
     pathProvider: "Provedor externo",
     protectionsAppliedHeading: "Proteções aplicadas",
+    /**
+     * T30 / issue #82: a short, data-derived headline above the
+     * category-by-category list -- "{protected} itens protegidos; {reconstructed}
+     * pseudônimos reconstruídos localmente". Both numbers come only from
+     * `ExecuteResponse.summary.categories`/`reconstruction` (occurrence
+     * counts already on the wire), never invented -- see `ResultScreen`'s
+     * `buildProtectionsSummary`.
+     */
+    protectionsSummaryTemplate: "{protected} itens protegidos; {reconstructed} pseudônimos reconstruídos localmente",
+    protectionsSummaryNoReconstruction: "{protected} itens protegidos",
     blockedHeading: "Execução bloqueada",
     blockedExplanation:
       "A política de divulgação bloqueou esta execução. Nenhum conteúdo foi enviado ao provedor externo.",
@@ -144,6 +253,28 @@ const ptBR = {
     providerFailedExplanation:
       "O provedor externo não respondeu com sucesso. Nenhuma resposta foi fabricada.",
     restart: "Testar novamente",
+    /**
+     * T30 / issue #82: Level-2 disclosure wrapping the Local -> Provedor
+     * externo -> Local recap -- explanatory content, secondary to the
+     * answer and the protections summary.
+     */
+    whatHappenedToggle: "Entender o que aconteceu",
+    whatHappenedIntro: "Veja o caminho que a informação percorreu entre o ambiente local e o provedor externo.",
+    /**
+     * T30 / issue #82: frames "Comparar estratégias" explicitly as a
+     * research surface rather than a plain secondary action.
+     */
+    researchHeading: "Comparar estratégias experimentais (B0–B4)",
+    researchIntro:
+      "Veja como as outras estratégias, incluindo o controle sem proteção (B0 — Direto), teriam tratado o mesmo conteúdo.",
+    /**
+     * T30 / issue #82: frames "Ver detalhes técnicos" and the Vault
+     * Explorer as the technical/audit layer, secondary to the primary
+     * result.
+     */
+    technicalToolsHeading: "Detalhes técnicos e ferramentas de pesquisa",
+    technicalToolsIntro:
+      "Metadados de execução, auditoria e o Vault Explorer local -- não competem com a resposta principal.",
   },
 
   provider: {
@@ -185,6 +316,11 @@ const ptBR = {
    * language rather than left implicit.
    */
   comparison: {
+    /**
+     * T30 / issue #82: a short eyebrow label framing this whole screen as
+     * a research surface, rendered above `heading`.
+     */
+    surfaceLabel: "Superfície de pesquisa",
     heading: "Como as estratégias diferem?",
     intro:
       "O mesmo conteúdo foi analisado de cinco maneiras diferentes. A seguir está exatamente o que cada uma enviaria ao provedor externo.",
@@ -275,6 +411,11 @@ const ptBR = {
    * technical metadata, never as content to inspect casually.
    */
   technicalDetails: {
+    /**
+     * T30 / issue #82: a short eyebrow label framing this whole screen as
+     * the technical/audit level, rendered above the screen heading.
+     */
+    surfaceLabel: "Nível técnico / auditoria",
     executionHeading: "Execução",
     strategyLabel: "Estratégia solicitada",
     treatmentLabel: "Tratamento executado",
