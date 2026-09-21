@@ -238,7 +238,8 @@ given, not add credit that was missing.
 ## 6. Out-of-scope findings (recorded, not fixed)
 
 Discovered during this audit, deliberately **not** fixed by this ticket to keep the change
-minimal and single-purpose:
+minimal and single-purpose, and filed as
+[Issue #85](https://github.com/Sheliga/adaptive-disclosure-gateway/issues/85):
 
 - `_band_is_decidable` never checks that the reference figures used to judge decidability
   actually relate to a *correct* band containing the original value — a numeric GENERALIZE band
