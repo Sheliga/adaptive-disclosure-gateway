@@ -50,3 +50,12 @@ jobs:
         run: npm test
       - name: Build
         run: npm run build
+      - name: Check basePath inlining (subpath deployment regression guard)
+        # Regression guard for the production incident where every
+        # client-side `/api/**` call went out with no `/disclosure-gateway`
+        # prefix and 404'd at the domain root: `web/lib/basePath.ts`'s
+        # `BASE_PATH` must resolve to a build-time literal in the CLIENT
+        # bundle, which only a source-level check (this repo's Vitest suite,
+        # run in Node) cannot observe. See
+        # `web/scripts/check-basepath-inlined.mjs`'s module docstring.
+        run: ADG_WEB_BASE_PATH=/disclosure-gateway npm run check:basepath
