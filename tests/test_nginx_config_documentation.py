@@ -33,16 +33,46 @@ class TestNginxConfigDocumentationExists:
         text = _NGINX_CONF_PATH.read_text(encoding="utf-8")
         assert "client_max_body_size 12M" in text
 
-    def test_redirects_bare_disclosure_gateway_path_to_trailing_slash(self) -> None:
+    def test_does_not_redirect_or_rewrite_the_bare_disclosure_gateway_path(
+        self,
+    ) -> None:
+        """A bare-path -> trailing-slash nginx redirect fights Next.js's own
+        basePath normalization and produces an infinite redirect loop: the
+        browser saw `/disclosure-gateway/` -> 308 -> `/disclosure-gateway`
+        (Next normalizing) immediately followed by
+        `/disclosure-gateway` -> 301 -> `/disclosure-gateway/` (this nginx
+        redirect), forever. There must be no such redirect left in the file.
+        """
         text = _NGINX_CONF_PATH.read_text(encoding="utf-8")
         assert "/disclosure-gateway" in text
         assert "/disclosure-gateway/" in text
-        assert "301" in text, "the bare-path redirect must be a permanent (301) redirect"
+        assert "return 301 /disclosure-gateway/;" not in text, (
+            "a bare-path redirect here loops against Next.js's own basePath "
+            "normalization -- proxy both forms instead of redirecting either"
+        )
 
     def test_proxies_disclosure_gateway_to_the_loopback_web_container(self) -> None:
         text = _NGINX_CONF_PATH.read_text(encoding="utf-8")
         assert "proxy_pass" in text
         assert "127.0.0.1:3000" in text
+
+    def test_both_gateway_locations_proxy_without_rewriting_the_request_uri(
+        self,
+    ) -> None:
+        """Both the bare-path and trailing-slash locations must proxy, and
+        the `proxy_pass` target must carry no URI part (i.e. end at
+        `:3000;`). A `proxy_pass` with a URI part rewrites the forwarded
+        path, which is what fought Next.js's own basePath normalization and
+        produced the redirect loop this file used to encode.
+        """
+        text = _NGINX_CONF_PATH.read_text(encoding="utf-8")
+        assert "location = /disclosure-gateway {" in text
+        assert "location /disclosure-gateway/ {" in text
+        assert "proxy_pass http://127.0.0.1:3000;" in text
+        assert "http://127.0.0.1:3000/disclosure-gateway" not in text, (
+            "proxy_pass must not carry a URI part -- it must forward the "
+            "original request URI verbatim"
+        )
 
     def test_forwards_standard_proxy_headers(self) -> None:
         text = _NGINX_CONF_PATH.read_text(encoding="utf-8")
