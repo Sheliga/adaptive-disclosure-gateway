@@ -20,6 +20,16 @@ from .contextual_matrix import ContextualComparisonResult
 from .post_pilot_protocol import CURRENT_PROTOCOL_ID
 from .run_identity import SCHEMA_VERSION, RunClassification
 
+
+class MixedProtocolIdsError(ValueError):
+    """Raised when the ``CaseResult`` rows passed to
+    ``write_pilot_artifacts`` do not all share one ``RunIdentity.protocol_id``
+    (Issue #87 / M3) -- one pilot artifact bundle names exactly one protocol
+    id in its manifest, so a mixture would make that field misleading rather
+    than merely imprecise.
+    """
+
+
 _PAIRWISE_SEQUENCE: tuple[tuple[Treatment, Treatment], ...] = (
     (Treatment.DIRECT, Treatment.STATIC_SANITIZATION),
     (Treatment.STATIC_SANITIZATION, Treatment.REVERSIBLE_PSEUDONYMIZATION),
@@ -82,6 +92,23 @@ def write_pilot_artifacts(
         for treatment_results in results_by_treatment.values()
         for result in treatment_results
     ]
+
+    # Issue #87 / M3: the manifest's protocol_id is derived from the rows
+    # actually produced, not independently resolved from CURRENT_PROTOCOL_ID
+    # -- a run explicitly scored under an older, still-scorable id (e.g.
+    # protocol_id="post-pilot-v3" for a historical corpus) must have its
+    # manifest agree with what its own rows carry, never silently claim
+    # whatever happens to be current. Mixed ids across rows would make this
+    # field actively misleading, so that raises rather than picking one
+    # arbitrarily. No rows at all (an empty results_by_treatment) falls back
+    # to CURRENT_PROTOCOL_ID -- there is nothing to derive it from.
+    row_protocol_ids = {result.identity.protocol_id for result in all_results}
+    if len(row_protocol_ids) > 1:
+        raise MixedProtocolIdsError(
+            "write_pilot_artifacts received CaseResult rows with more than one "
+            "distinct RunIdentity.protocol_id"
+        )
+    manifest_protocol_id = next(iter(row_protocol_ids), CURRENT_PROTOCOL_ID)
 
     with (run_dir / "results.jsonl").open("w", encoding="utf-8") as handle:
         for result in all_results:
@@ -153,9 +180,10 @@ def write_pilot_artifacts(
         "artifact_format_version": ARTIFACT_FORMAT_VERSION,
         # Top-level, alongside schema_version -- never only nested inside the
         # free-form reproducibility mapping -- so it is always present and
-        # always sourced from the same CURRENT_PROTOCOL_ID every row's own
-        # RunIdentity.protocol_id is sourced from (M3 Gate 6 / issue #38).
-        "protocol_id": CURRENT_PROTOCOL_ID,
+        # always agrees with what every row's own RunIdentity.protocol_id
+        # actually carries (M3 Gate 6 / issue #38; derivation from the rows
+        # themselves added by Issue #87 / M3).
+        "protocol_id": manifest_protocol_id,
         "corpus_version": corpus_version,
         "run_classification": run_classification,
         "treatments": sorted(t.value for t in results_by_treatment),

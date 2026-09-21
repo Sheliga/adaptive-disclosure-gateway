@@ -35,7 +35,7 @@ from adaptive_disclosure_gateway.vault import InMemoryVault, Vault
 from .b4_span_metadata import B4Metadata, extract_b4_metadata
 from .corpus_source import build_request
 from .detector_capture import DetectedSpanRef, RecordingDetector
-from .post_pilot_protocol import CURRENT_PROTOCOL_ID, validate_protocol_id
+from .post_pilot_protocol import CURRENT_PROTOCOL_ID, validate_scorable_protocol_id
 from .provider_instrumentation import ProviderCallMetrics, TimingProviderDelegate
 from .resource_metrics import ResourceMetrics, measure_resources
 from .run_identity import (
@@ -145,6 +145,7 @@ def execute_case(
     provider: Provider | None = None,
     context_overrides: Mapping[str, Any] | None = None,
     capture_raw_values_for_controlled_experiment: bool = False,
+    protocol_id: str | None = None,
 ) -> CaseExecution:
     """Run ``case_input`` through ``treatment`` and return a structured,
     ground-truth-free result.
@@ -154,6 +155,19 @@ def execute_case(
     brief). ``provider`` defaults to a fresh ``FakeProvider`` wrapped in a
     ``TimingProviderDelegate`` -- pass an already-wrapped delegate to reuse
     timing/volume capture, or a bare ``Provider`` to have it wrapped here.
+
+    ``protocol_id`` (Issue #87 / M3) names the post-pilot scoring protocol
+    this execution's ``RunIdentity.protocol_id`` will carry. Left ``None``
+    (the default), it resolves to ``CURRENT_PROTOCOL_ID`` **at call time**
+    -- never at import/module-load time -- so a test that monkeypatches
+    ``CURRENT_PROTOCOL_ID`` still observes the effect. Resolved either way,
+    it is validated as both frozen and currently scorable
+    (``validate_scorable_protocol_id``) before ``RunIdentity`` is
+    constructed. Passing an explicit id (e.g. ``"post-pilot-v3"``) is how a
+    caller scores a legacy/historical corpus (``corpus/hr/v1``,
+    ``corpus/contracts/v1``) that has no opted-in ``utility_references`` --
+    scoring such a corpus under the current default would otherwise raise
+    (see ``experiments/scoring/utility.py``'s compatibility matrix).
 
     A caller-supplied ``provider`` is used exactly as given. The default
     ``FakeProvider`` instead has its ``provider_class`` attribute set to
@@ -232,11 +246,15 @@ def execute_case(
         provider_metrics.model_snapshot if provider_metrics is not None else "not_called"
     )
 
-    # Fail closed against an unregistered/misspelled protocol id rather than
-    # silently stamping every result with an unverified constant (M3 Gate 6
-    # / issue #38, docs/research/post-pilot-protocol-v2.md's provenance
-    # section).
-    validate_protocol_id(CURRENT_PROTOCOL_ID)
+    # Resolved at call time (never at import time) so a caller/test that
+    # changes CURRENT_PROTOCOL_ID still observes the effect (M3 Gate 6 /
+    # issue #38's own regression pin already depends on this). Fail closed
+    # against an unregistered, misspelled or no-longer-scorable protocol id
+    # rather than silently stamping every result with an unverified
+    # constant (docs/research/post-pilot-protocol-v2.md's provenance
+    # section; Issue #87 / M3 extends the check to scorability).
+    resolved_protocol_id = protocol_id if protocol_id is not None else CURRENT_PROTOCOL_ID
+    validate_scorable_protocol_id(resolved_protocol_id)
 
     identity = RunIdentity(
         schema_version=SCHEMA_VERSION,
@@ -256,7 +274,7 @@ def execute_case(
         provider_name=type(timing_provider._wrapped).__name__,
         provider_model_id=model_id,
         provider_model_snapshot=model_snapshot,
-        protocol_id=CURRENT_PROTOCOL_ID,
+        protocol_id=resolved_protocol_id,
     )
 
     payload_echo_reconstructed_text: str | None = None
