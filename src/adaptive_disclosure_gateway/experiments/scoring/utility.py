@@ -535,11 +535,22 @@ class MissingUtilityReferencesError(ValueError):
 
 
 class StructuredReferencesRequireV4Error(ValueError):
-    """Raised (Issue #87 / M3) when a case that has opted in to structured
-    ``utility_references`` (a non-empty list) is scored under
+    """Raised (Issue #87 / M3) when a case whose oracle has opted in to the
+    structured ``utility_references`` mechanism -- ``utility_references is
+    not None``, an empty list ``[]`` included -- is scored under
     ``post-pilot-v3``, whose scorer has no mechanism to honor declared
-    operator/value semantics -- scoring it under v3 would silently ignore
-    the case author's actual intent rather than apply it.
+    operator/value semantics.
+
+    ``None`` and ``[]`` are not interchangeable here (PR #92 review,
+    blocker 1): ``None`` means the oracle never opted in at all (legacy,
+    schema-v2) and is compatible with v3's own free-text mechanism. ``[]``
+    is an explicit opt-in that declares *no* reference for any category --
+    scoring it under v3 would silently fall back to
+    ``_legacy_v3_reference_values`` and infer references from free text the
+    case author explicitly chose not to declare structurally, exactly the
+    text-coupled behavior this opt-in exists to opt out of. Any non-``None``
+    ``utility_references`` therefore requires ``post-pilot-v4``, regardless
+    of whether the list is empty.
     """
 
 
@@ -570,10 +581,15 @@ def _check_case_protocol_compatibility(
                 "utility_references (legacy schema) -- post-pilot-v4 requires an "
                 "opted-in oracle for a numeric-dependent case"
             )
-    elif protocol_id == "post-pilot-v3" and oracle.utility_references:
+    elif protocol_id == "post-pilot-v3" and oracle.utility_references is not None:
+        # `is not None`, never a truthiness check (PR #92 review, blocker
+        # 1): an opted-in but empty list ([]) is still an explicit opt-in
+        # into the structured mechanism, not "no opinion" -- it must be
+        # refused exactly like a non-empty list, never silently treated as
+        # legacy and fall back to _legacy_v3_reference_values.
         raise StructuredReferencesRequireV4Error(
-            f"{location}oracle declares structured utility_references, which "
-            "post-pilot-v3's scorer cannot honor"
+            f"{location}oracle has opted in to utility_references (empty or not), "
+            "which post-pilot-v3's scorer cannot honor"
         )
 
 

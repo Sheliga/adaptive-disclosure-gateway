@@ -29,7 +29,7 @@ import pytest
 from pydantic import ValidationError
 
 from adaptive_disclosure_gateway.corpus.case_input import CorpusCaseInput
-from adaptive_disclosure_gateway.corpus.loader import load_corpus
+from adaptive_disclosure_gateway.corpus.loader import CorpusCase, load_corpus
 from adaptive_disclosure_gateway.corpus.models import (
     NUMERIC_REFERENCE_CATEGORIES,
     ExpectedSpan,
@@ -378,6 +378,129 @@ def test_non_empty_utility_references_under_v3_raises():
     result = _result(_band_transformation("contract_value", _BAND, "R$ 520000.00"))
     with pytest.raises(StructuredReferencesRequireV4Error):
         score_utility(case_input, oracle, result, Treatment.TASK_AWARE, protocol_id="post-pilot-v3")
+
+
+# --- l. Blocker 1 regression: None vs [] must stay distinct under v3 -------
+#
+# None means "legacy -- this oracle never opted in to structured references
+# at all". [] means "opted in, and explicitly declares no reference for any
+# category". Under post-pilot-v3, BOTH must be refused for an opted-in
+# oracle ([] included) -- v3's scorer has no mechanism to honor a
+# structured opt-in, empty or not, and must never silently fall back to
+# _legacy_v3_reference_values for a case whose oracle explicitly declared
+# (via a non-None utility_references) that it uses the structured
+# mechanism instead. Only a genuinely legacy oracle (None) is compatible
+# with v3.
+
+
+def test_none_utility_references_under_v3_is_compatible_via_score_utility():
+    case_input, oracle = _synthetic_case(
+        sample_id="synthetic-none-under-v3",
+        categories_and_values={"contract_value": "R$ 520000.00"},
+        depends_on=["contract_value"],
+        utility_references=None,
+    )
+    result = _result(_band_transformation("contract_value", _BAND, "R$ 520000.00"))
+    score = score_utility(
+        case_input, oracle, result, Treatment.TASK_AWARE, protocol_id="post-pilot-v3"
+    )
+    contract_value = next(c for c in score.by_category if c.category == "contract_value")
+    assert contract_value.outcome in ("answerable", "indeterminate", "not_answerable")
+
+
+def test_none_utility_references_under_v3_is_compatible_via_check_corpus_protocol_compatibility():
+    case_input, oracle = _synthetic_case(
+        sample_id="synthetic-none-under-v3-bulk",
+        categories_and_values={"contract_value": "R$ 520000.00"},
+        depends_on=["contract_value"],
+        utility_references=None,
+    )
+    check_corpus_protocol_compatibility(
+        [CorpusCase(input=case_input, oracle=oracle)], "post-pilot-v3"
+    )  # must not raise
+
+
+def test_empty_list_utility_references_under_v3_raises_via_score_utility():
+    """The core Blocker 1 regression: [] is an EXPLICIT opt-in declaring no
+    references, not "no opinion" -- it must never be treated as legacy and
+    fall back to free-text extraction under v3.
+    """
+    case_input, oracle = _synthetic_case(
+        sample_id="synthetic-empty-list-under-v3",
+        categories_and_values={"contract_value": "R$ 520000.00"},
+        depends_on=["contract_value"],
+        utility_references=[],  # opted in, explicitly empty -- NOT legacy
+    )
+    result = _result(_band_transformation("contract_value", _BAND, "R$ 520000.00"))
+    with pytest.raises(StructuredReferencesRequireV4Error):
+        score_utility(case_input, oracle, result, Treatment.TASK_AWARE, protocol_id="post-pilot-v3")
+
+
+def test_empty_list_utility_references_under_v3_raises_via_check_corpus_protocol_compatibility():
+    case_input, oracle = _synthetic_case(
+        sample_id="synthetic-empty-list-under-v3-bulk",
+        categories_and_values={"contract_value": "R$ 520000.00"},
+        depends_on=["contract_value"],
+        utility_references=[],
+    )
+    with pytest.raises(StructuredReferencesRequireV4Error):
+        check_corpus_protocol_compatibility(
+            [CorpusCase(input=case_input, oracle=oracle)], "post-pilot-v3"
+        )
+
+
+@pytest.mark.parametrize(
+    ("utility_references_factory", "protocol_id", "expect_raise"),
+    [
+        (lambda: None, "post-pilot-v3", None),
+        (list, "post-pilot-v3", StructuredReferencesRequireV4Error),
+        (
+            lambda: [_ref("contract_value", ReferenceOperator.GREATER_THAN_OR_EQUAL, "500000.00")],
+            "post-pilot-v3",
+            StructuredReferencesRequireV4Error,
+        ),
+        (lambda: None, "post-pilot-v4", MissingUtilityReferencesError),
+        (list, "post-pilot-v4", None),
+        (
+            lambda: [_ref("contract_value", ReferenceOperator.GREATER_THAN_OR_EQUAL, "500000.00")],
+            "post-pilot-v4",
+            None,
+        ),
+    ],
+)
+def test_protocol_compatibility_matrix_parity_between_score_utility_and_bulk_check(
+    utility_references_factory, protocol_id, expect_raise
+):
+    """Parity test over the full {None, [], [ref]} x {v3, v4} matrix: the
+    per-case check inside score_utility and the whole-corpus
+    check_corpus_protocol_compatibility must agree exactly on every cell --
+    both are built on the same shared _check_case_protocol_compatibility, so
+    a divergence here would mean that sharing was broken.
+    """
+    case_input, oracle = _synthetic_case(
+        sample_id="synthetic-matrix-cell",
+        categories_and_values={"contract_value": "R$ 520000.00"},
+        depends_on=["contract_value"],
+        utility_references=utility_references_factory(),
+    )
+    result = _result(_band_transformation("contract_value", _BAND, "R$ 520000.00"))
+
+    def _run_score_utility():
+        score_utility(case_input, oracle, result, Treatment.TASK_AWARE, protocol_id=protocol_id)
+
+    def _run_bulk_check():
+        check_corpus_protocol_compatibility(
+            [CorpusCase(input=case_input, oracle=oracle)], protocol_id
+        )
+
+    if expect_raise is None:
+        _run_score_utility()  # must not raise
+        _run_bulk_check()  # must not raise
+    else:
+        with pytest.raises(expect_raise):
+            _run_score_utility()
+        with pytest.raises(expect_raise):
+            _run_bulk_check()
 
 
 @pytest.mark.parametrize("protocol_id", ["post-pilot-v1", "post-pilot-v2"])
