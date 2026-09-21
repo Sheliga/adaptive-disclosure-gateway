@@ -36,6 +36,10 @@ def _pilot_results():
         policy_dir=POLICY_DIR,
         corpus_version="hr/v1",
         run_classification=PILOT_DEVELOPMENT,
+        # Issue #87 / M3: corpus/hr/v1 is a frozen, legacy corpus with no
+        # opted-in CaseOracle.utility_references -- must be scored under
+        # the historical post-pilot-v3 protocol explicitly.
+        protocol_id="post-pilot-v3",
     )
 
 

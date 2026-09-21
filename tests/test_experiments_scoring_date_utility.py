@@ -145,7 +145,9 @@ def _score_deadline(case, action, transformed=None):
         transformations=[_deadline_transformation(case, action, transformed=transformed)],
         status="allowed",
     )
-    score = score_utility(case.input, case.oracle, result, Treatment.TASK_AWARE)
+    score = score_utility(
+        case.input, case.oracle, result, Treatment.TASK_AWARE, protocol_id="post-pilot-v3"
+    )
     return next(c for c in score.by_category if c.category == "deadline")
 
 
@@ -234,7 +236,9 @@ def test_generalized_date_is_judged_against_the_oracle_span_value_not_the_transf
         ],
         status="allowed",
     )
-    score = score_utility(case.input, case.oracle, result, Treatment.TASK_AWARE)
+    score = score_utility(
+        case.input, case.oracle, result, Treatment.TASK_AWARE, protocol_id="post-pilot-v3"
+    )
     category_utility = next(c for c in score.by_category if c.category == "deadline")
 
     assert category_utility.outcome == "not_answerable"
@@ -264,8 +268,12 @@ def test_score_utility_date_rule_is_deterministic_across_repeated_calls():
         transformations=[_deadline_transformation(case, DisclosureAction.GENERALIZE)],
         status="allowed",
     )
-    first = score_utility(case.input, case.oracle, result, Treatment.TASK_AWARE)
-    second = score_utility(case.input, case.oracle, result, Treatment.TASK_AWARE)
+    first = score_utility(
+        case.input, case.oracle, result, Treatment.TASK_AWARE, protocol_id="post-pilot-v3"
+    )
+    second = score_utility(
+        case.input, case.oracle, result, Treatment.TASK_AWARE, protocol_id="post-pilot-v3"
+    )
     assert first == second
 
 
@@ -287,6 +295,7 @@ def test_numeric_band_generalize_still_scores_decidable_for_a_real_case():
         corpus_version="contracts/v1",
         run_classification=PILOT_DEVELOPMENT,
         policy_repository=policy_repo,
+        protocol_id="post-pilot-v3",
     )
     score = score_case(case.input, case.oracle, execution)
     contract_value_utility = next(
@@ -389,7 +398,9 @@ def test_score_utility_output_never_contains_a_distinctive_date_value():
         ],
         status="allowed",
     )
-    score = score_utility(case.input, case.oracle, result, Treatment.TASK_AWARE)
+    score = score_utility(
+        case.input, case.oracle, result, Treatment.TASK_AWARE, protocol_id="post-pilot-v3"
+    )
     serialized = repr(dataclasses.asdict(score))
     assert distinctive_original not in serialized
     assert distinctive_transformed not in serialized

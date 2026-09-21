@@ -59,6 +59,12 @@ def _run(sample_id: str, treatment: Treatment):
         corpus_version="hr/v1",
         run_classification=PILOT_DEVELOPMENT,
         policy_repository=_policy_repo(),
+        # Issue #87 / M3: corpus/hr/v1 is a frozen, legacy (schema-v2)
+        # corpus with no opted-in CaseOracle.utility_references, so scoring
+        # it must pin the historical post-pilot-v3 protocol explicitly --
+        # the current default (post-pilot-v4) refuses a legacy oracle that
+        # depends on a numeric category.
+        protocol_id="post-pilot-v3",
     )
     score = score_case(case.input, case.oracle, execution)
     return case, execution, score

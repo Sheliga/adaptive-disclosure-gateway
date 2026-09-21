@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from adaptive_disclosure_gateway.corpus.models import (
     CorpusCategory,
     ExpectedSpan,
+    NumericUtilityReference,
     ObligationRelation,
     ReconstructionExpectation,
 )
@@ -61,6 +62,57 @@ class CaseOracle(BaseModel):
     # blocked request discloses nothing at all, so no relation could have
     # survived or been lost through a payload that was never produced.
     obligation_relations: list[ObligationRelation] = Field(default_factory=list)
+
+    # Issue #87 / M3 (`post-pilot-v4`): structured numeric utility
+    # references, replacing free-text reference extraction for evaluation
+    # purposes only. ``None`` (the default) means "legacy" -- a
+    # schema-v2-or-earlier case that never states this field at all, which
+    # every frozen `corpus/hr/v1` and `corpus/contracts/v1` case file is and
+    # stays: this field is absent from all of them, so they keep loading
+    # byte-for-byte unchanged. An empty or non-empty *list* means "opted
+    # in" (schema-v3): the case has explicitly declared its structured
+    # references (possibly none for a category it still depends on, which
+    # scores `indeterminate`/`no_reference` under `post-pilot-v4` -- see
+    # `experiments/scoring/utility.py`). The distinction between "legacy"
+    # and "opted in with an empty list" matters only for
+    # `post-pilot-v4` dispatch (`experiments/scoring/utility.py`'s
+    # `check_corpus_protocol_compatibility`): a legacy case that depends on
+    # a numeric category is refused outright under v4
+    # (`MissingUtilityReferencesError`) rather than silently scored against
+    # an empty reference set it never actually declared.
+    utility_references: list[NumericUtilityReference] | None = None
+
+    @model_validator(mode="after")
+    def _check_utility_references(self) -> CaseOracle:
+        if self.expected_block_request:
+            if self.utility_references:
+                raise ValueError(
+                    "oracle.utility_references must be empty or absent when "
+                    "oracle.expected_block_request is true -- a blocked "
+                    "request produces no payload for a reference to decide "
+                    "anything about"
+                )
+            return self
+
+        if self.utility_references is None:
+            return self
+
+        depends_on = set(self.answer_depends_on_categories or [])
+        seen: set[tuple[str, str, str]] = set()
+        for reference in self.utility_references:
+            if reference.category not in depends_on:
+                raise ValueError(
+                    "oracle.utility_references names a category not present in "
+                    "oracle.answer_depends_on_categories"
+                )
+            triple = (reference.category, reference.operator.value, reference.value)
+            if triple in seen:
+                raise ValueError(
+                    "oracle.utility_references contains a duplicate "
+                    "(category, operator, value) reference"
+                )
+            seen.add(triple)
+        return self
 
     @model_validator(mode="after")
     def _check_block_consistency(self) -> CaseOracle:

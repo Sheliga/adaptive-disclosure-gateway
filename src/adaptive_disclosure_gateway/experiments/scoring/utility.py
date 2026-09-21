@@ -72,15 +72,19 @@ inherit the wrong semantics by omission (Issue #85).
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from typing import Literal
 
 from adaptive_disclosure_gateway.corpus.case_input import CorpusCaseInput
+from adaptive_disclosure_gateway.corpus.loader import CorpusCase
+from adaptive_disclosure_gateway.corpus.models import NumericUtilityReference, ReferenceOperator
 from adaptive_disclosure_gateway.corpus.oracle import CaseOracle
 from adaptive_disclosure_gateway.domain import DisclosureAction, DisclosureResult, Treatment
 
+from ..post_pilot_protocol import validate_scorable_protocol_id
 from .span_matching import resolve_span_transformations
 
 UtilityOutcome = Literal["answerable", "not_answerable", "indeterminate", "not_applicable"]
@@ -279,11 +283,22 @@ class UtilityScore:
     by_category: tuple[CategoryUtility, ...]
 
 
-def _reference_values(text: str, exclude_spans: list[tuple[int, int]]) -> list[float]:
+def _legacy_v3_reference_values(text: str, exclude_spans: list[tuple[int, int]]) -> list[float]:
     """Numeric amounts in ``text`` that fall entirely outside every detected
     span's own offsets -- candidate reference figures (SCHEMA.md's "appended
     line the detector does not match against any of the five frozen
     categories").
+
+    Renamed from ``_reference_values`` (Issue #87 / M3, ``post-pilot-v4``):
+    this free-text extraction is the ``post-pilot-v3`` scoring path's own
+    mechanism, kept byte-for-byte for historical-corpus scoring under that
+    frozen protocol id, and reachable **only** from the v3 branch of
+    ``score_utility`` -- pinned by an AST test in
+    ``tests/test_experiments_scoring_utility_references_v4.py``. The v4 path
+    (``classify_generalized_band_against_references``) never calls this
+    function and never reads ``case_input.text`` at all: v4's references
+    come exclusively from the oracle's structured
+    ``CaseOracle.utility_references``.
     """
     values: list[float] = []
     for match in _AMOUNT_PATTERN.finditer(text):
@@ -334,42 +349,31 @@ def _parse_band(transformed: str | None) -> tuple[int, int] | None:
     return lower, upper
 
 
-def classify_generalized_band(
-    original: str | None, transformed: str | None, references: list[float]
-) -> tuple[UtilityOutcome, str]:
-    """Classify one GENERALIZE outcome for a numeric-band category
-    (Issue #85 / ``post-pilot-v3``).
+def _check_band_fidelity(
+    original: str | None, transformed: str | None
+) -> tuple[UtilityOutcome, str] | tuple[int, int]:
+    """Steps 1-3 of the numeric-band GENERALIZE rule (Issue #85 /
+    ``post-pilot-v3``), extracted verbatim so both the frozen v3 sufficiency
+    rule (``classify_generalized_band``) and the v4 structured-reference
+    rule (``classify_generalized_band_against_references``, Issue #87 / M3)
+    share the exact same fidelity check rather than risking the two
+    silently drifting apart:
 
-    ``original`` is the oracle span's own value (never
-    ``Transformation.original`` -- the same ground-truth discipline
-    ``classify_generalized_date`` already follows, for the same reason: a
-    detector misread or a span-matching mismatch must never let a wrong
-    transformed band validate against its own wrong original).
-    ``transformed`` is what the treatment actually produced. ``references``
-    are the candidate reference figures ``_reference_values`` found stated
-    elsewhere in the case text.
-
-    Checked in this order, first match wins -- **fidelity before
-    sufficiency**: whether the band is even a correct representation of the
-    original value is checked before whether it can be resolved against a
-    stated reference, so a wrong band can never be rescued into
-    ``answerable`` merely because no reference happens to fall inside it
-    (the defect this rule replaces):
-
-    1. an unparseable ``original`` -> unscorable_original, evaluated before
-       the band's own shape is even examined (an unscorable original makes
-       the transformed value unevaluable regardless of its own shape);
+    1. an unparseable ``original`` -> ``("not_answerable",
+       "generalized_band_unscorable_original")``, evaluated before the
+       band's own shape is even examined;
     2. a ``transformed`` outside the closed grammar, or with ``lower >=
-       upper`` (inverted or degenerate) -> invalid;
+       upper`` (inverted or degenerate) -> ``("not_answerable",
+       "generalized_band_invalid")``;
     3. a validly-shaped band that does not contain ``original`` at the
        half-open ``[lower, upper)`` interval ``NumericBandStrategy`` itself
-       produces -> excludes_original;
-    4. no reference figure at all -> indeterminate, no_reference (never
-       vacuously ``answerable`` -- ``all([])`` being ``True`` is exactly the
-       defect this rule replaces);
-    5. every reference falls strictly outside the band -> answerable,
-       decidable; otherwise -> indeterminate, ambiguous (unchanged
-       comparison semantics from the pre-``v3`` rule).
+       produces -> ``("not_answerable", "generalized_band_excludes_original")``;
+    4. otherwise, the parsed ``(lower, upper)`` pair.
+
+    Callers distinguish a failure from success by the type of the first
+    element (a ``str`` outcome vs. an ``int`` bound) -- both are 2-tuples,
+    so this is the cheapest total discriminator without inventing a
+    dataclass this internal helper does not otherwise need.
     """
     original_amount = _parse_strict_original_amount(original)
     if original_amount is None:
@@ -383,6 +387,53 @@ def classify_generalized_band(
     if not (lower <= original_amount < upper):
         return "not_answerable", "generalized_band_excludes_original"
 
+    return lower, upper
+
+
+def classify_generalized_band(
+    original: str | None, transformed: str | None, references: list[float]
+) -> tuple[UtilityOutcome, str]:
+    """Classify one GENERALIZE outcome for a numeric-band category under the
+    frozen ``post-pilot-v3`` rule (Issue #85).
+
+    ``original`` is the oracle span's own value (never
+    ``Transformation.original`` -- the same ground-truth discipline
+    ``classify_generalized_date`` already follows, for the same reason: a
+    detector misread or a span-matching mismatch must never let a wrong
+    transformed band validate against its own wrong original).
+    ``transformed`` is what the treatment actually produced. ``references``
+    are the candidate reference figures ``_legacy_v3_reference_values``
+    found stated elsewhere in the case text.
+
+    **Historical pin (Issue #87 / M3):** this function's signature and
+    behavior are frozen exactly as ``post-pilot-v3`` defined them --
+    unchanged by the v4 structured-reference rule below, which is a
+    separate function (``classify_generalized_band_against_references``),
+    not a variant of this one. Every ``post-pilot-v3`` test in
+    ``tests/test_experiments_scoring_numeric_band_utility.py`` continues to
+    exercise this exact function with these exact semantics.
+
+    Checked in this order, first match wins -- **fidelity before
+    sufficiency**: whether the band is even a correct representation of the
+    original value is checked before whether it can be resolved against a
+    stated reference, so a wrong band can never be rescued into
+    ``answerable`` merely because no reference happens to fall inside it
+    (the defect this rule replaces):
+
+    1.-3. fidelity, delegated to ``_check_band_fidelity`` (see its own
+    docstring for the three sub-cases);
+    4. no reference figure at all -> indeterminate, no_reference (never
+       vacuously ``answerable`` -- ``all([])`` being ``True`` is exactly the
+       defect this rule replaces);
+    5. every reference falls strictly outside the band -> answerable,
+       decidable; otherwise -> indeterminate, ambiguous (unchanged
+       comparison semantics from the pre-``v3`` rule).
+    """
+    fidelity = _check_band_fidelity(original, transformed)
+    if isinstance(fidelity[0], str):
+        return fidelity
+    lower, upper = fidelity
+
     if not references:
         return "indeterminate", "generalized_band_no_reference"
 
@@ -391,12 +442,204 @@ def classify_generalized_band(
     return "indeterminate", "generalized_band_ambiguous"
 
 
+def _reference_is_decidable(
+    operator: ReferenceOperator, amount: Decimal, lower: int, upper: int
+) -> bool:
+    """Whether one structured reference resolves a numeric band [lower,
+    upper) to a single decidable answer (Issue #87 / M3, ``post-pilot-v4``,
+    spec section 2's formal rule).
+
+    The band is treated as a half-open interval over the reals; ``operator``
+    names the relation the task's real question asks about the original
+    value ``x`` against ``amount`` (``r``): ``x > r``, ``x >= r``, ``x < r``
+    or ``x <= r``. The question is decidable over the whole band iff every
+    ``x`` in ``[lower, upper)`` gives the same answer to that relation --
+    equivalently, iff ``r`` never falls strictly inside the *open* interval
+    the relation's own boundary would otherwise straddle:
+
+    - ``greater_than``/``less_than_or_equal`` share ``r < lower or r >=
+      upper`` -- ``r == lower`` is still ambiguous (some ``x`` in the band
+      equal ``lower`` too, so both a "yes" and a "no" occur for these two
+      strict-vs-non-strict operators at that exact boundary);
+    - ``greater_than_or_equal``/``less_than`` share ``r <= lower or r >=
+      upper`` -- ``r == lower`` is already decidable for these two, because
+      every ``x >= lower`` in the half-open band satisfies ``x >= r`` (resp.
+      fails ``x < r``) uniformly.
+
+    This is exhaustive over ``ReferenceOperator``'s four members (pinned by
+    a drift-guard test enumerating every member); no other branch exists,
+    so a fifth operator value could only reach here if the enum itself grew
+    a member no test updated for.
+    """
+    if operator in (ReferenceOperator.GREATER_THAN, ReferenceOperator.LESS_THAN_OR_EQUAL):
+        return amount < lower or amount >= upper
+    if operator in (ReferenceOperator.GREATER_THAN_OR_EQUAL, ReferenceOperator.LESS_THAN):
+        return amount <= lower or amount >= upper
+    raise AssertionError("unreachable: ReferenceOperator is exhaustively handled above")
+
+
+def classify_generalized_band_against_references(
+    original: str | None,
+    transformed: str | None,
+    references: Sequence[NumericUtilityReference],
+) -> tuple[UtilityOutcome, str]:
+    """Classify one GENERALIZE outcome for a numeric-band category under
+    ``post-pilot-v4`` (Issue #87 / M3), using structured oracle references
+    instead of free-text extraction.
+
+    Shares steps 1-3 (fidelity) byte-for-byte with ``classify_generalized_band``
+    via ``_check_band_fidelity``. Step 4: an empty ``references`` sequence
+    (no reference stated for this category, or the case never named one at
+    all) -> ``("indeterminate", "generalized_band_no_reference")`` -- never
+    vacuously ``answerable``, exactly like v3. Step 5: the band is
+    ``answerable``/``generalized_band_decidable`` iff *every* reference is
+    individually decidable against it (``_reference_is_decidable``);
+    otherwise ``indeterminate``/``generalized_band_ambiguous``.
+
+    ``references`` must already be filtered to this call's own category by
+    the caller (``score_utility``'s v4 arm passes only
+    ``[r for r in oracle.utility_references or [] if r.category == category]``)
+    -- this function does not itself filter by category, so a caller that
+    passes an unfiltered list would silently contaminate one category's
+    decidability with another's reference, which is exactly the "category-
+    blind" defect (b) this ticket fixes; the AST/behavioral tests in
+    ``tests/test_experiments_scoring_utility_references_v4.py`` pin that
+    ``score_utility`` never does that.
+    """
+    fidelity = _check_band_fidelity(original, transformed)
+    if isinstance(fidelity[0], str):
+        return fidelity
+    lower, upper = fidelity
+
+    if not references:
+        return "indeterminate", "generalized_band_no_reference"
+
+    if all(
+        _reference_is_decidable(reference.operator, reference.amount, lower, upper)
+        for reference in references
+    ):
+        return "answerable", "generalized_band_decidable"
+    return "indeterminate", "generalized_band_ambiguous"
+
+
+class MissingUtilityReferencesError(ValueError):
+    """Raised (Issue #87 / M3, ``post-pilot-v4``) when a case whose oracle
+    depends on a registered numeric category has a legacy oracle
+    (``utility_references is None``) and is scored under a protocol that
+    requires structured references. A legacy corpus (``corpus/hr/v1``,
+    ``corpus/contracts/v1``) is refused under ``post-pilot-v4`` for exactly
+    this reason -- those frozen files are never edited to add the field;
+    they are scored under ``post-pilot-v3`` instead (see
+    ``scripts/run_hr_v1_pilot.py``/``run_contracts_v1_pilot.py``).
+    """
+
+
+class StructuredReferencesRequireV4Error(ValueError):
+    """Raised (Issue #87 / M3) when a case whose oracle has opted in to the
+    structured ``utility_references`` mechanism -- ``utility_references is
+    not None``, an empty list ``[]`` included -- is scored under
+    ``post-pilot-v3``, whose scorer has no mechanism to honor declared
+    operator/value semantics.
+
+    ``None`` and ``[]`` are not interchangeable here (PR #92 review,
+    blocker 1): ``None`` means the oracle never opted in at all (legacy,
+    schema-v2) and is compatible with v3's own free-text mechanism. ``[]``
+    is an explicit opt-in that declares *no* reference for any category --
+    scoring it under v3 would silently fall back to
+    ``_legacy_v3_reference_values`` and infer references from free text the
+    case author explicitly chose not to declare structurally, exactly the
+    text-coupled behavior this opt-in exists to opt out of. Any non-``None``
+    ``utility_references`` therefore requires ``post-pilot-v4``, regardless
+    of whether the list is empty.
+    """
+
+
+def _check_case_protocol_compatibility(
+    oracle: CaseOracle, protocol_id: str, *, case_id: str | None = None
+) -> None:
+    """The per-case half of Issue #87 / M3's compatibility matrix between a
+    corpus case's oracle and a scoring protocol id -- shared by
+    ``score_utility`` (one case, post-execution) and
+    ``check_corpus_protocol_compatibility`` (a whole corpus, pre-execution)
+    so the two can never silently drift apart. Caller must already have
+    validated ``protocol_id`` via ``validate_scorable_protocol_id`` -- this
+    function assumes it is one of ``SCORABLE_PROTOCOL_IDS``.
+
+    A case whose oracle expects a block never reaches either branch below:
+    nothing is ever disclosed for such a case, so no numeric-reference
+    semantics are ever exercised regardless of protocol id.
+    """
+    if oracle.expected_block_request:
+        return
+    depends_on = set(oracle.answer_depends_on_categories or [])
+    numeric_depends_on = depends_on & NUMERIC_BAND_UTILITY_CATEGORIES
+    location = f"case {case_id!r}: " if case_id is not None else ""
+    if protocol_id == "post-pilot-v4":
+        if oracle.utility_references is None and numeric_depends_on:
+            raise MissingUtilityReferencesError(
+                f"{location}oracle depends on a numeric category but has no "
+                "utility_references (legacy schema) -- post-pilot-v4 requires an "
+                "opted-in oracle for a numeric-dependent case"
+            )
+    elif protocol_id == "post-pilot-v3" and oracle.utility_references is not None:
+        # `is not None`, never a truthiness check (PR #92 review, blocker
+        # 1): an opted-in but empty list ([]) is still an explicit opt-in
+        # into the structured mechanism, not "no opinion" -- it must be
+        # refused exactly like a non-empty list, never silently treated as
+        # legacy and fall back to _legacy_v3_reference_values.
+        raise StructuredReferencesRequireV4Error(
+            f"{location}oracle has opted in to utility_references (empty or not), "
+            "which post-pilot-v3's scorer cannot honor"
+        )
+
+
+def check_corpus_protocol_compatibility(cases: Sequence[CorpusCase], protocol_id: str) -> None:
+    """Fail-fast, whole-corpus compatibility check (Issue #87 / M3) between
+    every case in ``cases`` and ``protocol_id``, called by
+    ``experiments.runner.run_pilot`` immediately after loading a corpus and
+    before any treatment/provider call -- an incompatible corpus/protocol
+    pairing costs zero provider calls, not a partial run that fails midway.
+
+    Raises ``UnknownProtocolIdError``/``UnsupportedScoringProtocolError``
+    (via ``validate_scorable_protocol_id``) if ``protocol_id`` itself is not
+    a frozen, currently-scorable id, before looking at any case at all.
+    Otherwise raises the first ``MissingUtilityReferencesError``/
+    ``StructuredReferencesRequireV4Error`` any case in ``cases`` would raise
+    at score time (``_check_case_protocol_compatibility``) -- so a
+    caller never needs to execute a single case to discover the corpus is
+    incompatible with the protocol it asked for.
+    """
+    validate_scorable_protocol_id(protocol_id)
+    for case in cases:
+        _check_case_protocol_compatibility(case.oracle, protocol_id, case_id=case.input.sample_id)
+
+
 def score_utility(
     case_input: CorpusCaseInput,
     oracle: CaseOracle,
     result: DisclosureResult,
     treatment: Treatment,
+    *,
+    protocol_id: str,
 ) -> UtilityScore:
+    """Score utility for one case execution under ``protocol_id`` (Issue #87
+    / M3, ``post-pilot-v4``: ``protocol_id`` is a required keyword-only
+    argument, with no default -- a caller must always say which frozen
+    scoring protocol it wants, never inherit one implicitly).
+
+    ``protocol_id`` must be one of ``SCORABLE_PROTOCOL_IDS``
+    (``post-pilot-v3``/``post-pilot-v4`` today); anything else raises via
+    ``validate_scorable_protocol_id`` before any scoring happens. The two
+    protocols share every rule except the numeric-band GENERALIZE
+    sufficiency check: v3 extracts free-text reference figures from
+    ``case_input.text`` (``_legacy_v3_reference_values``, frozen,
+    historical-corpus-compatible); v4 reads the oracle's own structured
+    ``utility_references`` and never touches ``case_input.text`` for this
+    purpose at all (Issue #87's fix for the category-blind, text-coupled
+    v3 mechanism).
+    """
+    validate_scorable_protocol_id(protocol_id)
+
     if oracle.expected_block_request:
         # A case whose oracle expects a block never has an expected_answer
         # to score at all (CaseOracle's own validator forbids the
@@ -404,6 +647,7 @@ def score_utility(
         return UtilityScore(overall="not_applicable", by_category=())
 
     depends_on = oracle.answer_depends_on_categories or []
+    _check_case_protocol_compatibility(oracle, protocol_id, case_id=oracle.sample_id)
 
     if result.status == "blocked":
         # The oracle did not expect this case to block, but this run
@@ -429,7 +673,18 @@ def score_utility(
 
     transformations = resolve_span_transformations(oracle, result, treatment)
     exclude_spans = [(span.start, span.end) for span in oracle.expected_spans]
-    references = _reference_values(case_input.text, exclude_spans)
+    # v3-only: free-text reference extraction, computed unconditionally here
+    # exactly as the frozen post-pilot-v3 scorer always did (whether or not
+    # a numeric-band GENERALIZE is actually present in this case) -- kept
+    # byte-for-byte for historical-corpus scoring. v4 never computes or
+    # reads this; it takes its references from the oracle's own
+    # ``utility_references`` instead, filtered by category at the point of
+    # use below.
+    legacy_references = (
+        _legacy_v3_reference_values(case_input.text, exclude_spans)
+        if protocol_id == "post-pilot-v3"
+        else None
+    )
     reconstructable_categories = {
         expectation.category
         for expectation in oracle.reconstruction
@@ -478,13 +733,32 @@ def score_utility(
                         )
                     )
                 elif category in NUMERIC_BAND_UTILITY_CATEGORIES:
-                    outcomes.append(
-                        classify_generalized_band(
-                            span.value,
-                            transformation.transformed,
-                            references,
+                    if protocol_id == "post-pilot-v3":
+                        outcomes.append(
+                            classify_generalized_band(
+                                span.value,
+                                transformation.transformed,
+                                legacy_references,
+                            )
                         )
-                    )
+                    else:
+                        # post-pilot-v4: only this category's own
+                        # structured references -- never an unfiltered
+                        # list -- so a reference stated for a different
+                        # numeric category can never contaminate this
+                        # category's decidability (Issue #87 finding (b)).
+                        category_references = [
+                            reference
+                            for reference in (oracle.utility_references or [])
+                            if reference.category == category
+                        ]
+                        outcomes.append(
+                            classify_generalized_band_against_references(
+                                span.value,
+                                transformation.transformed,
+                                category_references,
+                            )
+                        )
                 else:
                     # Fail closed (Issue #85's third out-of-scope finding):
                     # a category with neither a date nor a numeric-band

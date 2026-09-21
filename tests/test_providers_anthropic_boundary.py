@@ -276,6 +276,11 @@ def test_the_runner_uses_an_injected_real_provider_for_every_case():
         policy_repository=PolicyRepository.from_directory(POLICY_DIR),
         experiment_run_id="test-run",
         provider=_adapter(client),
+        # Issue #87 / M3: this is a real, legacy corpus/hr/v1 case
+        # (min(CORPUS_DIR.glob(...)) depends on the numeric "salary"
+        # category with no opted-in utility_references, so it must be
+        # scored under the historical post-pilot-v3 protocol explicitly.
+        protocol_id="post-pilot-v3",
     )
 
     assert result.identity.provider_name == "AnthropicProvider"
@@ -297,6 +302,7 @@ def test_the_runner_still_defaults_to_the_fake_provider_when_none_is_injected():
         run_classification="pilot_development",
         policy_repository=PolicyRepository.from_directory(POLICY_DIR),
         experiment_run_id="test-run",
+        protocol_id="post-pilot-v3",
     )
 
     assert result.identity.provider_name == "FakeProvider"
@@ -317,6 +323,7 @@ def test_a_serialized_case_result_from_a_real_provider_run_leaks_nothing():
         policy_repository=PolicyRepository.from_directory(POLICY_DIR),
         experiment_run_id="test-run",
         provider=_adapter(client),
+        protocol_id="post-pilot-v3",
     )
 
     serialized = json.dumps(to_safe_dict(result), default=str)

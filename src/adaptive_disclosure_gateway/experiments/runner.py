@@ -21,6 +21,7 @@ from adaptive_disclosure_gateway.providers import Provider
 from .case_result import CaseResult
 from .corpus_source import load_hr_v1_cases
 from .execution import execute_case
+from .post_pilot_protocol import CURRENT_PROTOCOL_ID
 from .run_identity import (
     PILOT_DEVELOPMENT,
     RunClassification,
@@ -28,6 +29,7 @@ from .run_identity import (
     new_run_metadata,
 )
 from .scoring import score_case
+from .scoring.utility import check_corpus_protocol_compatibility
 
 ALL_TREATMENTS: tuple[Treatment, ...] = (
     Treatment.DIRECT,
@@ -47,6 +49,7 @@ def run_case_for_treatment(
     policy_repository: PolicyRepository,
     experiment_run_id: str,
     provider: Provider | None = None,
+    protocol_id: str | None = None,
 ) -> CaseResult:
     """Execute one case through one treatment (ground-truth-isolated --
     ``case.oracle`` is read only *after* ``execute_case`` returns, by
@@ -66,6 +69,12 @@ def run_case_for_treatment(
     is responsible for the case contexts' ``provider_class`` matching what
     the adapter declares (``invoke_provider``'s pre-flight check refuses a
     mismatch rather than silently proceeding).
+
+    ``protocol_id`` (Issue #87 / M3) is resolved to ``CURRENT_PROTOCOL_ID``
+    at call time when left ``None``, exactly like ``execute_case`` itself --
+    passed straight through to ``execute_case`` (which stamps
+    ``RunIdentity.protocol_id`` with it) and, via
+    ``case_execution.identity.protocol_id``, to ``score_case``.
     """
     case_execution = execute_case(
         case_input=case.input,
@@ -74,6 +83,7 @@ def run_case_for_treatment(
         run_classification=run_classification,
         policy_repository=policy_repository,
         provider=provider,
+        protocol_id=protocol_id,
     )
     score = score_case(case.input, case.oracle, case_execution)
     metadata = new_run_metadata(experiment_run_id)
@@ -94,6 +104,7 @@ def run_pilot(
     treatments: Iterable[Treatment] = ALL_TREATMENTS,
     experiment_run_id: str | None = None,
     provider: Provider | None = None,
+    protocol_id: str | None = None,
 ) -> dict[Treatment, list[CaseResult]]:
     """Run every case in ``corpus_dir`` through every treatment in
     ``treatments``, using the policy documents in ``policy_dir``. Each
@@ -111,11 +122,25 @@ def run_pilot(
     configuration -- the comparability requirement in
     ``docs/research/post-pilot-protocol-v1.md`` section 9.3. Left ``None``,
     every case uses the deterministic ``FakeProvider`` default, unchanged.
+
+    ``protocol_id`` (Issue #87 / M3) is resolved to ``CURRENT_PROTOCOL_ID``
+    at call time when left ``None`` (mirroring ``execute_case``), then
+    checked against **every** loaded case up front, before any treatment or
+    provider call, via ``check_corpus_protocol_compatibility``: a corpus
+    directory containing even one case incompatible with the resolved
+    protocol id (e.g. a legacy, non-opted-in case that depends on a numeric
+    category, scored under ``post-pilot-v4``) raises immediately -- zero
+    provider calls, not a partial run that fails midway through. A
+    historical corpus (``corpus/hr/v1``, ``corpus/contracts/v1``) must pass
+    ``protocol_id="post-pilot-v3"`` explicitly (see
+    ``scripts/run_hr_v1_pilot.py``/``run_contracts_v1_pilot.py``).
     """
     active_experiment_run_id = (
         experiment_run_id if experiment_run_id is not None else new_experiment_run_id()
     )
+    resolved_protocol_id = protocol_id if protocol_id is not None else CURRENT_PROTOCOL_ID
     cases = load_hr_v1_cases(corpus_dir)
+    check_corpus_protocol_compatibility(cases, resolved_protocol_id)
     policy_repository = PolicyRepository.from_directory(policy_dir)
 
     results: dict[Treatment, list[CaseResult]] = {treatment: [] for treatment in treatments}
@@ -130,6 +155,7 @@ def run_pilot(
                     policy_repository=policy_repository,
                     experiment_run_id=active_experiment_run_id,
                     provider=provider,
+                    protocol_id=resolved_protocol_id,
                 )
             )
     return results
