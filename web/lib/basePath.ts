@@ -30,6 +30,31 @@
  * `process.env.ADG_WEB_BASE_PATH` below resolves to a literal string inlined
  * at build time in application code, exactly like a `NEXT_PUBLIC_*` variable
  * would -- without ever being one.
+ *
+ * That inlining is done by webpack's DefinePlugin, which only recognizes the
+ * exact literal AST shape `process.env.ADG_WEB_BASE_PATH` -- a plain member
+ * expression on the literal identifiers `process`, `env`, and the variable
+ * name written out by hand. It does NOT evaluate the program: `env[SOME_VAR]`
+ * (a computed/bracket member expression), `process.env` captured in a
+ * variable or passed as a function's default parameter and indexed later,
+ * or any other indirection all compile without error but are never
+ * substituted. In that case the expression survives into the shipped bundle
+ * unchanged and reads the BROWSER's `process.env` at runtime -- which does
+ * not exist there, so it silently resolves to `undefined`/`{}` and
+ * `BASE_PATH` collapses to `""`. This shipped to production exactly once
+ * (every client-side `/api/**` call went out with no `/disclosure-gateway`
+ * prefix and 404'd at the domain root) precisely because `BASE_PATH` used to
+ * be computed via `resolveBasePath()`, which reads `env[BASE_PATH_ENV_VAR]`
+ * -- a computed access DefinePlugin cannot see. Every Vitest unit test below
+ * still passed, because Node's `process.env` is real; only the compiled
+ * browser artifact was wrong. `web/scripts/check-basepath-inlined.mjs`
+ * (`npm run check:basepath`) guards against a regression by inspecting the
+ * actual built `.next/static` chunks, not source or Node-side behavior.
+ *
+ * Consequently `BASE_PATH` below must be computed from the literal
+ * expression `process.env.ADG_WEB_BASE_PATH` directly -- never through
+ * `resolveBasePath`, a destructured/aliased `process.env`, or any other
+ * indirection, no matter how equivalent it looks in Node.
  */
 
 export const BASE_PATH_ENV_VAR = "ADG_WEB_BASE_PATH";
@@ -52,22 +77,31 @@ export function normalizeBasePath(raw: string | undefined): string {
 }
 
 /**
- * `env` defaults to `process.env` but is an explicit parameter (mirroring
+ * `env` is an explicit, required parameter (mirroring
  * `lib/demoVaultExplorer.ts`'s `isDemoVaultExplorerEnabled`) so tests can
  * exercise every input without mutating the real process environment.
+ *
+ * This function reads `env[BASE_PATH_ENV_VAR]` -- a computed/bracket
+ * property access. That is exactly the indirection the module docstring
+ * above warns is invisible to webpack's DefinePlugin, so this helper must
+ * NEVER be used to compute `BASE_PATH` (the value application code actually
+ * calls in the browser). It exists only for tests, which run in Node and
+ * can supply an arbitrary `env` map directly; `next.config.ts` also uses the
+ * same computed-lookup shape, but only at Node build-config-eval time,
+ * never in bundled application code.
  */
-export function resolveBasePath(
-  env: Record<string, string | undefined> = process.env,
-): string {
+export function resolveBasePath(env: Record<string, string | undefined>): string {
   return normalizeBasePath(env[BASE_PATH_ENV_VAR]);
 }
 
 /**
- * Resolved once at module load. In application code this reads the value
- * `next.config.ts`'s `env` block inlined at build time -- see the module
- * docstring above.
+ * Resolved once at module load, from the literal expression
+ * `process.env.ADG_WEB_BASE_PATH` -- see the module docstring above for why
+ * it must be written out literally, and must not be routed through
+ * `resolveBasePath` or any other indirection. In application code this
+ * reads the value `next.config.ts`'s `env` block inlined at build time.
  */
-export const BASE_PATH = resolveBasePath();
+export const BASE_PATH = normalizeBasePath(process.env.ADG_WEB_BASE_PATH);
 
 /**
  * Joins an absolute `path` (e.g. `"/api/health"`) onto `basePath` without

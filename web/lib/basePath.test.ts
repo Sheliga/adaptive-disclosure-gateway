@@ -1,6 +1,33 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { BASE_PATH_ENV_VAR, apiPath, normalizeBasePath, prefixWithBasePath, resolveBasePath } from "./basePath";
+
+/**
+ * This module runs in Node, where `process.env` is real, so no behavioral
+ * test above/below can catch `BASE_PATH` being computed through an
+ * indirection (`env[BASE_PATH_ENV_VAR]`, `process.env` captured in a
+ * variable, ...) that webpack's DefinePlugin cannot inline into the
+ * browser bundle -- see `basePath.ts`'s module docstring. This regressed to
+ * production exactly once for that reason: every Vitest test here passed
+ * while the shipped bundle silently resolved `BASE_PATH` to `""` in the
+ * browser. `check:basepath` (`scripts/check-basepath-inlined.mjs`) is the
+ * real regression guard, because it inspects the compiled `.next/static`
+ * output; this is a cheap, fast-running companion that pins the one textual
+ * property the fix depends on, so a future refactor that reintroduces the
+ * indirection fails immediately in `npm test`, not only in the slower
+ * build-and-grep check.
+ */
+describe("BASE_PATH source shape", () => {
+  it("computes BASE_PATH from the literal expression process.env.ADG_WEB_BASE_PATH", () => {
+    const source = readFileSync(path.join(import.meta.dirname, "basePath.ts"), "utf-8");
+    const match = source.match(/export const BASE_PATH = ([^;]+);/);
+    expect(match).not.toBeNull();
+    expect(match?.[1]).toBe("normalizeBasePath(process.env.ADG_WEB_BASE_PATH)");
+  });
+});
 
 describe("normalizeBasePath", () => {
   it("returns an empty string when the raw value is undefined", () => {
