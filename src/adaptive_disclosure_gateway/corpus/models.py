@@ -30,6 +30,7 @@ depend on them), and every ``corpus/hr/v1`` case file stays byte-identical.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from enum import StrEnum
 from typing import Literal
 
@@ -102,11 +103,109 @@ CorpusCategory = Literal[
 # Version of the case-file schema itself, distinct from any one corpus's own
 # version directory (`hr/v1`, `contracts/v1`). v1 was the implicit, HR-only
 # shape T09 froze; v2 is this module's per-domain registries plus the
-# oracle's `obligation_relations` field (T24 / issue #37). The change is
-# purely additive -- no v1 field changed meaning, no `corpus/hr/v1` file was
-# edited, and every one of them still loads -- which is exactly why the
-# frozen HR corpus keeps its own `hr/v1` version string unchanged.
-CORPUS_SCHEMA_VERSION = "corpus-case-schema-v2"
+# oracle's `obligation_relations` field (T24 / issue #37); v3 adds the
+# oracle's `utility_references` field (Issue #87 / M3, `post-pilot-v4`) --
+# again purely additive: absent on a case file, `CaseOracle.utility_references`
+# defaults to `None` (the legacy/schema-v2 shape), so no v1/v2 corpus file
+# needs to change and `corpus/hr/v1`/`corpus/contracts/v1` load byte-for-byte
+# unchanged. See `oracle.py`'s `CaseOracle.utility_references` docstring for
+# what "opted in" (a list, possibly empty) vs. "legacy" (`None`) means for
+# scoring under `post-pilot-v4`.
+CORPUS_SCHEMA_VERSION = "corpus-case-schema-v3"
+
+# The numeric categories a structured `NumericUtilityReference` may name
+# (Issue #87 / M3, `post-pilot-v4`) -- exactly the categories whose
+# `transformations/generalization.py` strategy is `NumericBandStrategy` and
+# whose GENERALIZE outcome `experiments/scoring/utility.py` scores through
+# the numeric-band fidelity/sufficiency rule. Kept in this module (rather
+# than only in `experiments/scoring/utility.py`) because the oracle's own
+# validator (`oracle.py`) needs it to reject a reference naming a
+# non-numeric category before any scoring code ever runs. A drift guard
+# (`tests/test_corpus_utility_references.py`) pins that this set stays
+# exactly equal to `experiments.scoring.utility.NUMERIC_BAND_UTILITY_CATEGORIES`
+# -- this module must never import from `experiments` (see this module's own
+# isolation docstring), so the two are defined independently and checked for
+# agreement by a test instead.
+NUMERIC_REFERENCE_CATEGORIES: frozenset[str] = frozenset(
+    {"salary", "contract_value", "penalty_amount"}
+)
+
+
+class ReferenceOperator(StrEnum):
+    """The closed set of relational operators a
+    `NumericUtilityReference` may state (Issue #87 / M3, `post-pilot-v4`).
+
+    Deliberately only the four strict/non-strict, greater/less operators --
+    no `equal`/`between`: an inclusive range like "between X and Y" is
+    expressed as two atoms (`greater_than_or_equal` X + `less_than_or_equal`
+    Y) rather than a fifth composite operator, and an exact-value question
+    is `greater_than_or_equal` X + `less_than_or_equal` X. See
+    `experiments/scoring/utility.py`'s `_reference_is_decidable` for why
+    atom-level decidability is sound for any boolean combination a case
+    author states this way.
+    """
+
+    GREATER_THAN = "greater_than"
+    GREATER_THAN_OR_EQUAL = "greater_than_or_equal"
+    LESS_THAN = "less_than"
+    LESS_THAN_OR_EQUAL = "less_than_or_equal"
+
+
+# The canonical decimal grammar a `NumericUtilityReference.value` must take:
+# a non-negative integer part with no leading zero (`0` alone is allowed),
+# followed by exactly two fractional digits -- ASCII digits only (`[0-9]`,
+# never `\d`, which also matches non-ASCII Unicode digit characters; see
+# Issue #87's separate, filed-not-fixed finding about the v3 fidelity
+# regexes using `\d`). No currency prefix, no thousands separator, no sign:
+# this is a scorer-internal canonical amount, independent of whatever
+# surface format the case's own `input.text` happens to use (deliberately,
+# per the spec's "no text-grounding check" decision -- see `oracle.py`).
+_CANONICAL_DECIMAL_PATTERN = r"^(0|[1-9][0-9]*)\.[0-9]{2}$"
+
+
+class NumericUtilityReference(BaseModel):
+    """One structured "is the answer decidable against this threshold"
+    reference an opted-in (`schema-v3`) corpus case's oracle states for one
+    numeric category (Issue #87 / M3, `post-pilot-v4`).
+
+    Replaces free-text reference extraction (`_reference_values`, kept only
+    as `_legacy_v3_reference_values` for the frozen `post-pilot-v3` scoring
+    path) for evaluation purposes only -- a reference here is read only by
+    `experiments/scoring/utility.py`, never by a treatment, the detector, a
+    policy or a provider (see `tests/test_corpus_utility_references.py`'s
+    AST allowlist).
+
+    Applies to **every** GENERALIZE span of its own `category` in a case
+    (universal over spans, not tied to one particular span instance) -- a
+    case with more than one span of the same numeric category is judged
+    against the same reference set for each of them.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    category: CorpusCategory
+    operator: ReferenceOperator
+    value: str = Field(pattern=_CANONICAL_DECIMAL_PATTERN)
+
+    @model_validator(mode="after")
+    def _check_category_is_numeric(self) -> NumericUtilityReference:
+        if self.category not in NUMERIC_REFERENCE_CATEGORIES:
+            # Names the category only, never the value -- CLAUDE.md's
+            # no-leak invariant, and this field's value is canonical amount
+            # data, not sensitive content, but the rule is applied
+            # uniformly regardless.
+            raise ValueError(
+                "NumericUtilityReference.category must be one of the registered numeric categories"
+            )
+        return self
+
+    @property
+    def amount(self) -> Decimal:
+        """The reference's own canonical amount, parsed once from the
+        already-validated ``value`` string. Never raises -- ``value``'s
+        pattern already guarantees a valid ``Decimal`` literal.
+        """
+        return Decimal(self.value)
 
 
 class TaskNecessity(StrEnum):

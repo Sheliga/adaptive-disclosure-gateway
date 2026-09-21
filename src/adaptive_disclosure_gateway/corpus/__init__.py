@@ -7,8 +7,9 @@ Public surface:
 - ``CaseOracle`` -- ground truth used for scoring only, never privileged
   treatment input.
 - ``ExpectedSpan`` / ``ReconstructionExpectation`` / ``TaskNecessity`` /
-  ``TaskFamily`` / ``ContractsTaskFamily`` / ``ObligationRelation`` -- the
-  oracle's building blocks.
+  ``TaskFamily`` / ``ContractsTaskFamily`` / ``ObligationRelation`` /
+  ``NumericUtilityReference`` / ``ReferenceOperator`` -- the oracle's
+  building blocks.
 - ``CorpusCase`` / ``load_case`` / ``load_corpus`` / ``CorpusLoadError`` --
   loading one or all versioned case files from a corpus directory
   (``corpus/hr/v1/cases/``, ``corpus/contracts/v1/cases/``).
@@ -33,12 +34,15 @@ from adaptive_disclosure_gateway.corpus.models import (
     FROZEN_CATEGORIES_BY_DOMAIN,
     FROZEN_CONTRACTS_CATEGORIES,
     FROZEN_HR_CATEGORIES,
+    NUMERIC_REFERENCE_CATEGORIES,
     REGISTERED_CORPUS_DOMAINS,
     TASK_FAMILIES_BY_DOMAIN,
     ContractsTaskFamily,
     ExpectedSpan,
+    NumericUtilityReference,
     ObligationRelation,
     ReconstructionExpectation,
+    ReferenceOperator,
     TaskFamily,
     TaskNecessity,
 )
@@ -49,6 +53,7 @@ __all__ = [
     "FROZEN_CATEGORIES_BY_DOMAIN",
     "FROZEN_CONTRACTS_CATEGORIES",
     "FROZEN_HR_CATEGORIES",
+    "NUMERIC_REFERENCE_CATEGORIES",
     "REGISTERED_CORPUS_DOMAINS",
     "TASK_FAMILIES_BY_DOMAIN",
     "CaseOracle",
@@ -57,8 +62,10 @@ __all__ = [
     "CorpusCaseInput",
     "CorpusLoadError",
     "ExpectedSpan",
+    "NumericUtilityReference",
     "ObligationRelation",
     "ReconstructionExpectation",
+    "ReferenceOperator",
     "TaskFamily",
     "TaskNecessity",
     "load_case",
