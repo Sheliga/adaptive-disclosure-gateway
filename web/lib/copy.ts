@@ -97,22 +97,23 @@ const ptBR = {
       },
       remove: {
         label: "REMOVE — Remover",
-        description: "O valor é retirado do conteúdo antes de qualquer envio externo.",
+        description:
+          "O valor é retirado do conteúdo antes de qualquer envio externo; nada é colocado no lugar dele.",
         before: "CPF: 123.456.789-00",
-        after: "CPF: [removido]",
+        after: "CPF:",
       },
       pseudonymize: {
         label: "PSEUDONYMIZE — Pseudonimizar",
         description:
           "O valor é trocado por um pseudônimo local; o original nunca sai do ambiente confiável.",
         before: "João da Silva",
-        after: "FUNCIONARIO_A93F",
+        after: "PSEUDO-employee_name-a1c2d3e4f5061728394a5c6d7e8f9012",
       },
       generalize: {
         label: "GENERALIZE — Generalizar",
         description: "O valor é trocado por uma versão menos específica antes do envio.",
         before: "R$ 128.450,00",
-        after: "Entre R$ 100.000 e R$ 150.000",
+        after: "R$ 125000-130000",
       },
     },
     /**

@@ -68,22 +68,23 @@ export const en: AppCopy = {
       },
       remove: {
         label: "REMOVE — Remove",
-        description: "The value is stripped from the content before anything is sent externally.",
+        description:
+          "The value is stripped from the content before anything is sent externally; nothing is put in its place.",
         before: "SSN: 123-45-6789",
-        after: "SSN: [removed]",
+        after: "SSN:",
       },
       pseudonymize: {
         label: "PSEUDONYMIZE — Pseudonymize",
         description:
           "The value is swapped for a local pseudonym; the original never leaves the trusted environment.",
         before: "John Smith",
-        after: "EMPLOYEE_A93F",
+        after: "PSEUDO-employee_name-a1c2d3e4f5061728394a5c6d7e8f9012",
       },
       generalize: {
         label: "GENERALIZE — Generalize",
         description: "The value is swapped for a less specific version before being sent.",
-        before: "$128,450.00",
-        after: "Between $100,000 and $150,000",
+        before: "R$ 128,450.00",
+        after: "R$ 125000-130000",
       },
     },
     researchDisclosure: {
