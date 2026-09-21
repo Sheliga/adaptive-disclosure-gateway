@@ -32,6 +32,11 @@ containing `post-pilot-v1`, `post-pilot-v2` and `post-pilot-v3`; `CURRENT_PROTOC
 `post-pilot-v3`). `tests/test_post_pilot_protocol.py` pins that the three can never silently
 drift apart, for every document independently.
 
+**Semantic change: yes.** This is a classification-rule change under v1 §0's own test ("any
+change to a number, a formula, a classification rule or a comparison cell requires a new
+version") and v2 §2.1's promise that the numeric rule stays byte-for-byte unchanged under v2 —
+both are exactly why this fix cannot land as a v2 patch and requires `post-pilot-v3`.
+
 ## 1. Rationale: fidelity and sufficiency are two distinct properties
 
 `score_utility` (`src/adaptive_disclosure_gateway/experiments/scoring/utility.py`) scored every
@@ -101,6 +106,41 @@ Fidelity must be checked **first**. A rule that checked sufficiency without firs
 fidelity — the v2/pre-v3 rule above — can rescue a wrong band into `answerable` merely because no
 reference happens to land inside it; checking fidelity first closes that path unconditionally,
 regardless of what references are or are not present in the text.
+
+### Decision C (chosen): fidelity-first, sufficiency unchanged — and why A and B don't suffice
+
+Three shapes of fix were considered for this defect. **Decision C** — check fidelity
+unconditionally, then apply the pre-existing sufficiency rule unchanged, with an explicit
+`no_reference` outcome when no reference is stated — is the one implemented (§3 below).
+
+- **Option A — patch only the zero-reference vacuous-`True` case** (`all([])`), leaving the
+  "does the band contain the value" question unchecked whenever at least one reference is
+  present. **Rejected**: this is the narrower of the two failure modes the minimal reproduction
+  table above documents, and leaves the wider one open — a wrong band with a reference figure
+  that simply happens to fall outside it (row 1 of that table: `[500000.0]` against the wrong
+  band `R$ 600000-650000`) would still score `answerable`/`generalized_band_decidable` under
+  Option A, exactly as it did before this fix. Patching only the case that is easiest to notice
+  (the vacuous default) without addressing the structural absence of any containment check would
+  leave the actual defect — the rule never asks whether the band is correct — in place.
+- **Option B — redefine "decidable" so any validly-shaped band is answerable without regard to a
+  stated reference at all** (i.e., treat "the band contains the value" as sufficient by itself,
+  dropping the reference-based sufficiency check entirely). **Rejected**: this would silently
+  *add* credit relative to the pre-v3 rule for every band with zero or an unfavorably-placed
+  reference — the reverse of what a defect fix is allowed to do under v1 §11's anti-tuning
+  discipline (§7 below: a fix may only ever *remove* credit that should never have been given,
+  never grant new credit the frozen protocol never promised). It would also invent a new
+  decidability semantics with no documented basis — `corpus/hr/v1/SCHEMA.md` and v1 §6.1 define
+  decidability only against a *stated* reference, and Option B would silently replace that
+  definition rather than resolve the fidelity gap within it.
+- **Option C (chosen) — fidelity first, then the existing sufficiency rule, unchanged** (§3
+  below). Containment (fidelity) is checked as a precondition, independent of and prior to any
+  reference; a band that fails it is `not_answerable` regardless of what references exist. A band
+  that passes it is then judged by the *exact* pre-v3 sufficiency comparison (§3.2 step 5), with
+  the one addition that zero references now yields an explicit `indeterminate` /
+  `generalized_band_no_reference` rather than a vacuous `answerable`. This is the minimal change
+  that closes both failure modes in the reproduction table, changes no comparison semantics that
+  were not already broken, and cannot grant any credit the old rule did not already promise
+  somewhere.
 
 ## 3. The formal rule
 
@@ -259,7 +299,13 @@ single-purpose-change discipline v2 §6 already followed:
   utility-side check that a numeric GENERALIZE actually coarsened the value by at least
   `MIN_NUMERIC_BAND_WIDTH` — the utility scorer trusts the generator's own width invariant rather
   than re-verifying it. This needs its own versioned methodological decision before the Gate 8
-  batch.
+  batch. **Owner decision: resolved by option 1, before Gate 7** — a new protocol version
+  `post-pilot-v4` with structured category/operator/value oracle references, replacing
+  free-text reference extraction for evaluation purposes only (never reaching the
+  treatment/provider payload). `corpus/hr/v1` and `corpus/contracts/v1` and their historical
+  results stay intact under this decision. See `docs/milestone-3-current-plan.md`'s "Issue #87
+  (reviewer's 'Issue #1') — methodological ordering decision" for the full analysis and the
+  owner's decision; not implemented by this ticket.
 - **[Issue #88](https://github.com/Sheliga/adaptive-disclosure-gateway/issues/88) —
   `NumericBandStrategy` misparses Brazilian-formatted amounts.** `transformations/
   generalization.py`'s `_parse_amount` (~lines 58–66) reads `R$ 1.275.000,00` as `1.275` (the
@@ -267,7 +313,11 @@ single-purpose-change discipline v2 §6 already followed:
   for any real-world or demo input in that format. This is a *treatment*-behavior change, not a
   scoring one, so it needs its own versioned decision. Both registered corpora use the
   dotted-decimal format exclusively (`R$ <digits>.<2 digits>`), so no recorded experiment result
-  is affected by this defect.
+  is affected by this defect. **Owner decision: moved before Gate 7** — a v3-conformant-only
+  corpus (this document's own strict oracle grammar, unchanged by this decision) would let this
+  parser defect dictate the corpus format rather than the other way around; see
+  `docs/milestone-3-current-plan.md`, same section, for the full rationale and the narrow
+  condition under which #88 could still be declared out of scope.
 
 **Noted, not filed as an issue:** `contracts_value_audit_002`'s task asks the provider to give
 "the specific contract value figure" while the oracle accepts `GENERALIZE` as a conformant
@@ -306,7 +356,40 @@ re-execute/re-score/compare method v2 §4 used for the Gate 6 date-rule impact:
   change — v1 §1's rule that a corpus whose results were inspected during development can never
   become `held_out_confirmatory` is untouched by a scoring fix that changes zero rows.
 
-## 10. Erratum: post-pilot-protocol-v2.md §3
+## 10. Test coverage mapping
+
+`tests/test_experiments_scoring_numeric_band_utility.py` is the primary suite for this rule,
+structured to mirror the date-aware rule's own test file
+(`tests/test_experiments_scoring_date_utility.py`). Every minimal case named in this document
+maps to a specific test:
+
+| Case in this document | Test |
+| --- | --- |
+| Correct band, sufficient reference (baseline) | `test_contains_original_and_sufficient_reference_is_decidable`, `test_correct_band_with_reference_outside_it_is_decidable` |
+| Correct band, reference inside it (sufficiency-only ambiguity, §2's `hr_salary_analysis_003` illustration) | `test_correct_band_with_reference_inside_it_is_ambiguous`; regression: `tests/test_experiments_hr_salary_analysis_003_regression.py` |
+| Band excludes the original (fidelity failure) | `test_band_excluding_original_is_not_answerable_regardless_of_references` |
+| Central adversarial case (§1's minimal reproduction, row 1) | `test_central_adversarial_wrong_band_with_reference_outside_it_is_not_answerable` |
+| Vacuous zero-reference case (§1's minimal reproduction, row 2) | `test_no_reference_and_correct_band_is_indeterminate_not_vacuously_decidable`, `test_no_reference_and_wrong_band_is_still_not_answerable` |
+| Reference inside the wrong band (§1's minimal reproduction, row 3) | covered by the real-case end-to-end tests below, which inject a wrong band unconditionally regardless of reference placement |
+| Exact lower/upper boundary (half-open interval) | `test_exact_lower_bound_is_contained_half_open`, `test_exact_upper_bound_is_excluded_half_open`, `test_upper_bound_value_is_contained_by_the_next_band`, `test_value_just_below_upper_bound_is_contained` |
+| Inverted / degenerate band | `test_inverted_band_is_invalid`, `test_degenerate_zero_width_band_is_invalid` |
+| Invalid band formats (§1's four other shapes) | `test_invalid_band_formats_are_rejected` |
+| Unparseable original, including precedence over an invalid band | `test_unparseable_original_is_rejected_before_the_band_is_even_checked` |
+| Real case, wrong band injected (`contracts_value_audit_002`) | `test_real_contracts_value_audit_002_with_a_wrong_band_is_not_answerable` |
+| Real case, wrong band injected (`hr_salary_analysis_001`) | `test_real_hr_salary_analysis_001_with_a_wrong_band_is_not_answerable` |
+| Ground truth is the oracle span value, never `Transformation.original` (§4) | `test_ground_truth_is_the_oracle_span_value_never_the_transformations_own_original` |
+| Multi-span category, one wrong band among several | `test_real_hr_department_aggregation_003_one_wrong_salary_band_fails_the_category` |
+| Category in neither registry (§5) | `test_synthetic_generalize_on_an_unregistered_category_fails_closed` |
+| Determinism | `test_score_utility_numeric_band_rule_is_deterministic_across_repeated_calls` |
+| Registry drift/coherence guards | `test_numeric_band_and_date_registries_are_disjoint`, `test_every_numeric_band_strategy_category_is_registered_for_utility_scoring`, `test_generalization_strategy_corpus_categories_equal_the_two_utility_registries_union`, `test_every_numeric_oracle_span_in_every_registered_corpus_is_self_consistent` |
+| No-leak adversarial | `test_classify_generalized_band_reason_never_contains_either_value`, `test_score_utility_output_never_contains_a_distinctive_amount_or_band` |
+| Closed reason set | `test_every_reason_classify_generalized_band_can_return_is_in_the_closed_set` |
+
+Regression pins outside this file that stay green under v3, verified in the same test run: the
+pre-existing `hr_salary_analysis_003` (ambiguous — sufficiency-only, §2) and
+`contracts_obligation_relation_001` (decidable) pins.
+
+## 11. Erratum: post-pilot-protocol-v2.md §3
 
 `docs/research/post-pilot-protocol-v2.md` §3 ("Provenance / version boundary") contains two
 statements that do not match the files as committed, verified against
@@ -328,12 +411,12 @@ current document. Nothing about `RunIdentity.protocol_id`'s current behavior (ad
 always populated on every run this codebase produces going forward) or either committed
 artifact's own content is affected by this correction; it is a documentation-accuracy fix only.
 
-## 11. Change log
+## 12. Change log
 
 - 2026-09-21 — `post-pilot-v3` frozen (Issue #85): adds the numeric-band GENERALIZE fidelity rule
   (`classify_generalized_band`, this document's §3), the category-unregistered fail-closed path
   (§5), records zero historical impact on both registered corpora, verified by re-scoring (§9),
-  and corrects `post-pilot-protocol-v2.md` §3's schema-version/protocol_id erratum (§10) without
+  and corrects `post-pilot-protocol-v2.md` §3's schema-version/protocol_id erratum (§11) without
   editing that frozen document. No other methodological content changes; `post-pilot-v1` and
   `post-pilot-v2` remain the frozen historical record of what governed every run before this
   date.
