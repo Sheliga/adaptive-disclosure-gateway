@@ -307,8 +307,8 @@ Brazilian amounts accepted, negatives/leading-zeros/no-cents rejected — implem
 `_parse_original_amount_v5`, two patterns tried in order) so a shared-parser bug cannot make
 fidelity circularly agree with a wrong band. `NumericBandStrategy` now parses to `Decimal`, never
 `float`, and bands in exact integer arithmetic; the emitted band's own string shape is unchanged.
-A new, ASCII-only/`fullmatch`-only date grammar (`classify_generalized_date_v5`) closes the same
-Unicode-digit/trailing-newline defect class for the date path. `score_utility`'s and
+Date utility semantics intentionally remain inherited from v4; the treatment/scorer date finding
+is tracked separately in Issue #96. `score_utility`'s and
 `_check_case_protocol_compatibility`'s dispatch, previously an unconditional "not-v3-means-v4"
 fallback, is now exhaustive per protocol id (raising `UnsupportedScoringProtocolError` for any
 id with no matching branch). A new, v5-only pre-run check
