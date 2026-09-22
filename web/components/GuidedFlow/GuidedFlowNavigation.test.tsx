@@ -233,6 +233,26 @@ describe("GuidedFlow navigation foundation", () => {
     expect(window.location.search).not.toContain("ex-1");
   });
 
+  it("keeps sensitive compose data out of URLs, history state, and Web Storage", async () => {
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+    const sensitiveDocument = "Contrato sigiloso: R$ 125.000,00";
+    const sensitiveTask = "Resuma apenas para a diretoria";
+    render(<GuidedFlow />);
+
+    await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
+    await userEvent.click(screen.getByRole("radio", { name: copy.entryModes.pasteText }));
+    await userEvent.type(screen.getByLabelText(copy.newTest.pasteLabel), sensitiveDocument);
+    await userEvent.type(screen.getByLabelText(copy.newTest.taskLabel), sensitiveTask);
+
+    expect(window.location.search).toBe("?step=prepare");
+    expect(window.location.hash).toBe("");
+    expect(window.history.state).toEqual({ flowNavigationId: expect.any(String) });
+    expect(JSON.stringify(window.history.state)).not.toContain(sensitiveDocument);
+    expect(JSON.stringify(window.history.state)).not.toContain(sensitiveTask);
+    expect(window.localStorage.length).toBe(0);
+    expect(window.sessionStorage.length).toBe(0);
+  });
+
   it("fails closed on direct refresh of an unrecoverable ephemeral step", async () => {
     window.history.replaceState(null, "", "/?step=review");
 
@@ -275,5 +295,26 @@ describe("GuidedFlow navigation foundation", () => {
 
     expect(mockedPreviewDisclosure).toHaveBeenCalledTimes(1);
     expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not restore processing or offer a post-send re-execution path with browser Back", async () => {
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+    mockedExecuteDisclosure.mockResolvedValue({ ok: true, data: executeResponse() });
+    render(<GuidedFlow />);
+
+    await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
+    await userEvent.selectOptions(await screen.findByLabelText(copy.newTest.exampleFieldLabel), "ex-1");
+    await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+    await screen.findByRole("heading", { name: copy.review.heading });
+    await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+    await screen.findByRole("heading", { name: copy.result.heading });
+
+    window.history.back();
+
+    expect(await screen.findByRole("heading", { name: "Esta etapa não pode ser restaurada" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: copy.review.confirmSend })).not.toBeInTheDocument();
+    expect(mockedPreviewDisclosure).toHaveBeenCalledTimes(1);
+    expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+    expect(mockedCompareStrategies).not.toHaveBeenCalled();
   });
 });
