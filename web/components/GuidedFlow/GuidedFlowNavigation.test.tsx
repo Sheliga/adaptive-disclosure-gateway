@@ -437,6 +437,54 @@ describe("GuidedFlow navigation foundation", () => {
     expect(await screen.findByRole("heading", { name: "Esta etapa não pode ser restaurada" })).toBeInTheDocument();
   });
 
+  it("prunes a discarded Review snapshot before creating a new forward branch", async () => {
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+    const mapDelete = vi.spyOn(Map.prototype, "delete");
+    render(<GuidedFlow />);
+
+    await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
+    await userEvent.selectOptions(await screen.findByLabelText(copy.newTest.exampleFieldLabel), "ex-1");
+    await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+    await screen.findByRole("heading", { name: copy.review.heading });
+    const abandonedReviewId = window.history.state.flowNavigationId;
+
+    window.history.back();
+    await screen.findByRole("heading", { name: copy.newTest.heading });
+    await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+    await screen.findByRole("heading", { name: copy.review.heading });
+
+    expect(window.history.state.flowNavigationId).not.toBe(abandonedReviewId);
+    expect(mapDelete).toHaveBeenCalledWith(abandonedReviewId);
+    mapDelete.mockRestore();
+  });
+
+  it("keeps a pending send in progress when browser Back is attempted", async () => {
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+    const pendingExecute = deferred<Awaited<ReturnType<typeof executeDisclosure>>>();
+    mockedExecuteDisclosure.mockReturnValue(pendingExecute.promise);
+    render(<GuidedFlow />);
+
+    await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
+    await userEvent.selectOptions(await screen.findByLabelText(copy.newTest.exampleFieldLabel), "ex-1");
+    await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+    await screen.findByRole("heading", { name: copy.review.heading });
+    const sendingReviewId = window.history.state.flowNavigationId;
+    await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+    await waitFor(() => expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1));
+
+    window.history.back();
+    await waitFor(() => expect(window.history.state.flowNavigationId).toBe(sendingReviewId));
+    expect(screen.queryByRole("button", { name: copy.review.confirmSend })).not.toBeInTheDocument();
+    expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+
+    pendingExecute.resolve({ ok: true, data: executeResponse() });
+    await screen.findByRole("heading", { name: copy.result.heading });
+    window.history.back();
+
+    expect(await screen.findByRole("heading", { name: "Esta etapa não pode ser restaurada" })).toBeInTheDocument();
+    expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+  });
+
   it("does not restore processing or offer a post-send re-execution path with browser Back", async () => {
     mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
     mockedExecuteDisclosure.mockResolvedValue({ ok: true, data: executeResponse() });
