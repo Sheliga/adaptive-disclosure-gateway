@@ -623,7 +623,7 @@ function GuidedFlowShell() {
         {unrecoverableStep === null && state.screen === "technicalDetails" && (
           <TechnicalDetailsScreen
             execute={state.execute}
-            onBack={() => dispatch({ type: "RETURN_TO_RESULT" })}
+            onBack={handleBack}
           />
         )}
 
@@ -634,7 +634,7 @@ function GuidedFlowShell() {
         {unrecoverableStep === null && state.screen === "comparison" && (
           <ComparisonScreen
             comparison={state.comparison}
-            onBack={() => dispatch({ type: "RETURN_TO_RESULT" })}
+            onBack={handleBack}
           />
         )}
       </main>
