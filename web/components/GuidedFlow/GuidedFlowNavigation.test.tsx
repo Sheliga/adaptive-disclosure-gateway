@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -89,6 +89,74 @@ function trackRetainedFlowSnapshots() {
       mapDelete.mockRestore();
     },
   };
+}
+
+/**
+ * Records every `pushState`/`replaceState` GuidedFlow issues (by the
+ * `flowNavigationId` it writes), interleaved with markers the test inserts,
+ * so a test can assert on the ORDER of history writes relative to the
+ * popstate events it dispatches -- e.g. that nothing was written while a
+ * corrective `history.go(...)` was still pending. The real methods still
+ * run, so jsdom's `history.state`/URL stay observable.
+ */
+function trackHistoryWrites() {
+  const log: string[] = [];
+  const originalPush = window.history.pushState.bind(window.history);
+  const originalReplace = window.history.replaceState.bind(window.history);
+  const idOf = (data: unknown) =>
+    typeof data === "object" && data !== null && "flowNavigationId" in data
+      ? String((data as { flowNavigationId: unknown }).flowNavigationId)
+      : String(data);
+  const push = vi
+    .spyOn(window.history, "pushState")
+    .mockImplementation((data: unknown, unused: string, url?: string | URL | null) => {
+      log.push(`push:${idOf(data)}`);
+      originalPush(data, unused, url);
+    });
+  const replace = vi
+    .spyOn(window.history, "replaceState")
+    .mockImplementation((data: unknown, unused: string, url?: string | URL | null) => {
+      log.push(`replace:${idOf(data)}`);
+      originalReplace(data, unused, url);
+    });
+  return {
+    log,
+    mark: (marker: string) => log.push(marker),
+    restore: () => {
+      push.mockRestore();
+      replace.mockRestore();
+    },
+  };
+}
+
+function dispatchPopState(flowNavigationId: string) {
+  act(() => {
+    window.dispatchEvent(new PopStateEvent("popstate", { state: { flowNavigationId } }));
+  });
+}
+
+/**
+ * Drives Welcome -> Compose (example) -> Review -> Confirm and returns the
+ * Compose and sending-Review navigation ids, with execute left pending on
+ * whatever the caller's mock returns.
+ */
+async function reachPendingExampleSend() {
+  await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
+  const composeId = window.history.state.flowNavigationId as string;
+  await userEvent.selectOptions(await screen.findByLabelText(copy.newTest.exampleFieldLabel), "ex-1");
+  await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+  await screen.findByRole("heading", { name: copy.review.heading });
+  const sendingReviewId = window.history.state.flowNavigationId as string;
+  await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+  return { composeId, sendingReviewId };
+}
+
+function expectNoComposeAndNoResend() {
+  expect(screen.queryByRole("heading", { name: copy.newTest.heading })).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: copy.newTest.continueToReview }),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: copy.review.confirmSend })).not.toBeInTheDocument();
 }
 
 function compareResponse(): CompareResponse {
@@ -712,5 +780,239 @@ describe("GuidedFlow navigation foundation", () => {
     expect(mockedPreviewDisclosure).toHaveBeenCalledTimes(1);
     expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
     expect(mockedCompareStrategies).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Race: execute completion vs history correction.
+   *
+   * A Back during "executing" makes GuidedFlow ask the browser to return to
+   * the sending Review with `history.go(delta)`. In a real browser that
+   * correction lands asynchronously, so execute can settle while the browser
+   * is still physically on the earlier entry. The event order below is
+   * therefore built by hand: `history.go` is stubbed to a no-op (it must not
+   * emit popstate on its own), the out-of-band Back and the later corrective
+   * landing are synthetic popstate events, and execute is resolved BETWEEN
+   * them. jsdom's own traversal queue cannot produce this interleaving
+   * deterministically (see the other synthetic-popstate tests above), and
+   * since the stub keeps jsdom physically on the Review entry, what the test
+   * observes is the ORDER of history writes relative to those two events.
+   */
+  it("registers Result only after the corrective popstate when execute resolves while a Back correction is pending", async () => {
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+    const pendingExecute = deferred<Awaited<ReturnType<typeof executeDisclosure>>>();
+    mockedExecuteDisclosure.mockReturnValue(pendingExecute.promise);
+    const tracker = trackRetainedFlowSnapshots();
+    const goSpy = vi.spyOn(window.history, "go").mockImplementation(() => {});
+    let writes: ReturnType<typeof trackHistoryWrites> | null = null;
+    try {
+      render(<GuidedFlow />);
+      const welcomeId = window.history.state.flowNavigationId as string;
+      const { composeId, sendingReviewId } = await reachPendingExampleSend();
+      await waitFor(() => expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1));
+
+      writes = trackHistoryWrites();
+      writes.mark("back-popstate");
+      dispatchPopState(composeId);
+      expect(goSpy).toHaveBeenCalledTimes(1);
+      expect(goSpy).toHaveBeenCalledWith(1);
+      expectNoComposeAndNoResend();
+
+      // Execute settles BEFORE the corrective popstate: the browser is still
+      // on Compose, so nothing may be written to history yet.
+      pendingExecute.resolve({ ok: true, data: executeResponse() });
+      await screen.findByRole("heading", { name: copy.result.heading });
+      expectNoComposeAndNoResend();
+      expect(writes.log).toEqual(["back-popstate"]);
+      expect(window.history.state.flowNavigationId).toBe(sendingReviewId);
+
+      writes.mark("corrective-popstate");
+      dispatchPopState(sendingReviewId);
+      await waitFor(() =>
+        expect(window.history.state.flowNavigationId).not.toBe(sendingReviewId),
+      );
+      const resultId = window.history.state.flowNavigationId as string;
+      // Result is written exactly once, as a push, only after the browser is
+      // back on the sending Review -- so its entry directly follows it.
+      expect(writes.log).toEqual(["back-popstate", "corrective-popstate", `push:${resultId}`]);
+      expect(window.location.search).toBe("?step=result");
+      expect(screen.getByRole("heading", { name: copy.result.heading })).toBeInTheDocument();
+      expect(goSpy).toHaveBeenCalledTimes(1);
+
+      // Back from Result lands on the sent Review entry: fail closed, never
+      // Compose and never a resend.
+      dispatchPopState(sendingReviewId);
+      expect(
+        await screen.findByRole("heading", { name: "Esta etapa não pode ser restaurada" }),
+      ).toBeInTheDocument();
+      expectNoComposeAndNoResend();
+      expect(goSpy).toHaveBeenCalledTimes(1);
+
+      // Forward from there returns to the registered Result without
+      // re-executing the provider.
+      dispatchPopState(resultId);
+      await screen.findByRole("heading", { name: copy.result.heading });
+      expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+      expect(mockedPreviewDisclosure).toHaveBeenCalledTimes(1);
+      expect(writes.log.filter((entry) => entry.startsWith("push:"))).toEqual([`push:${resultId}`]);
+
+      // The sent Review's snapshot is gone; only the still-reachable
+      // Welcome, Compose and Result entries remain.
+      expect(tracker.retained.has(sendingReviewId)).toBe(false);
+      expect([...tracker.retained].sort()).toEqual([welcomeId, composeId, resultId].sort());
+    } finally {
+      writes?.restore();
+      goSpy.mockRestore();
+      tracker.restore();
+    }
+  });
+
+  it("keeps a failed send attached to the sending Review when execute fails while a Back correction is pending", async () => {
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+    const pendingExecute = deferred<Awaited<ReturnType<typeof executeDisclosure>>>();
+    mockedExecuteDisclosure.mockReturnValue(pendingExecute.promise);
+    const goSpy = vi.spyOn(window.history, "go").mockImplementation(() => {});
+    let writes: ReturnType<typeof trackHistoryWrites> | null = null;
+    try {
+      render(<GuidedFlow />);
+      const { composeId, sendingReviewId } = await reachPendingExampleSend();
+      await waitFor(() => expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1));
+
+      // Same artificial ordering as the success-path race test above.
+      writes = trackHistoryWrites();
+      writes.mark("back-popstate");
+      dispatchPopState(composeId);
+      expect(goSpy).toHaveBeenCalledWith(1);
+
+      pendingExecute.resolve({
+        ok: false,
+        status: 502,
+        error: { message: copy.errors.generic, kind: null, fields: null },
+      });
+      await screen.findByText(copy.errors.generic);
+      expect(screen.queryByRole("heading", { name: copy.newTest.heading })).not.toBeInTheDocument();
+      // The browser is still on Compose: writing the Review-with-error now
+      // would overwrite (replace) or fork (push) the wrong entry.
+      expect(writes.log).toEqual(["back-popstate"]);
+
+      writes.mark("corrective-popstate");
+      dispatchPopState(sendingReviewId);
+      await waitFor(() =>
+        expect(writes?.log).toEqual([
+          "back-popstate",
+          "corrective-popstate",
+          `replace:${sendingReviewId}`,
+        ]),
+      );
+      expect(window.history.state.flowNavigationId).toBe(sendingReviewId);
+      expect(window.location.search).toBe("?step=review");
+      expect(screen.getByRole("heading", { name: copy.review.heading })).toBeInTheDocument();
+      expect(screen.getByText(copy.errors.generic)).toBeInTheDocument();
+      expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+      expect(goSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      writes?.restore();
+      goSpy.mockRestore();
+    }
+  });
+
+  it("re-corrects a second Back that arrives after execute resolved but before the first correction landed", async () => {
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+    const pendingExecute = deferred<Awaited<ReturnType<typeof executeDisclosure>>>();
+    mockedExecuteDisclosure.mockReturnValue(pendingExecute.promise);
+    const goSpy = vi.spyOn(window.history, "go").mockImplementation(() => {});
+    let writes: ReturnType<typeof trackHistoryWrites> | null = null;
+    try {
+      render(<GuidedFlow />);
+      const welcomeId = window.history.state.flowNavigationId as string;
+      const { composeId, sendingReviewId } = await reachPendingExampleSend();
+      await waitFor(() => expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1));
+
+      // Same artificial ordering as the race tests above.
+      writes = trackHistoryWrites();
+      dispatchPopState(composeId);
+      expect(goSpy).toHaveBeenLastCalledWith(1);
+      pendingExecute.resolve({ ok: true, data: executeResponse() });
+      await screen.findByRole("heading", { name: copy.result.heading });
+
+      // A second Back lands on Welcome before the first correction does. The
+      // flow is no longer "executing", but the browser is still not on the
+      // sending Review: this must be corrected (exact delta 2), not restored
+      // as Welcome -- which would also drop the unsynced Result.
+      dispatchPopState(welcomeId);
+      expect(goSpy).toHaveBeenLastCalledWith(2);
+      expect(screen.queryByRole("heading", { name: copy.howItWorks.title })).not.toBeInTheDocument();
+      expectNoComposeAndNoResend();
+      expect(writes.log).toEqual([]);
+
+      dispatchPopState(sendingReviewId);
+      await waitFor(() => expect(writes?.log).toHaveLength(1));
+      const resultId = window.history.state.flowNavigationId as string;
+      expect(writes.log).toEqual([`push:${resultId}`]);
+      expect(resultId).not.toBe(sendingReviewId);
+      expect(screen.getByRole("heading", { name: copy.result.heading })).toBeInTheDocument();
+      expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+    } finally {
+      writes?.restore();
+      goSpy.mockRestore();
+    }
+  });
+
+  it("registers an uploaded document's Result only after the corrective popstate when executeDocument resolves first", async () => {
+    mockedPreviewDocument.mockResolvedValue({
+      ok: true,
+      data: { ...previewResponse(), confirmation_token: "opaque.confirmation.token" },
+    });
+    const pendingExecute = deferred<Awaited<ReturnType<typeof executeDocument>>>();
+    mockedExecuteDocument.mockReturnValue(pendingExecute.promise);
+    const goSpy = vi.spyOn(window.history, "go").mockImplementation(() => {});
+    let writes: ReturnType<typeof trackHistoryWrites> | null = null;
+    try {
+      render(<GuidedFlow />);
+      await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
+      const composeId = window.history.state.flowNavigationId as string;
+      await userEvent.click(screen.getByRole("radio", { name: copy.entryModes.uploadFile }));
+      await userEvent.upload(
+        screen.getByLabelText(copy.newTest.uploadFieldLabel),
+        new File([new Uint8Array([0x25, 0x50, 0x44, 0x46])], "synthetic-contract.pdf", {
+          type: "application/pdf",
+        }),
+      );
+      await userEvent.type(screen.getByLabelText(copy.newTest.taskLabel), "Quais são os prazos?");
+      await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+      await screen.findByRole("heading", { name: copy.review.heading });
+      const sendingReviewId = window.history.state.flowNavigationId as string;
+      await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+      await waitFor(() => expect(mockedExecuteDocument).toHaveBeenCalledTimes(1));
+
+      // Same artificial ordering as the paste/example race test above.
+      writes = trackHistoryWrites();
+      writes.mark("back-popstate");
+      dispatchPopState(composeId);
+      expect(goSpy).toHaveBeenCalledWith(1);
+
+      pendingExecute.resolve({ ok: true, data: executeResponse() });
+      await screen.findByRole("heading", { name: copy.result.heading });
+      expectNoComposeAndNoResend();
+      expect(writes.log).toEqual(["back-popstate"]);
+
+      writes.mark("corrective-popstate");
+      dispatchPopState(sendingReviewId);
+      await waitFor(() =>
+        expect(window.history.state.flowNavigationId).not.toBe(sendingReviewId),
+      );
+      const resultId = window.history.state.flowNavigationId as string;
+      expect(writes.log).toEqual(["back-popstate", "corrective-popstate", `push:${resultId}`]);
+
+      dispatchPopState(sendingReviewId);
+      expect(
+        await screen.findByRole("heading", { name: "Esta etapa não pode ser restaurada" }),
+      ).toBeInTheDocument();
+      expectNoComposeAndNoResend();
+      expect(mockedExecuteDocument).toHaveBeenCalledTimes(1);
+      expect(mockedPreviewDocument).toHaveBeenCalledTimes(1);
+    } finally {
+      writes?.restore();
+      goSpy.mockRestore();
+    }
   });
 });
