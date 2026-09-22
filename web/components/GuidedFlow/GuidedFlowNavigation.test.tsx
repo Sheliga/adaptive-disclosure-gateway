@@ -385,10 +385,12 @@ describe("GuidedFlow navigation foundation", () => {
     expect(mockedCompareStrategies).toHaveBeenCalledTimes(1);
   });
 
-  it("reuses the Compose navigation id while fields change and preserves the final value", async () => {
+  it("reuses the Compose navigation id and snapshot entry while fields change", async () => {
+    const mapSet = vi.spyOn(Map.prototype, "set");
     render(<GuidedFlow />);
     await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
-    const initialNavigationId = window.history.state.flowNavigationId;
+    const initialNavigationId = window.history.state.flowNavigationId as string;
+    mapSet.mockClear();
 
     await userEvent.click(screen.getByRole("radio", { name: copy.entryModes.pasteText }));
     await userEvent.type(screen.getByLabelText(copy.newTest.pasteLabel), "primeira alteração");
@@ -398,6 +400,12 @@ describe("GuidedFlow navigation foundation", () => {
     await userEvent.type(screen.getByLabelText(copy.newTest.pasteLabel), "valor final preservado");
     expect(window.history.state.flowNavigationId).toBe(initialNavigationId);
     expect(screen.getByLabelText(copy.newTest.pasteLabel)).toHaveValue("valor final preservado");
+
+    const flowSnapshotIds = mapSet.mock.calls
+      .map(([key]) => key)
+      .filter((key) => typeof key === "string" && key.startsWith("flow-"));
+    expect(new Set(flowSnapshotIds)).toEqual(new Set([initialNavigationId]));
+    mapSet.mockRestore();
   });
 
   it("uses the same history traversal for Review and Technical Details back buttons", async () => {
