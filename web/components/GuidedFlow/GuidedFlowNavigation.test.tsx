@@ -293,8 +293,14 @@ describe("GuidedFlow navigation foundation", () => {
     await waitFor(() => expect(mockedCompareStrategies).toHaveBeenCalledTimes(1));
     await screen.findByRole("heading", { name: copy.result.heading });
 
+    window.history.back();
+    await screen.findByRole("heading", { name: copy.sectionHeadings.technicalDetails });
+    window.history.forward();
+    await screen.findByRole("heading", { name: copy.result.heading });
+
     expect(mockedPreviewDisclosure).toHaveBeenCalledTimes(1);
     expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+    expect(mockedCompareStrategies).toHaveBeenCalledTimes(1);
   });
 
   it("does not restore processing or offer a post-send re-execution path with browser Back", async () => {
