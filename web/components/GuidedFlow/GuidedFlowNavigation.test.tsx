@@ -14,7 +14,7 @@ import {
   previewDisclosure,
   previewDocument,
 } from "@/lib/api";
-import type { ExecuteResponse, HealthResponse, PreviewResponse } from "@/lib/contracts";
+import type { CompareResponse, ExecuteResponse, HealthResponse, PreviewResponse } from "@/lib/contracts";
 import { copy } from "@/lib/copy";
 
 import { GuidedFlow } from "./GuidedFlow";
@@ -40,6 +40,23 @@ const mockedExecuteDisclosure = vi.mocked(executeDisclosure);
 const mockedPreviewDocument = vi.mocked(previewDocument);
 const mockedExecuteDocument = vi.mocked(executeDocument);
 const mockedCompareStrategies = vi.mocked(compareStrategies);
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+function compareResponse(): CompareResponse {
+  return {
+    contract_version: "t20-application-api-v1",
+    entries: [],
+    governance: previewResponse().governance,
+    provider_mode: { provider_class: "FakeProvider" },
+  };
+}
 
 function healthResponse(): HealthResponse {
   return {
@@ -302,6 +319,114 @@ describe("GuidedFlow navigation foundation", () => {
     expect(mockedPreviewDisclosure).toHaveBeenCalledTimes(1);
     expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
     expect(mockedCompareStrategies).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the Compose snapshot across a pending preview and restores it with browser Back", async () => {
+    const pendingPreview = deferred<Awaited<ReturnType<typeof previewDisclosure>>>();
+    mockedPreviewDisclosure.mockReturnValue(pendingPreview.promise);
+    render(<GuidedFlow />);
+
+    await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
+    await userEvent.selectOptions(await screen.findByLabelText(copy.newTest.exampleFieldLabel), "ex-1");
+    await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+    await waitFor(() => expect(mockedPreviewDisclosure).toHaveBeenCalledTimes(1));
+
+    pendingPreview.resolve({ ok: true, data: previewResponse() });
+    await screen.findByRole("heading", { name: copy.review.heading });
+    window.history.back();
+
+    await screen.findByRole("heading", { name: copy.newTest.heading });
+    expect(mockedPreviewDisclosure).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not restore executing after a pending send resolves or offer resend through browser Back", async () => {
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+    const pendingExecute = deferred<Awaited<ReturnType<typeof executeDisclosure>>>();
+    mockedExecuteDisclosure.mockReturnValue(pendingExecute.promise);
+    render(<GuidedFlow />);
+
+    await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
+    await userEvent.selectOptions(await screen.findByLabelText(copy.newTest.exampleFieldLabel), "ex-1");
+    await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+    await screen.findByRole("heading", { name: copy.review.heading });
+    await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+    await waitFor(() => expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1));
+
+    pendingExecute.resolve({ ok: true, data: executeResponse() });
+    await screen.findByRole("heading", { name: copy.result.heading });
+    window.history.back();
+
+    expect(await screen.findByRole("heading", { name: "Esta etapa não pode ser restaurada" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: copy.review.confirmSend })).not.toBeInTheDocument();
+    expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the Result snapshot across a pending compare and returns from Comparison without replay", async () => {
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+    mockedExecuteDisclosure.mockResolvedValue({ ok: true, data: executeResponse() });
+    const pendingCompare = deferred<Awaited<ReturnType<typeof compareStrategies>>>();
+    mockedCompareStrategies.mockReturnValue(pendingCompare.promise);
+    render(<GuidedFlow />);
+
+    await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
+    await userEvent.selectOptions(await screen.findByLabelText(copy.newTest.exampleFieldLabel), "ex-1");
+    await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+    await screen.findByRole("heading", { name: copy.review.heading });
+    await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+    await screen.findByRole("heading", { name: copy.result.heading });
+    await userEvent.click(screen.getByRole("button", { name: copy.buttons.compareStrategies }));
+    await waitFor(() => expect(mockedCompareStrategies).toHaveBeenCalledTimes(1));
+
+    pendingCompare.resolve({ ok: true, data: compareResponse() });
+    await screen.findByRole("heading", { name: copy.comparison.heading });
+    await userEvent.click(screen.getByRole("button", { name: copy.comparison.backToResult }));
+
+    await screen.findByRole("heading", { name: copy.result.heading });
+    expect(mockedCompareStrategies).toHaveBeenCalledTimes(1);
+  });
+
+  it("reuses the Compose navigation id while fields change and preserves the final value", async () => {
+    render(<GuidedFlow />);
+    await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
+    const initialNavigationId = window.history.state.flowNavigationId;
+
+    await userEvent.click(screen.getByRole("radio", { name: copy.entryModes.pasteText }));
+    await userEvent.type(screen.getByLabelText(copy.newTest.pasteLabel), "primeira alteração");
+    expect(window.history.state.flowNavigationId).toBe(initialNavigationId);
+
+    await userEvent.clear(screen.getByLabelText(copy.newTest.pasteLabel));
+    await userEvent.type(screen.getByLabelText(copy.newTest.pasteLabel), "valor final preservado");
+    expect(window.history.state.flowNavigationId).toBe(initialNavigationId);
+    expect(screen.getByLabelText(copy.newTest.pasteLabel)).toHaveValue("valor final preservado");
+  });
+
+  it("uses the same history traversal for Review and Technical Details back buttons", async () => {
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+    mockedExecuteDisclosure.mockResolvedValue({ ok: true, data: executeResponse() });
+    render(<GuidedFlow />);
+
+    await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
+    await userEvent.selectOptions(await screen.findByLabelText(copy.newTest.exampleFieldLabel), "ex-1");
+    await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+    await screen.findByRole("heading", { name: copy.review.heading });
+    await userEvent.click(screen.getByRole("button", { name: "Voltar" }));
+    await screen.findByRole("heading", { name: copy.newTest.heading });
+    window.history.back();
+    await screen.findByRole("heading", { name: copy.howItWorks.title });
+
+    await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
+    await userEvent.selectOptions(await screen.findByLabelText(copy.newTest.exampleFieldLabel), "ex-1");
+    await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+    await screen.findByRole("heading", { name: copy.review.heading });
+    await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+    await screen.findByRole("heading", { name: copy.result.heading });
+    await userEvent.click(screen.getByRole("button", { name: copy.buttons.viewTechnicalDetails }));
+    await screen.findByRole("heading", { name: copy.sectionHeadings.technicalDetails });
+    await userEvent.click(screen.getByRole("button", { name: copy.buttons.backToResult }));
+    await screen.findByRole("heading", { name: copy.result.heading });
+    window.history.back();
+
+    expect(await screen.findByRole("heading", { name: "Esta etapa não pode ser restaurada" })).toBeInTheDocument();
   });
 
   it("does not restore processing or offer a post-send re-execution path with browser Back", async () => {
