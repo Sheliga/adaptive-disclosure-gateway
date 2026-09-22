@@ -1,6 +1,6 @@
 """Issue #93 / M3 -- ``post-pilot-v5`` numeric amount format contract:
-scorer-side fidelity, date-grammar ASCII-ification, dispatch exhaustiveness
-and the pre-run amount-format check.
+scorer-side fidelity, dispatch exhaustiveness and the pre-run amount-format
+check.
 
 This module does not re-test the amount grammar itself (see
 ``tests/test_amount_grammar_cross_check.py``); it pins how the scorer's v5
@@ -19,6 +19,7 @@ import pytest
 from adaptive_disclosure_gateway.corpus.case_input import CorpusCaseInput
 from adaptive_disclosure_gateway.corpus.loader import CorpusCase
 from adaptive_disclosure_gateway.corpus.models import (
+    ContractsTaskFamily,
     ExpectedSpan,
     NumericUtilityReference,
     ReferenceOperator,
@@ -26,9 +27,12 @@ from adaptive_disclosure_gateway.corpus.models import (
     TaskNecessity,
 )
 from adaptive_disclosure_gateway.corpus.oracle import CaseOracle
+from adaptive_disclosure_gateway.detection import Detector
 from adaptive_disclosure_gateway.domain import (
     DisclosureAction,
+    DisclosureRequest,
     DisclosureResult,
+    GovernanceContext,
     Transformation,
     Treatment,
 )
@@ -44,9 +48,9 @@ from adaptive_disclosure_gateway.experiments.scoring.utility import (
     classify_generalized_band_against_references,
     classify_generalized_band_against_references_v5,
     classify_generalized_date,
-    classify_generalized_date_v5,
     score_utility,
 )
+from adaptive_disclosure_gateway.transformations import StaticSanitizer
 
 POLICY_DIR = Path(__file__).parents[1] / "configs" / "policies"
 
@@ -177,44 +181,32 @@ def test_v5_every_reason_is_in_the_closed_set():
         assert reason in NUMERIC_BAND_UTILITY_REASONS
 
 
-# --- b. v5 date grammar is ASCII-only ---------------------------------------
+# --- b. v5 date semantics intentionally inherit v4 --------------------------
 
 
-def test_v5_date_grammar_rejects_non_ascii_digits_where_v3_v4_accept_them():
+def test_v5_date_utility_inherits_v4_semantics():
     non_ascii_month = "٢٠٢٦-٠٣"  # "2026-03" in Arabic-Indic digits
-    v3_v4_outcome, v3_v4_reason = classify_generalized_date("2026-03-15", non_ascii_month, "month")
-    v5_outcome, v5_reason = classify_generalized_date_v5("2026-03-15", non_ascii_month, "month")
-
-    # Documents the pre-#91 behavior, frozen for v3/v4: `\d` happily matches
-    # the Arabic-Indic digits, and Python's own `int()` happily parses them.
-    assert (v3_v4_outcome, v3_v4_reason) == (
-        "answerable",
-        "generalized_date_sufficient_granularity",
+    v3_v4_outcome, v3_v4_reason = classify_generalized_date("2026-03-15", non_ascii_month, "day")
+    case_input, oracle = _synthetic_case(
+        sample_id="synthetic-v5-date-inherits-v4",
+        category="deadline",
+        span_value="2026-03-15",
+        utility_references=[],
     )
-    assert (v5_outcome, v5_reason) == ("not_answerable", "generalized_date_invalid")
+    oracle.answer_depends_on_categories = ["deadline"]
+    result = _result(_band_transformation("deadline", non_ascii_month, "2026-03-15"))
 
+    score = score_utility(
+        case_input, oracle, result, Treatment.TASK_AWARE, protocol_id="post-pilot-v5"
+    )
+    deadline = next(c for c in score.by_category if c.category == "deadline")
 
-def test_v5_date_grammar_rejects_trailing_newline():
-    outcome, reason = classify_generalized_date_v5("2026-03-15", "2026-03\n", "month")
-    assert (outcome, reason) == ("not_answerable", "generalized_date_invalid")
-
-
-def test_v5_date_grammar_accepts_the_same_valid_forms_as_v3_v4():
-    for required, transformed, original, expected in [
-        ("month", "2026-03", "2026-03-15", "generalized_date_sufficient_granularity"),
-        ("day", "2026-03-15", "2026-03-15", "generalized_date_excess_precision"),
-    ]:
-        v3_v4_outcome, v3_v4_reason = classify_generalized_date(original, transformed, required)
-        v5_outcome, v5_reason = classify_generalized_date_v5(original, transformed, required)
-        assert (
-            (v5_outcome, v5_reason)
-            == (v3_v4_outcome, v3_v4_reason)
-            == (
-                ("answerable", expected)
-                if "sufficient" in expected
-                else ("not_answerable", expected)
-            )
-        )
+    assert (v3_v4_outcome, v3_v4_reason) == (
+        "not_answerable",
+        "generalized_date_insufficient_granularity",
+    )
+    assert deadline.outcome == v3_v4_outcome
+    assert deadline.reason == v3_v4_reason
 
 
 # --- c. dispatch: v5 differs from v4, v3/v4 unchanged, no silent fallthrough -
@@ -235,6 +227,68 @@ def test_score_utility_dispatches_v5_band_rule_for_v5_protocol():
         case_input, oracle, result, Treatment.TASK_AWARE, protocol_id="post-pilot-v5"
     )
     contract_value = next(c for c in score.by_category if c.category == "contract_value")
+    assert contract_value.outcome == "answerable"
+    assert contract_value.reason == "generalized_band_decidable"
+
+
+def test_crlf_detected_contract_value_generalizes_and_scores_under_v5():
+    text = "Contract value: R$ 125.000,00\r\n"
+    spans = Detector().detect(text)
+    span = next(s for s in spans if s.category == "contract_value")
+
+    assert span.value == "R$ 125.000,00"
+    assert text[span.start : span.end] == span.value
+
+    request = DisclosureRequest(
+        text=text,
+        task="Determine whether the contract value is at least R$ 100.000,00.",
+        context=GovernanceContext(
+            domain="contracts",
+            purpose="contract_review",
+            policy_version="contracts-v1",
+        ),
+    )
+    result = StaticSanitizer().sanitize(request, spans)
+    transformation = next(t for t in result.transformations if t.category == "contract_value")
+
+    assert result.status == "allowed"
+    assert transformation.original == "R$ 125.000,00"
+    assert transformation.transformed == "R$ 100000-150000"
+
+    case_input = CorpusCaseInput(
+        sample_id="synthetic-v5-crlf-contract-value",
+        text=text,
+        task=request.task,
+        task_family=ContractsTaskFamily.CONTRACT_VALUE_AUDIT,
+        domain="contracts",
+        purpose="contract_review",
+        policy_version="contracts-v1",
+    )
+    oracle = CaseOracle(
+        sample_id="synthetic-v5-crlf-contract-value",
+        expected_spans=[
+            ExpectedSpan(
+                category="contract_value",
+                value=span.value,
+                start=span.start,
+                end=span.end,
+                task_necessity=TaskNecessity.REQUIRED,
+                expected_actions=[DisclosureAction.GENERALIZE],
+            )
+        ],
+        expected_block_request=False,
+        expected_answer="yes",
+        answer_depends_on_categories=["contract_value"],
+        utility_references=[
+            _ref("contract_value", ReferenceOperator.GREATER_THAN_OR_EQUAL, "100000.00")
+        ],
+    )
+
+    score = score_utility(
+        case_input, oracle, result, Treatment.STATIC_SANITIZATION, protocol_id="post-pilot-v5"
+    )
+    contract_value = next(c for c in score.by_category if c.category == "contract_value")
+
     assert contract_value.outcome == "answerable"
     assert contract_value.reason == "generalized_band_decidable"
 
