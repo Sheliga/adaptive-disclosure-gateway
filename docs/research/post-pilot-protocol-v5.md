@@ -15,10 +15,12 @@ section of v4 — and, through it, v3, v2 and v1 — applies in full **except**:
   and by the fidelity scorer's original-amount grammar, which is replaced end-to-end by a single,
   closed, versioned amount grammar (`NUMERIC_AMOUNT_GRAMMAR_ID = "amount-grammar-v1"`), resolving
   Issue #88 and Issue #91 within one methodological boundary (§2);
-- the v5 scorer's date grammar, which becomes ASCII-only/`fullmatch`-only (§8), closing the
-  Unicode-digit/trailing-newline half of Issue #91 for the date path as well as the amount path;
 - a new, v5-only pre-run check over the whole corpus, including blocked cases, that refuses an
   incoherent amount format before any provider call (§6).
+
+Date utility semantics do **not** change in v5. The `deadline`/`birth_date` treatment path and
+`classify_generalized_date` remain the v4 behavior; the separate date treatment/scorer asymmetry
+found during review is tracked in Issue #96 and intentionally left outside Issue #93 / PR #97.
 
 v4 itself is never edited: its own front matter, `frozen_date: 2026-09-21`, and every
 methodological rule it states remain exactly as frozen. v3, v2 and v1 remain untouched beneath
@@ -40,15 +42,15 @@ unscorable at evaluation time. `protocol_id: post-pilot-v5` is registered in
 `CURRENT_PROTOCOL_ID` now `post-pilot-v5`). `tests/test_post_pilot_protocol.py` pins that the
 five can never silently drift apart, for every document independently.
 
-**Semantic change: yes, on two axes.** (1) A treatment-behavior change: `NumericBandStrategy`
+**Semantic change: yes, on the monetary axis.** A treatment-behavior change: `NumericBandStrategy`
 now accepts and correctly bands a wider set of amount surface forms than before (Brazilian,
 NBSP-separated), and rejects some forms a pre-#93 free-for-all regex used to silently misparse
 (trailing prose, negatives, leading zeros, cents-less amounts) — this changes what a real case
 using one of those forms discloses, which per v1 §0/§11 requires its own versioned decision,
-never a silent patch. (2) A scoring-rule change: the v5 fidelity/date grammars accept a
-Brazilian-formatted original where v4's frozen grammar would reject it as unscorable, and reject
-a non-ASCII-digit or trailing-newline string v3/v4's frozen `\d`/`match`+`$` grammars would
-silently accept.
+never a silent patch. The v5 fidelity amount grammar accepts a Brazilian-formatted original
+where v4's frozen amount grammar would reject it as unscorable, and rejects non-ASCII digits or
+trailing characters that v3/v4's frozen amount regex could silently accept. Date utility scoring
+is inherited from v4 unchanged; Issue #96 owns any future date treatment/scorer change.
 
 **Not every frozen protocol id is scorable going forward** — unchanged from v4's own statement of
 this rule; v5 only adds `post-pilot-v5` to `SCORABLE_PROTOCOL_IDS`, it does not remove v3 or v4.
@@ -204,30 +206,27 @@ not reused by either A or B, and this ticket does not touch it.
 
 ## 5. Detector and span coherence
 
-The detector (`detection/rules.py`) is **unchanged and stays format-agnostic** — it captures
-whatever text sits after a labeled line's colon (`(?P<value>.+?)[ \t]*$`), or a structured
-pattern for CPF/CNPJ/email/phone, with no amount-format awareness at all, and continues to
-guarantee `ExpectedSpan.value == input.text[start:end]` for every accepted or rejected surface
-form; grammar enforcement lives entirely in `GENERALIZE` (fail closed), never in detection. This
-is deliberate, not an oversight: a grammar-aware detector would let a *non-conforming* value pass
-through *undetected* — a privacy regression strictly worse than the amount being detected and
-then correctly blocked. `REMOVE`/`PSEUDONYMIZE`/`PRESERVE` are entirely unaffected by this
-ticket; only the `GENERALIZE` path's own parser changed. CPF/CNPJ/phone detection rules keep
-`\d` (unrelated to the amount grammar) — over-detection there is the safe direction and out of
-this ticket's scope.
+The detector (`detection/rules.py`) stays amount-format-agnostic: it captures whatever text sits
+after a labeled line's colon, or a structured pattern for CPF/CNPJ/email/phone, with no
+amount-format awareness at all. Grammar enforcement lives entirely in `GENERALIZE` (fail
+closed), never in detection. This is deliberate: a grammar-aware detector would let a
+*non-conforming* value pass through *undetected* — a privacy regression strictly worse than the
+amount being detected and then correctly blocked. `REMOVE`/`PSEUDONYMIZE`/`PRESERVE` are
+entirely unaffected by this ticket; only the `GENERALIZE` path's own parser changed.
+CPF/CNPJ/phone detection rules keep `\d` (unrelated to the amount grammar) — over-detection there
+is the safe direction and out of this ticket's scope.
 
-**CRLF finding, verified, not fixed.** The labeled-line detector regex's own trailing
-`[ \t]*$` does not strip a `\r` immediately before a `\n` on a CRLF-terminated line, so a
-detected value on such a line retains a trailing `\r` — which the new, stricter amount grammar
-(no trailing-character tolerance at all, `fullmatch`-only) now BLOCKs where a pre-#93 permissive
-regex might have silently ignored the extra character. This project's real ingestion path
-(`application/ingestion.py`, T12/Docling) was checked for this ticket: plain-text ingestion does
-not currently normalize line endings before the detector runs. Demo impact: a `.txt`/`.md`
-upload authored with CRLF line endings and a numeric `GENERALIZE`-mapped field (salary, contract
-value, penalty) now blocks the whole request where it previously would have processed (correctly
-or, before this ticket, sometimes incorrectly) — recorded as a separate issue (§10), not fixed
-here, since normalizing ingestion line endings is an ingestion-boundary change outside this
-ticket's numeric-amount-format scope.
+**CRLF/LF span coherence (Issue #94, fixed in PR #97).** Review found that the labeled-line
+detector's old trailing `[ \t]*$` did not strip a `\r` immediately before `\n`, so a CRLF line
+such as `Contract value: R$ 125.000,00\r\n` produced `SensitiveSpan.value ==
+"R$ 125.000,00\r"`. The v5 amount parser correctly rejects that trailing character with
+`fullmatch`, which meant a semantically valid amount could block only because of newline style.
+The fix is local to the cause: the labeled-line value group now excludes `\r`/`\n` and permits
+the optional CR outside the group. In CRLF text, `start` is unchanged and `end` points just before
+`\r`; in LF text, offsets remain the same. In both cases
+`input.text[span.start:span.end] == span.value` holds without any artificial offset correction.
+Tests cover HR salary and Contracts contract value/penalty with LF and CRLF, plus an end-to-end
+CRLF path through detector → `GENERALIZE` → v5 fidelity scoring.
 
 ## 6. Dispatch, the compatibility matrix, and the pre-run check
 
@@ -242,10 +241,6 @@ ticket's numeric-amount-format scope.
   sufficiency semantics unchanged** (extracted into a shared private helper,
   `_classify_structured_sufficiency`, called by both the v4 and v5 functions after their own,
   different fidelity check); only the fidelity/grammar underneath differs;
-- an ASCII-only, `fullmatch`-only date grammar (`_parse_original_date_v5`,
-  `_parse_transformed_date_v5`, `classify_generalized_date_v5`) — used only under
-  `protocol_id="post-pilot-v5"`; the frozen v2-era `\d`/`match`+`$` date grammar stays exactly as
-  it was for v3/v4 (§8);
 - `UnsupportedOriginalAmountFormatError(ValueError)` and the new pre-run check,
   `_check_v5_original_amount_formats`.
 
@@ -254,7 +249,7 @@ ticket's numeric-amount-format scope.
 `_check_band_fidelity`/`classify_generalized_band`/`classify_generalized_date` themselves —
 historical pins, unchanged by this ticket.
 
-**Fixed silent fallback.** `score_utility`'s numeric-band and date dispatch, and
+**Fixed silent fallback.** `score_utility`'s numeric-band dispatch and
 `_check_case_protocol_compatibility`, were each an `if v3 … else <v4>` / `if v4 … elif v3` before
 this ticket — a structure that would have silently applied v4's own rule to any future scorable
 id added without a matching branch. Both are now exhaustive per id
@@ -328,24 +323,23 @@ also moves.
 
 ## 8. ASCII vs. Unicode digits (Issue #91): what changed, what stays, and why the detector keeps `\d`
 
-**What changed.** Both halves of the new v5 grammar — the amount parsers (§4) and the new date
-grammar (`_parse_original_date_v5`/`_parse_transformed_date_v5`/`classify_generalized_date_v5`)
-— use explicit `[0-9]` character classes and `fullmatch` exclusively. This closes two related
-defects Issue #91 named in the frozen v3/v4 code: (1) bare `\d` under Python's `re` module's
-default (non-`re.ASCII`) semantics also matches every Unicode character with the `Nd` (decimal
-digit) property, so e.g. `R$ ١٢.00` (Eastern Arabic-Indic digits) parsed as `12.00` under the old
-grammar; (2) `.match(...)` combined with a trailing `$` anchor still accepts one trailing `\n`
-after the matched content, so a value with a stray trailing newline was silently accepted.
+**What changed.** The new v5 **amount** grammar — treatment-side `_parse_amount`, scorer-side
+`_parse_original_amount_v5`, and scorer-side `_parse_band_v5` — uses explicit `[0-9]` character
+classes and `fullmatch` exclusively. This closes the amount-path defects Issue #91 named in the
+frozen v3/v4 code: (1) bare `\d` under Python's `re` module's default (non-`re.ASCII`) semantics
+also matches every Unicode character with the `Nd` (decimal digit) property, so e.g.
+`R$ ١٢.00` (Eastern Arabic-Indic digits) parsed as `12.00` under the old grammar; (2)
+`.match(...)` combined with a trailing `$` anchor still accepts one trailing `\n` after the
+matched content, so a value with a stray trailing newline was silently accepted.
 
-**What stays, for v3/v4 reproducibility.** `_ORIGINAL_AMOUNT_PATTERN`, `_BAND_STRING_PATTERN`,
-`_AMOUNT_PATTERN` (the legacy free-text scanner), and the v2-era date patterns
-(`_ORIGINAL_DATE_PATTERN`/`_YEAR_ONLY_PATTERN`/`_YEAR_MONTH_PATTERN`/`_YEAR_MONTH_DAY_PATTERN`)
-are all frozen `post-pilot-v3`/`v2`-era code and are **not** touched — fixing them in place would
-change what a case scored under `post-pilot-v3`/`v4` produces, which is exactly the kind of
-change v1 §0/§11 requires its own versioned decision for, and neither registered corpus is
-affected by the defect (§9 below; no ASCII/Unicode issue is reachable through either frozen
-corpus). `classify_generalized_date` itself (the v3/v4 function) is untouched; only the new,
-separate `classify_generalized_date_v5` uses the ASCII grammar.
+**What stays, for v3/v4 reproducibility and v5 date scope.** `_ORIGINAL_AMOUNT_PATTERN`,
+`_BAND_STRING_PATTERN`, `_AMOUNT_PATTERN` (the legacy free-text scanner), and the v2-era date
+patterns (`_ORIGINAL_DATE_PATTERN`/`_YEAR_ONLY_PATTERN`/`_YEAR_MONTH_PATTERN`/
+`_YEAR_MONTH_DAY_PATTERN`) are frozen historical code and are **not** touched. v5 deliberately
+inherits `classify_generalized_date` from v4 unchanged. Review found that
+`MonthYearDateStrategy` can accept Unicode digits via `datetime.strptime`; changing only the
+scorer-side date grammar would create a treatment/scorer asymmetry, so the date issue remains in
+Issue #96 and is outside this v5 monetary contract.
 
 **Why the detector keeps `\d` in CPF/CNPJ/phone rules.** `detection/rules.py`'s structured
 identifier patterns (`CPF_PATTERN`, `CNPJ_PATTERN`, `PHONE_PATTERN`) are unrelated to the amount
@@ -384,25 +378,15 @@ of those ids it already names.
 
 ## 10. Separate issues filed (recorded, not fixed here)
 
-1. **[Issue #94](https://github.com/Sheliga/adaptive-disclosure-gateway/issues/94) — detector
-   keeps a trailing `\r` on a CRLF-terminated labeled line** (§5) — the real
-   `application/ingestion.py` plain-text path does not normalize line endings before detection
-   (verified for this ticket), so a CRLF-authored upload with a numeric `GENERALIZE` field now
-   blocks under the stricter v5 grammar where it previously might have silently misparsed. Filed
-   as its own issue rather than fixed here (an ingestion-boundary change, not an amount-grammar
-   change).
-2. **[Issue #95](https://github.com/Sheliga/adaptive-disclosure-gateway/issues/95) — manifests do
+1. **[Issue #95](https://github.com/Sheliga/adaptive-disclosure-gateway/issues/95) — manifests do
    not record the actual code commit or per-row treatment provenance** — decided at Gate 8, not
    here; `NUMERIC_AMOUNT_GRAMMAR_ID` (§7) is the one new provenance field this ticket adds, and it
    is a free-form `reproducibility` value, not a schema change.
-3. **[Issue #96](https://github.com/Sheliga/adaptive-disclosure-gateway/issues/96) —
+2. **[Issue #96](https://github.com/Sheliga/adaptive-disclosure-gateway/issues/96) —
    `MonthYearDateStrategy` (`transformations/generalization.py`, `strptime`) accepts Unicode
    digits** (e.g. a date string using Eastern Arabic-Indic digits parses successfully, verified for
-   this ticket) — the *treatment*-side counterpart of the same Issue #91 class this document
-   resolves for the *scorer*'s amount/date grammars. Recorded as its own issue rather than fixed
-   here: it is a `datetime.strptime` behavior, not a regex this ticket's grammar governs, and
-   touches the `deadline`/`birth_date` treatment path rather than the numeric-amount contract this
-   ticket is scoped to.
+   this ticket) — this is a treatment/scorer date-boundary issue, not part of the numeric-amount
+   contract this ticket is scoped to. v5 therefore inherits v4 date semantics unchanged.
 
 ## 11. Anti-tuning statement
 
@@ -425,7 +409,8 @@ motivates any part of this grammar, and neither historical corpus's own numbers 
 | Amount grammar, both parsers, literal table | `tests/test_amount_grammar_cross_check.py` |
 | Treatment-side generalization (bands, edges, fail-closed) | `tests/test_generalization.py` |
 | B1 static-sanitization GENERALIZE fixture/fail-closed | `tests/test_static_sanitization.py` |
-| v5 fidelity, ASCII date grammar, dispatch exhaustiveness, pre-run check | `tests/test_experiments_scoring_post_pilot_v5.py` |
+| v5 fidelity, v5 date-inherits-v4 pin, dispatch exhaustiveness, pre-run check | `tests/test_experiments_scoring_post_pilot_v5.py` |
+| Detector/span LF and CRLF coherence | `tests/test_detection_rules.py` |
 | v3 fidelity unchanged (historical pin) | `tests/test_experiments_scoring_numeric_band_utility.py` (unchanged) |
 | v4 structured references unchanged (historical pin) | `tests/test_experiments_scoring_utility_references_v4.py` (unchanged) |
 | Protocol registry (`FROZEN_PROTOCOL_IDS`, `SCORABLE_PROTOCOL_IDS`, document drift) | `tests/test_post_pilot_protocol.py` |
@@ -445,12 +430,14 @@ pre-Gate-7 numeric-format blocker Issue #93 was filed to close.
   numeric-amount-format checkpoint end to end. Replaces `NumericBandStrategy`'s permissive
   float-based amount parser with a closed, ASCII-only, `fullmatch`-only grammar
   (`NUMERIC_AMOUNT_GRAMMAR_ID = "amount-grammar-v1"`) parsed to `Decimal`; adds an independent
-  v5 scorer-side re-derivation of the same grammar (different technique), a v5 band grammar and a
-  v5 ASCII date grammar; makes `score_utility`'s and `_check_case_protocol_compatibility`'s
+  v5 scorer-side re-derivation of the same grammar (different technique) and a v5 band grammar;
+  fixes labeled-line CRLF span coherence for HR and Contracts values; makes `score_utility`'s
+  and `_check_case_protocol_compatibility`'s
   protocol-id dispatch exhaustive per id instead of an unconditional non-v3-means-v4 fallback;
   adds a v5-only pre-run check (`UnsupportedOriginalAmountFormatError`) over the whole corpus,
   blocked cases included, before any provider call. v3/v4 code paths (regexes included) stay
-  byte-for-byte. Re-verified against the live implementation: 33/33 numeric oracle spans across
+  byte-for-byte, and v5 date utility semantics intentionally inherit v4. Re-verified against the
+  live implementation: 33/33 numeric oracle spans across
   both frozen corpora produce identical bands; a full `post-pilot-v3` run (125 case executions)
   over both corpora is unaffected. Files three further, narrower findings as separate issues
   (§10) rather than fixing them here.
