@@ -79,6 +79,28 @@ def test_labeled_salary_excludes_label_prefix():
     assert text[span.start : span.end] == span.value
 
 
+def test_labeled_salary_keeps_lf_offsets_for_brazilian_amount():
+    text = "Salary: R$ 8.500,00\n"
+    by_category = _spans_by_category(text)
+
+    span = by_category["salary"][0]
+    assert span.category == "salary"
+    assert span.value == "R$ 8.500,00"
+    assert text[span.start : span.end] == span.value
+    assert text[span.end : span.end + 1] == "\n"
+
+
+def test_labeled_salary_excludes_crlf_line_ending_from_value():
+    text = "Salary: R$ 8.500,00\r\n"
+    by_category = _spans_by_category(text)
+
+    span = by_category["salary"][0]
+    assert span.category == "salary"
+    assert span.value == "R$ 8.500,00"
+    assert text[span.start : span.end] == span.value
+    assert text[span.end : span.end + 2] == "\r\n"
+
+
 def test_labeled_department_excludes_label_prefix():
     text = "Department: Engineering\n"
     by_category = _spans_by_category(text)
@@ -95,6 +117,36 @@ def test_labeled_medical_data_captures_full_remainder_of_line():
     span = by_category["medical_data"][0]
     assert span.value == "Reports chronic migraine and requested leave."
     assert text[span.start : span.end] == span.value
+
+
+def test_labeled_contract_amounts_exclude_crlf_line_endings_from_values():
+    text = "Contract value: R$ 125.000,00\r\nPenalty: R$ 12.500,00\r\n"
+    by_category = _spans_by_category(text)
+
+    contract_value = by_category["contract_value"][0]
+    assert contract_value.category == "contract_value"
+    assert contract_value.value == "R$ 125.000,00"
+    assert text[contract_value.start : contract_value.end] == contract_value.value
+    assert text[contract_value.end : contract_value.end + 2] == "\r\n"
+
+    penalty = by_category["penalty_amount"][0]
+    assert penalty.category == "penalty_amount"
+    assert penalty.value == "R$ 12.500,00"
+    assert text[penalty.start : penalty.end] == penalty.value
+    assert text[penalty.end : penalty.end + 2] == "\r\n"
+
+
+def test_labeled_contract_amounts_keep_lf_offsets_unchanged():
+    text = "Contract value: R$ 125.000,00\nPenalty: R$ 12.500,00\n"
+    by_category = _spans_by_category(text)
+
+    contract_value = by_category["contract_value"][0]
+    assert contract_value.value == "R$ 125.000,00"
+    assert text[contract_value.start : contract_value.end] == contract_value.value
+
+    penalty = by_category["penalty_amount"][0]
+    assert penalty.value == "R$ 12.500,00"
+    assert text[penalty.start : penalty.end] == penalty.value
 
 
 def test_detector_is_deterministic_across_runs():
