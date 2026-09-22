@@ -200,10 +200,15 @@ function GuidedFlowShell() {
   const labels = STEP_LABELS[locale];
   const [state, setState] = useState<FlowState>(initialFlowState);
   const [unrecoverableStep, setUnrecoverableStep] = useState<UrlStep | null>(null);
+  const stateRef = useRef(state);
+  stateRef.current = state;
   const mainRef = useRef<HTMLElement>(null);
   const historySnapshotsRef = useRef(new Map<string, FlowState>());
+  const historyEntryIdsRef = useRef<string[]>([]);
+  const historyIndexRef = useRef(0);
   const currentNavigationIdRef = useRef<string | null>(null);
   const nonRestorableNavigationIdsRef = useRef(new Set<string>());
+  const ignoreLockedPopStateRef = useRef(false);
   const suppressHistorySyncRef = useRef(false);
   const navigationIdRef = useRef(0);
   const [examples, setExamples] = useState<ExampleSummary[] | null>(null);
@@ -226,9 +231,6 @@ function GuidedFlowShell() {
   const dispatch = useCallback((event: GuidedFlowEvent) => {
     if (event.type !== "SET_DOCUMENT_TYPE") {
       setUnrecoverableStep(null);
-    }
-    if (event.type === "EXECUTE_SUCCEEDED" && currentNavigationIdRef.current !== null) {
-      nonRestorableNavigationIdsRef.current.add(currentNavigationIdRef.current);
     }
     setState((current) => reduceGuidedFlow(current, event));
   }, []);
@@ -253,14 +255,30 @@ function GuidedFlowShell() {
     } else {
       const initialId = `flow-${navigationIdRef.current}`;
       currentNavigationIdRef.current = initialId;
+      historyEntryIdsRef.current = [initialId];
+      historyIndexRef.current = 0;
       historySnapshotsRef.current.set(initialId, initialFlowState);
       window.history.replaceState({ flowNavigationId: initialId }, "", replaceStepInUrl("intro"));
     }
 
     function handlePopState(event: PopStateEvent) {
+      if (ignoreLockedPopStateRef.current) {
+        ignoreLockedPopStateRef.current = false;
+        return;
+      }
       const id =
         typeof event.state?.flowNavigationId === "string" ? event.state.flowNavigationId : null;
-      if (id === null) {
+      const targetIndex = id === null ? -1 : historyEntryIdsRef.current.indexOf(id);
+      if (
+        stateRef.current.screen === "executing" &&
+        targetIndex >= 0 &&
+        targetIndex < historyIndexRef.current
+      ) {
+        ignoreLockedPopStateRef.current = true;
+        window.history.go(1);
+        return;
+      }
+      if (id === null || targetIndex < 0) {
         setUnrecoverableStep(urlStepFromSearch(window.location.search) ?? "intro");
         return;
       }
@@ -273,6 +291,7 @@ function GuidedFlowShell() {
         setUnrecoverableStep(urlStepFromSearch(window.location.search) ?? "intro");
         return;
       }
+      historyIndexRef.current = targetIndex;
       currentNavigationIdRef.current = id;
       setUnrecoverableStep(null);
       suppressHistorySyncRef.current = true;
@@ -303,9 +322,17 @@ function GuidedFlowShell() {
       window.history.replaceState({ flowNavigationId: currentId }, "", nextUrl);
       return;
     }
+    const abandonedIds = historyEntryIdsRef.current.slice(historyIndexRef.current + 1);
+    for (const abandonedId of abandonedIds) {
+      historySnapshotsRef.current.delete(abandonedId);
+      nonRestorableNavigationIdsRef.current.delete(abandonedId);
+    }
+    historyEntryIdsRef.current = historyEntryIdsRef.current.slice(0, historyIndexRef.current + 1);
     const id = `flow-${++navigationIdRef.current}`;
     currentNavigationIdRef.current = id;
     historySnapshotsRef.current.set(id, state);
+    historyEntryIdsRef.current.push(id);
+    historyIndexRef.current = historyEntryIdsRef.current.length - 1;
     window.history.pushState({ flowNavigationId: id }, "", nextUrl);
   }, [state, unrecoverableStep]);
 
@@ -429,6 +456,7 @@ function GuidedFlowShell() {
   }
 
   async function handleConfirmReview(review: Extract<FlowState, { screen: "review" }>) {
+    const reviewNavigationId = currentNavigationIdRef.current;
     dispatch({ type: "CONFIRM_REVIEW" });
     if (review.compose.mode === "upload") {
       if (review.confirmationToken === null) {
@@ -444,6 +472,9 @@ function GuidedFlowShell() {
         copy,
       );
       if (result.ok) {
+        if (reviewNavigationId !== null) {
+          nonRestorableNavigationIdsRef.current.add(reviewNavigationId);
+        }
         dispatch({ type: "EXECUTE_SUCCEEDED", execute: result.data });
       } else {
         dispatch({
@@ -458,6 +489,9 @@ function GuidedFlowShell() {
     const body = buildRequestBody(compose);
     const result = await executeDisclosure(body, copy);
     if (result.ok) {
+      if (reviewNavigationId !== null) {
+        nonRestorableNavigationIdsRef.current.add(reviewNavigationId);
+      }
       dispatch({ type: "EXECUTE_SUCCEEDED", execute: result.data });
     } else {
       dispatch({ type: "EXECUTE_FAILED", error: result.error });
