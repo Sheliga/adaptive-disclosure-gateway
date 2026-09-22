@@ -176,6 +176,14 @@ function reduceGuidedFlow(state: FlowState, event: GuidedFlowEvent): FlowState {
   return flowReducer(state, event);
 }
 
+function isRestorableNavigationState(state: FlowState) {
+  return (
+    state.screen !== "previewing" &&
+    state.screen !== "executing" &&
+    state.screen !== "comparing"
+  );
+}
+
 export function GuidedFlow() {
   return (
     <LocaleProvider>
@@ -248,7 +256,7 @@ function GuidedFlowShell() {
         return;
       }
       const snapshot = historySnapshotsRef.current.get(id);
-      if (snapshot === undefined) {
+      if (snapshot === undefined || !isRestorableNavigationState(snapshot)) {
         setUnrecoverableStep(urlStepFromSearch(window.location.search) ?? "intro");
         return;
       }
