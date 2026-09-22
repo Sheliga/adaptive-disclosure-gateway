@@ -386,6 +386,12 @@ def test_a_marker_planted_in_an_obligation_relation_never_reaches_a_runner_resul
             run_classification="pilot_development",
             policy_repository=policy_repository,
             experiment_run_id="relation-isolation-probe",
+            # Issue #87 / M3: corpus/contracts/v1 is a frozen, legacy
+            # (schema-v2) corpus with no opted-in
+            # CaseOracle.utility_references; this case depends on
+            # contract_value, a numeric category, so it must be scored
+            # under the historical post-pilot-v3 protocol explicitly.
+            protocol_id="post-pilot-v3",
         )
 
         serialized = repr(to_safe_dict(result))

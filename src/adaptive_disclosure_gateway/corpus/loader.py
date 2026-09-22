@@ -118,6 +118,10 @@ def _check_domain_consistency(path: Path, case_input: CorpusCaseInput, oracle: C
         for relation in oracle.obligation_relations
         for category in relation.depends_on_categories
     )
+    annotated.extend(
+        ("oracle.utility_references", reference.category)
+        for reference in (oracle.utility_references or [])
+    )
 
     foreign = sorted(
         {

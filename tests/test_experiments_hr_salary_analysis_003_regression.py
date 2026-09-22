@@ -48,6 +48,7 @@ def _run(treatment: Treatment):
         corpus_version="hr/v1",
         run_classification=PILOT_DEVELOPMENT,
         policy_repository=policy_repo,
+        protocol_id="post-pilot-v3",
     )
     return case, score_case(case.input, case.oracle, execution)
 

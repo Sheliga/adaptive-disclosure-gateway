@@ -80,7 +80,14 @@ def score_case(
     conformance = score_conformance(oracle, result, treatment)
     exposure = score_exposure(oracle, result, treatment)
     unnecessary = score_unnecessary_disclosure(oracle, result, treatment)
-    utility = score_utility(case_input, oracle, result, treatment)
+    # Issue #87 / M3: score_utility's protocol_id is threaded from the
+    # execution's own identity, not resolved separately here -- one case
+    # execution is scored under the exact protocol id it was stamped with
+    # at execute_case time, never a value score_case could independently
+    # drift from it.
+    utility = score_utility(
+        case_input, oracle, result, treatment, protocol_id=case_execution.identity.protocol_id
+    )
     reconstruction = score_reconstruction(
         oracle, result, case_execution.payload_echo_reconstructed_text
     )

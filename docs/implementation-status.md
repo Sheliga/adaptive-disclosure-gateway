@@ -1,18 +1,27 @@
 # Implementation status
 
-Last updated: 2026-09-21 — T30 / Issue #82 (guided demo UX with progressive disclosure) is now
-**in validation** in an open PR to `master` (per explicit user direction for this ticket; see
-that section below for scope). T29 / Issue #72 (local Vault Explorer for demo/debug) is now **in
-validation** in an open PR to `develop`. Issue #56 (Contracts domain extensions) **merged into
-`develop` via PR #59** (merge commit `5a67c30daab68d06bbd16d1cf06433de97245910`), which freezes
-the Contracts categories, policies, generalization strategies and relation semantics; T24 / Issue
-#37 (Contracts v1 corpus + frozen oracle) is now **in validation** in an open PR to `develop`.
-T12 / Issue #9 Docling ingestion merged into `develop` via PR #55 (merge commit
-`776e683a49818db35021bb62315dfc1ed7fb00ab`, validated feature head
-`3c93f3297515c99c6fccd4c5e705f1e77cfada78`, real Docling 2.126.0 PDF/DOCX/XLSX validation); T23
-post-pilot protocol remains merged into `develop` via PR #53; T21 fourth slice (pt-BR / English
-localization) completed and integrated into `master` via PRs #51/#52 — T21/Issue #29 remains open
-for the remaining deliberately out-of-scope items.
+Last updated: 2026-09-21 — M3 Gate 6 / Issue #38 (date-aware GENERALIZE utility scoring,
+`post-pilot-v2`) merged into `master` via PR #86 (merge commit `d1583f6`). M3 / Issue #85
+(numeric-band GENERALIZE fidelity, `post-pilot-v3`) **merged into `develop` via PR #89** (merge
+commit `7d3644e8e2bf9e1c903b21be753c5c999f127e66`), resolving the related defect Gate 6
+deliberately left open. M3 / Issue #87 (structured numeric utility references, `post-pilot-v4`)
+**merged into `develop` via PR #92** (merge commit
+`dc2236bc81d16eac7a283edcd30a3ef2769c18ae`), resolving the two remaining Issue #85 §8 findings
+that were not fixed by `post-pilot-v3` itself. M3 / Issue #93 (numeric amount format
+stabilization end-to-end, `post-pilot-v5`) is now **in validation** in an open PR to `develop`
+-- the pre-Gate-7 checkpoint resolving Issue #88 (Brazilian-formatted amount misparse) and
+the monetary path of Issue #91 (non-ASCII-digit/trailing-newline amount grammar defects). T30 / Issue #82 (guided
+demo UX with progressive disclosure) merged to `master` in PR #83. T29 / Issue #72 (local Vault
+Explorer for demo/debug) is now **in validation** in an open PR to `develop`. Issue #56
+(Contracts domain extensions) **merged into `develop` via PR #59** (merge commit
+`5a67c30daab68d06bbd16d1cf06433de97245910`), which freezes the Contracts categories, policies,
+generalization strategies and relation semantics; T24 / Issue #37 (Contracts v1 corpus + frozen
+oracle) is now **in validation** in an open PR to `develop`. T12 / Issue #9 Docling ingestion
+merged into `develop` via PR #55 (merge commit `776e683a49818db35021bb62315dfc1ed7fb00ab`,
+validated feature head `3c93f3297515c99c6fccd4c5e705f1e77cfada78`, real Docling 2.126.0
+PDF/DOCX/XLSX validation); T23 post-pilot protocol remains merged into `develop` via PR #53; T21
+fourth slice (pt-BR / English localization) completed and integrated into `master` via PRs
+#51/#52 — T21/Issue #29 remains open for the remaining deliberately out-of-scope items.
 
 This file tracks the current engineering/research state and execution order. Architectural decisions belong in ADRs; experimental definitions belong in `docs/experimental-design.md`; factual pilot results belong in `docs/milestone-2-pilot.md`; the frozen confirmatory-analysis protocol belongs in `docs/research/`; the parallel advisor-facing application plan belongs in `docs/advisor-demo.md`; historical PR/Issue descriptions remain in GitHub.
 
@@ -367,12 +376,106 @@ its utility numbers are no longer comparable under the new rule.
 space, generalization strategy or treatment definition was touched, and no metric frozen by
 `post-pilot-v1` was added or redefined.
 
+**Resolved by M3 / Issue #85 (`post-pilot-v3`, `docs/research/post-pilot-protocol-v3.md`).** The
+related, separate defect Gate 6 deliberately left open (`_band_is_decidable` never checked that a
+numeric GENERALIZE band actually contains the case's own oracle value — a wrong band could still
+score `answerable` whenever no stated reference figure happened to fall inside it, and every band
+was vacuously "decidable" with zero references) is fixed: `score_utility` now checks band
+**fidelity** (does the band contain the original value at all) before band **sufficiency** (can it
+be resolved against a stated reference), via the new `classify_generalized_band` rule. Neither
+`post-pilot-v1` nor `post-pilot-v2` is edited — `CURRENT_PROTOCOL_ID` moved to `post-pilot-v3`,
+following v1 §11's change procedure exactly, the same way Gate 6 did. `corpus/hr/v1` and
+`corpus/contracts/v1` both stay `pilot_development`; re-scoring both committed runs under the new
+rule (`docs/research/post-pilot-protocol-v3.md` §9) found **zero** category-, overall- or
+B3→B4-level rows change (every numeric oracle span in both corpora already sits inside its own
+generated band, by the generator's own pre-existing contract) — this ticket closes the gap without
+changing any historical result. A further, separate reference-extraction/sufficiency-semantics
+issue (Issue #87) and a separate treatment-behavior defect in the generator's own Brazilian-format
+amount parsing (Issue #88) were found during this fix and filed as their own issues rather than
+folded into this one; #87 is resolved below (`post-pilot-v4`), and #88 needs its own versioned
+decision before it can be fixed and is ordered directly after #87, before Gate 7.
+
+**Resolved by M3 / Issue #87 (`post-pilot-v4`, `docs/research/post-pilot-protocol-v4.md`).** Both
+remaining Issue #85 §8 findings are fixed: (a) the free-text reference-extraction mechanism
+(`_reference_values`) could not distinguish a strict "greater than" reading of a stated threshold
+from a non-strict "at least" one, so a reference sitting exactly on a band's lower bound was
+always scored `ambiguous` regardless of which reading the case actually intended; (b) that same
+mechanism was category-blind, applying any number found outside a detected span as a candidate
+reference for every numeric category a case depends on. `CaseOracle.utility_references` (a new,
+purely additive `list[NumericUtilityReference] | None` field, `corpus-case-schema-v3`) replaces
+free-text extraction with structured `(category, operator, value)` references for evaluation
+purposes only — never reaching a treatment, the detector, a policy or a provider. A new function,
+`classify_generalized_band_against_references`, shares fidelity (steps 1–3) byte-for-byte with the
+frozen `post-pilot-v3` `classify_generalized_band` and applies a structured, per-operator
+sufficiency rule (`docs/research/post-pilot-protocol-v4.md` §4) instead of the old bare-float
+comparison. Neither `post-pilot-v1`, `-v2` nor `-v3` is edited — `CURRENT_PROTOCOL_ID` moved to
+`post-pilot-v4`, following v1 §11's change procedure exactly. Neither `corpus/hr/v1` nor
+`corpus/contracts/v1` is edited to add the field, so **neither frozen corpus can be scored under
+`post-pilot-v4` at all** — both remain scored under `protocol_id="post-pilot-v3"` explicitly
+(`scripts/run_hr_v1_pilot.py`/`run_contracts_v1_pilot.py`), and no committed artifact changes.
+An analytical (non-committed) historical-impact estimate found 16 of 65 numeric-category rows
+would move from `ambiguous` to `decidable` under a throwaway structured-reference fixture for the
+two corpora (`hr_department_aggregation_001`/`002`, `hr_salary_analysis_001`/`002` × B1–B4;
+Contracts: 0) — see `docs/research/post-pilot-protocol-v4.md` §9 for the method and §10 for why
+this is not tuning. Item (c) from Issue #85 §8 (no utility-side `MIN_NUMERIC_BAND_WIDTH` check) is
+moved to its own new issue, scoped to `scoring/exposure.py` rather than `utility.py` — see
+`docs/research/post-pilot-protocol-v4.md` §8. A separate, unreachable finding (the v3 fidelity
+regexes' `\d` pattern also matches non-ASCII Unicode digits) is recorded, not fixed, in its own
+new issue (`docs/research/post-pilot-protocol-v4.md` §11).
+
+**PR #92 review round 2 (2026-09-21).** Two corrections before merge: (1) the `post-pilot-v3`
+compatibility check now refuses any opted-in oracle (`utility_references is not None`, an empty
+list `[]` included), not only a non-empty list — `None` (legacy) and `[]` (opted in, explicitly
+declares no reference) are distinct and must never be conflated; (2) `docs/research/
+post-pilot-protocol-v4.md`'s earlier "no grounding requirement" wording was too strong and is
+replaced by a semantic-grounding rule: a reference's value need not match the text lexically, but
+every reference must correspond to a condition actually visible to the provider
+(`CorpusCaseInput.text`/`task`), audited at Gate 7 authoring time, never invented solely to make a
+band decidable. See `docs/research/post-pilot-protocol-v4.md` §3a/§3b and `docs/milestone-3-current-plan.md`'s Gate 7 requirement.
+
+**Resolved by M3 / Issue #93 (`post-pilot-v5`, `docs/research/post-pilot-protocol-v5.md`).** The
+pre-Gate-7 numeric-format checkpoint: Issue #88 (`NumericBandStrategy`'s permissive float regex
+misread Brazilian-formatted amounts, e.g. `R$ 125.000,00` as `125.0`, and a huge digit string
+could overflow float to `inf`/`NaN` and raise `ValueError` instead of failing closed) and Issue
+#91 (the frozen v3/v4 fidelity regexes' `\d` also matches non-ASCII Unicode digits, and
+`match`+`$` still accepts a trailing newline) are both resolved by a single closed, ASCII-only,
+`fullmatch`-only amount grammar (`NUMERIC_AMOUNT_GRAMMAR_ID = "amount-grammar-v1"`) shared in
+concept, but independently implemented, by the treatment (`transformations/generalization.py`)
+and a new `post-pilot-v5` scorer path (`experiments/scoring/utility.py`). The grammar accepts
+dotted-decimal (`R$ 125000.00`) and Brazilian (`R$ 125.000,00`, and, per an explicit
+orchestrator decision, ungrouped `R$ 125000,00`) amounts with mandatory cents, NBSP as an
+alternate separator, and rejects negatives, leading zeros, cents-less amounts and amounts over
+15 integer digits; `NumericBandStrategy` now parses to `Decimal` (never `float`) and bands in
+exact integer arithmetic. `post-pilot-v5` is registered as frozen, scorable and current
+(`CURRENT_PROTOCOL_ID`); v3/v4 code paths (`classify_generalized_band`,
+`classify_generalized_date`, their `\d` regexes) are untouched byte-for-byte, and both
+`corpus/hr/v1` and `corpus/contracts/v1` stay refused under v5 (legacy-oracle reason, same as
+v4) and remain scored under `protocol_id="post-pilot-v3"`. A new v5-only pre-run check
+(`check_corpus_protocol_compatibility` → `UnsupportedOriginalAmountFormatError`) rejects, before
+any provider call, any numeric-category oracle span -- blocked cases included -- whose value is
+outside the grammar, so a future Gate 7 corpus cannot be authored against an amount format the
+treatment/scorer contract does not actually support. Historical impact re-verified directly
+against the live implementation: all 33 numeric-category oracle spans across both frozen
+corpora parse to the identical band under the new grammar as under the old one, and a full
+`post-pilot-v3` run over both corpora (125 case executions) is unaffected. PR #97's review also
+closed [Issue #94](https://github.com/Sheliga/adaptive-disclosure-gateway/issues/94): labeled-line
+detector spans now exclude CRLF's trailing `\r` while preserving exact
+`input.text[start:end] == span.value` coherence for LF and CRLF HR/Contracts lines, with an
+end-to-end CRLF detector → GENERALIZE → v5 scorer test. Two narrower findings remain separate:
+[Issue #95](https://github.com/Sheliga/adaptive-disclosure-gateway/issues/95) (manifest
+code-commit/per-row treatment provenance for Gate 8) and [Issue
+#96](https://github.com/Sheliga/adaptive-disclosure-gateway/issues/96) (`MonthYearDateStrategy`
+accepting Unicode digits via `strptime`). Date utility semantics intentionally stay inherited
+from v4 in `post-pilot-v5`; see `docs/research/post-pilot-protocol-v5.md` §8/§10/§12.
+
 **Findings recorded, not fixed** (see `corpus/contracts/v1/README.md`):
 
 - ~~`experiments/scoring/utility.py`'s GENERALIZE decidability rule is numeric-band-specific, so
   a month-coarsened deadline (`2026-02`) is parsed as a numeric band and scored `answerable`.~~
-  **Resolved in `post-pilot-v2` (Gate 6 / Issue #38)** — see the follow-up note above. The other
-  findings below remain open.
+  **Resolved in `post-pilot-v2` (Gate 6 / Issue #38)** — see the follow-up note above.
+- ~~The same numeric-band rule never checked that a GENERALIZE band actually contains the
+  original value.~~ **Resolved in `post-pilot-v3` (Issue #85)** — see the follow-up note above.
+  The other findings below remain open.
 - `contracts-v1` preserves `deadline` unconditionally, so B4 is nonconformant on the six spans
   where the task does not need it — the documented, identifiable B3→B4 cell in the
   under-studied direction.

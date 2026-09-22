@@ -92,6 +92,10 @@ def test_every_contracts_result_is_classified_pilot_development():
         corpus_version=CORPUS_VERSION,
         run_classification=PILOT_DEVELOPMENT,
         experiment_run_id="contracts-classification-probe",
+        # Issue #87 / M3: corpus/contracts/v1 is a frozen, legacy corpus
+        # with no opted-in CaseOracle.utility_references -- must be scored
+        # under the historical post-pilot-v3 protocol explicitly.
+        protocol_id="post-pilot-v3",
     )
 
     assert results
@@ -188,6 +192,7 @@ def test_the_full_serialized_runner_result_carries_no_never_raw_contracts_value(
         run_classification=PILOT_DEVELOPMENT,
         treatments=CONTROLLED_TREATMENTS,
         experiment_run_id="contracts-no-leak-probe",
+        protocol_id="post-pilot-v3",
     )
     cases_by_id = {case.input.sample_id: case for case in _cases()}
 

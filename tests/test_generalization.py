@@ -56,9 +56,12 @@ def test_numeric_band_strategy_rejects_a_band_narrower_than_the_documented_minim
 
 
 def test_numeric_band_strategy_accepts_the_minimum_width_exactly():
+    # Issue #93 / M3 (post-pilot-v5): the "R$" prefix is part of the closed
+    # amount *parsing* grammar regardless of this strategy's own (unrelated)
+    # output `prefix` field -- a bare "500" is no longer a parseable amount.
     strategy = NumericBandStrategy(band_width=MIN_NUMERIC_BAND_WIDTH)
 
-    assert strategy.generalize("500") == f"0-{int(MIN_NUMERIC_BAND_WIDTH)}"
+    assert strategy.generalize("R$ 500.00") == f"0-{int(MIN_NUMERIC_BAND_WIDTH)}"
 
 
 def test_date_strategy_generalizes_to_month_and_year():

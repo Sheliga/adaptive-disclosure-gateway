@@ -67,7 +67,7 @@ _LABELS: tuple[tuple[str, str], ...] = (
 LABELED_HR_RULES: tuple[DetectionRule, ...] = tuple(
     DetectionRule(
         category,
-        re.compile(rf"^{re.escape(label)}:[ \t]*(?P<value>.+?)[ \t]*$", re.MULTILINE),
+        re.compile(rf"^{re.escape(label)}:[ \t]*(?P<value>[^\r\n]+?)[ \t]*\r?$", re.MULTILINE),
         group="value",
     )
     for category, label in _LABELS
@@ -128,7 +128,7 @@ _CONTRACTS_LABELS: tuple[tuple[str, str], ...] = (
 LABELED_CONTRACTS_RULES: tuple[DetectionRule, ...] = tuple(
     DetectionRule(
         category,
-        re.compile(rf"^{re.escape(label)}:[ \t]*(?P<value>.+?)[ \t]*$", re.MULTILINE),
+        re.compile(rf"^{re.escape(label)}:[ \t]*(?P<value>[^\r\n]+?)[ \t]*\r?$", re.MULTILINE),
         group="value",
     )
     for category, label in _CONTRACTS_LABELS

@@ -238,7 +238,91 @@ type error, not a calibration choice (a month-coarsened deadline was scored `ans
 regardless of correctness). `docs/research/post-pilot-protocol-v2.md` freezes a separate,
 date-aware rule (`DATE_UTILITY_REQUIRED_GRANULARITY`, `classify_generalized_date`) for
 categories registered as date-shaped (`deadline`, required to the day); every other GENERALIZE
-category keeps the numeric-band rule unchanged. `post-pilot-v1` is not edited; `CURRENT_PROTOCOL_ID` is now `post-pilot-v2`.
+category kept the numeric-band rule unchanged at that point. `post-pilot-v1` is not edited;
+`CURRENT_PROTOCOL_ID` moved to `post-pilot-v2`.
+
+**Numeric-band GENERALIZE fidelity (frozen by Issue #85, `post-pilot-v3`).** The numeric-band
+rule Gate 6 left unchanged (`salary`, `contract_value`, `penalty_amount`) checked only
+*sufficiency* (can the band be resolved against a stated reference figure) and never *fidelity*
+(does the band actually contain the case's own oracle value at all) — a wrong band could still
+score `answerable` whenever no reference figure happened to fall inside it, and every band was
+vacuously "decidable" with zero references (`all([])` is `True`).
+`docs/research/post-pilot-protocol-v3.md` freezes `NUMERIC_BAND_UTILITY_CATEGORIES` and
+`classify_generalized_band`, which check fidelity first: an invalid, inverted, degenerate or
+non-containing band is `not_answerable` unconditionally, before any reference is even consulted;
+sufficiency (the pre-existing comparison) is only reached once fidelity holds, and a band with no
+stated reference is `indeterminate`, never vacuously `answerable`. Re-scoring both registered
+corpora under the new rule changed zero category-, overall- or B3→B4-level rows (every numeric
+oracle span in both corpora already sits inside its own generated band). `post-pilot-v1` and
+`post-pilot-v2` are not edited; `CURRENT_PROTOCOL_ID` moved to `post-pilot-v3`.
+
+**Structured numeric utility references (frozen by Issue #87, `post-pilot-v4`).** `post-pilot-v3`
+left band *sufficiency* on the pre-existing free-text mechanism (`_reference_values`): a bare
+`float` scanned from `input.text` outside any detected span, with no operator and no category
+awareness. Two defects followed: a reference sitting exactly on a band's lower bound could not be
+told apart from a strict "greater than" reading and a non-strict "at least" one (they have
+different correct answers, §4 of `docs/research/post-pilot-protocol-v4.md`); and a reference
+found in the text could be applied as a candidate for a numeric category it was never actually
+about. `CaseOracle.utility_references` (`corpus/models.py`'s `NumericUtilityReference`/
+`ReferenceOperator`, `corpus-case-schema-v3`, purely additive) replaces free-text extraction with
+structured `(category, operator, value)` references, read only by `experiments/scoring/utility.py`
+for evaluation purposes — never by a treatment, the detector, a policy or a provider. A new
+function, `classify_generalized_band_against_references`, shares fidelity (steps 1–3) byte-for-byte
+with the frozen `post-pilot-v3` `classify_generalized_band` and replaces only the sufficiency step
+with the structured per-operator table (`greater_than`/`greater_than_or_equal`/`less_than`/
+`less_than_or_equal`). Deliberately **no load-time coverage requirement** (an opted-in case whose
+numeric-dependent category has no reference scores `indeterminate`/`generalized_band_no_reference`
+at score time, not a schema violation) and **no lexical-match requirement, but semantic grounding
+is required** (a reference's value need not appear textually in `input.text` — a canonical
+`500000.00` may correspond to `R$ 500.000,00` or a prose statement of the same threshold in the
+text — but every reference must correspond to a condition actually visible to the provider
+(`CorpusCaseInput.text`/`task`), never an evaluation-only threshold invented solely to make a band
+decidable; enforced as a Gate 7 authoring/audit requirement, not a scorer heuristic, since checking
+semantic correspondence to prose is exactly the kind of judgment call this ticket declined to
+automate — see `docs/research/post-pilot-protocol-v4.md` §3a/§3b). Protocol dispatch
+(`SCORABLE_PROTOCOL_IDS`, `check_corpus_protocol_compatibility`) refuses to score a legacy oracle
+(`utility_references is None`) under `post-pilot-v4` when it depends on a numeric category, and
+separately refuses **any** opted-in oracle — an empty list included, not only a non-empty one —
+under `post-pilot-v3` (an explicit but empty opt-in must never silently fall back to free-text
+extraction). `corpus/hr/v1` and `corpus/contracts/v1` are neither edited nor scorable under v4, and
+remain scored under `protocol_id="post-pilot-v3"` explicitly. `post-pilot-v1`, `-v2` and `-v3` are
+not edited; `CURRENT_PROTOCOL_ID` is now `post-pilot-v4`. See
+`docs/research/post-pilot-protocol-v4.md` for the full rule, the anti-tuning justification for the
+fix's one case of *adding* credit relative to v3, and the item (c)/Unicode-`\d` findings moved to
+their own issues rather than fixed here.
+
+**Numeric amount format contract, end to end (frozen by Issue #93, `post-pilot-v5`).** Issue #88
+found that `NumericBandStrategy`'s treatment-side amount parser
+(`transformations/generalization.py`) misreads a Brazilian-formatted amount (`R$ 125.000,00` read
+as `125.0`) and could overflow `float` to `inf`/`NaN` on an oversized digit string, raising an
+unhandled exception instead of failing closed; Issue #91 separately found that the frozen v3/v4
+fidelity regexes use `\d`, which also matches non-ASCII Unicode digits, and `match`+`$`, which
+still accepts a trailing newline. Fixing either issue alone is insufficient: the treatment and the
+scorer must agree on one amount format, or a value the treatment can correctly generalize can
+still be unscorable. `post-pilot-v5` (delta on v4) freezes a single closed, versioned grammar
+(`NUMERIC_AMOUNT_GRAMMAR_ID = "amount-grammar-v1"`, `docs/research/post-pilot-protocol-v5.md` §2)
+— dotted-decimal or Brazilian, mandatory cents, NBSP accepted as an alternate separator, ungrouped
+Brazilian amounts accepted, negatives/leading-zeros/no-cents rejected — implemented
+**independently twice** (the treatment's single alternation regex; a new v5-only scorer path,
+`_parse_original_amount_v5`, two patterns tried in order) so a shared-parser bug cannot make
+fidelity circularly agree with a wrong band. `NumericBandStrategy` now parses to `Decimal`, never
+`float`, and bands in exact integer arithmetic; the emitted band's own string shape is unchanged.
+Date utility semantics intentionally remain inherited from v4; the treatment/scorer date finding
+is tracked separately in Issue #96. `score_utility`'s and
+`_check_case_protocol_compatibility`'s dispatch, previously an unconditional "not-v3-means-v4"
+fallback, is now exhaustive per protocol id (raising `UnsupportedScoringProtocolError` for any
+id with no matching branch). A new, v5-only pre-run check
+(`check_corpus_protocol_compatibility` → `UnsupportedOriginalAmountFormatError`) rejects, before
+any provider call, any numeric-category oracle span outside the grammar in **any** case — blocked
+cases included — so a future confirmatory corpus cannot be authored against a format the
+treatment/scorer contract does not support. `post-pilot-v1`–`v4` are not edited;
+`CURRENT_PROTOCOL_ID` is now `post-pilot-v5`. Neither registered corpus is scorable under v5 (same
+legacy-oracle refusal as v4); both remain scored under `protocol_id="post-pilot-v3"`, and
+re-verification found all 33 numeric-category oracle spans across both corpora produce identical
+bands under the new grammar. See `docs/research/post-pilot-protocol-v5.md` for the full grammar,
+the independence argument, the dispatch/compatibility matrix and the three further findings
+(CRLF-on-detected-value, manifest code-commit provenance, `MonthYearDateStrategy` Unicode digits)
+filed as separate issues rather than fixed here.
 
 ### Reconstruction
 

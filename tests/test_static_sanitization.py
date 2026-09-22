@@ -32,7 +32,7 @@ def test_remove_action_drops_value_and_does_not_leak_original():
 
 
 def test_generalize_action_replaces_salary_without_leaking_original_value():
-    text = "Salary: R$ 8500.00 was paid.\n"
+    text = "Salary: R$ 8500.00\n"
     request = _request(text)
     spans = Detector().detect(text)
 
@@ -44,6 +44,25 @@ def test_generalize_action_replaces_salary_without_leaking_original_value():
     # Issue #16: GENERALIZE must be a real band, not a fixed placeholder --
     # this is what makes it distinguishable from REMOVE's `transformed=None`.
     assert transformation.transformed == "R$ 5000-10000"
+
+
+def test_generalize_action_blocks_when_salary_value_has_trailing_prose():
+    # Issue #93 / M3 (post-pilot-v5): the detector's labeled-line rule
+    # captures the whole rest of the line as the span value, so a line with
+    # trailing prose after the amount (a real shape the pre-#93 permissive
+    # float regex used to silently misparse) is no longer a value the closed
+    # amount grammar accepts at all -- it must fail closed, not partially
+    # disclose a wrong band.
+    text = "Salary: R$ 8500.00 was paid.\n"
+    request = _request(text)
+    spans = Detector().detect(text)
+    assert any(s.category == "salary" for s in spans)  # detected, just unparseable as an amount
+
+    result = StaticSanitizer().sanitize(request, spans)
+
+    assert result.status == "blocked"
+    assert result.external_payload == ""
+    assert "8500.00" not in result.external_payload
 
 
 def test_unconfigured_generalize_category_fails_closed_instead_of_disclosing(monkeypatch):
