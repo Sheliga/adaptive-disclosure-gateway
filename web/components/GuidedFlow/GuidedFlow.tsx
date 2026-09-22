@@ -203,6 +203,13 @@ function GuidedFlowShell() {
   const stateRef = useRef(state);
   stateRef.current = state;
   const mainRef = useRef<HTMLElement>(null);
+  // Invariant: this Map holds exactly the snapshots of entries at or before
+  // historyIndexRef.current, plus any still-reachable forward entries. A
+  // push is a new branch: every entry after the current index is deleted
+  // (snapshot + non-restorable mark) before the new one is recorded -- see
+  // the push effect below. A non-restorable entry's own snapshot is deleted
+  // the moment it is marked (in handleConfirmReview), rather than waiting
+  // for a future push, since it can never be restored anyway.
   const historySnapshotsRef = useRef(new Map<string, FlowState>());
   const historyEntryIdsRef = useRef<string[]>([]);
   const historyIndexRef = useRef(0);
@@ -288,6 +295,13 @@ function GuidedFlowShell() {
         !isStableNavigationState(snapshot) ||
         nonRestorableNavigationIdsRef.current.has(id)
       ) {
+        // The browser has genuinely moved to this entry even though it
+        // cannot be restored, so the tracked position must follow (see the
+        // Map's invariant comment above) -- otherwise a later push prunes
+        // nothing and a stale snapshot beyond this point (e.g. a completed
+        // Result carrying execute data) is retained indefinitely.
+        historyIndexRef.current = targetIndex;
+        currentNavigationIdRef.current = id;
         setUnrecoverableStep(urlStepFromSearch(window.location.search) ?? "intro");
         return;
       }
@@ -322,6 +336,12 @@ function GuidedFlowShell() {
       window.history.replaceState({ flowNavigationId: currentId }, "", nextUrl);
       return;
     }
+    // This is the push side of the Map's invariant (see historySnapshotsRef's
+    // declaration): the Map holds exactly the snapshots of entries at or
+    // before the current index plus reachable forward entries; on push,
+    // every entry after the current index is deleted (snapshot +
+    // non-restorable mark) -- this is a new branch, so nothing after
+    // historyIndexRef.current is reachable anymore.
     const abandonedIds = historyEntryIdsRef.current.slice(historyIndexRef.current + 1);
     for (const abandonedId of abandonedIds) {
       historySnapshotsRef.current.delete(abandonedId);
@@ -473,7 +493,13 @@ function GuidedFlowShell() {
       );
       if (result.ok) {
         if (reviewNavigationId !== null) {
+          // Marked non-restorable AND its snapshot dropped in the same
+          // step: a popstate back to this id will never use the snapshot
+          // again (see handlePopState's nonRestorable check), so keeping it
+          // around until a later push prunes it would retain a sent
+          // Review's data for longer than necessary.
           nonRestorableNavigationIdsRef.current.add(reviewNavigationId);
+          historySnapshotsRef.current.delete(reviewNavigationId);
         }
         dispatch({ type: "EXECUTE_SUCCEEDED", execute: result.data });
       } else {
@@ -490,7 +516,9 @@ function GuidedFlowShell() {
     const result = await executeDisclosure(body, copy);
     if (result.ok) {
       if (reviewNavigationId !== null) {
+        // See the comment on the upload-mode branch above -- same policy.
         nonRestorableNavigationIdsRef.current.add(reviewNavigationId);
+        historySnapshotsRef.current.delete(reviewNavigationId);
       }
       dispatch({ type: "EXECUTE_SUCCEEDED", execute: result.data });
     } else {
