@@ -34,7 +34,7 @@
  * or `/compare`.
  */
 
-import { useEffect, useReducer, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   compareStrategies,
@@ -54,12 +54,13 @@ import {
   buildRequestBody,
   flowReducer,
   initialFlowState,
+  type FlowEvent,
   type ComposeState,
   type FlowState,
 } from "@/lib/flow";
 import type { ProviderModeState } from "@/lib/providerMode";
 import { LocaleProvider } from "@/i18n/LocaleProvider";
-import { useCopy } from "@/i18n/useLocale";
+import { useLocale } from "@/i18n/useLocale";
 
 import { ComparisonScreen } from "../ComparisonScreen/ComparisonScreen";
 import { ComposeScreen } from "../ComposeScreen/ComposeScreen";
@@ -72,6 +73,120 @@ import { ThemeToggle } from "../ThemeToggle/ThemeToggle";
 import { WelcomeScreen } from "../WelcomeScreen/WelcomeScreen";
 import styles from "./GuidedFlow.module.css";
 
+type PrimaryStep = "intro" | "prepare" | "review" | "send" | "result";
+type UrlStep = PrimaryStep | "comparison" | "technical";
+type GuidedFlowEvent =
+  | FlowEvent
+  | { type: "BACK_TO_WELCOME" }
+  | { type: "RESTORE_NAVIGATION_STATE"; state: FlowState };
+
+const PRIMARY_STEPS: PrimaryStep[] = ["intro", "prepare", "review", "send", "result"];
+
+const STEP_LABELS = {
+  "pt-BR": {
+    intro: "Introdução",
+    prepare: "Preparar",
+    review: "Revisar",
+    send: "Enviar",
+    result: "Resultado",
+    comparison: "Comparação",
+    technical: "Detalhes técnicos",
+    back: "Voltar",
+    recoveryHeading: "Esta etapa não pode ser restaurada",
+    recoveryBody:
+      "Por segurança, o fluxo não salva documentos, tarefas, tokens ou payloads na URL ou no navegador. Inicie novamente para reconstruir esta etapa.",
+    recoveryAction: "Voltar à introdução",
+    currentStepPrefix: "Etapa atual:",
+  },
+  en: {
+    intro: "Introduction",
+    prepare: "Prepare",
+    review: "Review",
+    send: "Send",
+    result: "Result",
+    comparison: "Comparison",
+    technical: "Technical details",
+    back: "Back",
+    recoveryHeading: "This step cannot be restored",
+    recoveryBody:
+      "For safety, the flow does not save documents, tasks, tokens, or payloads in the URL or browser storage. Start again to rebuild this step.",
+    recoveryAction: "Back to introduction",
+    currentStepPrefix: "Current step:",
+  },
+} as const;
+
+function primaryStepForState(state: FlowState): PrimaryStep {
+  switch (state.screen) {
+    case "welcome":
+      return "intro";
+    case "compose":
+    case "previewing":
+      return "prepare";
+    case "review":
+      return "review";
+    case "executing":
+      return "send";
+    case "result":
+    case "technicalDetails":
+    case "comparing":
+    case "comparison":
+      return "result";
+  }
+}
+
+function urlStepForState(state: FlowState): UrlStep {
+  if (state.screen === "comparison") {
+    return "comparison";
+  }
+  if (state.screen === "technicalDetails") {
+    return "technical";
+  }
+  return primaryStepForState(state);
+}
+
+function urlStepFromSearch(search: string): UrlStep | null {
+  const value = new URLSearchParams(search).get("step");
+  if (
+    value === "intro" ||
+    value === "prepare" ||
+    value === "review" ||
+    value === "send" ||
+    value === "result" ||
+    value === "comparison" ||
+    value === "technical"
+  ) {
+    return value;
+  }
+  return null;
+}
+
+function replaceStepInUrl(step: UrlStep) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("step", step);
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
+function reduceGuidedFlow(state: FlowState, event: GuidedFlowEvent): FlowState {
+  if (event.type === "RESTORE_NAVIGATION_STATE") {
+    return event.state;
+  }
+  if (event.type === "BACK_TO_WELCOME") {
+    return state.screen === "compose" ? initialFlowState : state;
+  }
+  return flowReducer(state, event);
+}
+
+function isStableNavigationState(state: FlowState) {
+  return (
+    state.screen === "welcome" ||
+    state.screen === "compose" ||
+    state.screen === "review" ||
+    state.screen === "result" ||
+    state.screen === "technicalDetails" ||
+    state.screen === "comparison"
+  );
+}
+
 export function GuidedFlow() {
   return (
     <LocaleProvider>
@@ -81,8 +196,21 @@ export function GuidedFlow() {
 }
 
 function GuidedFlowShell() {
-  const copy = useCopy();
-  const [state, dispatch] = useReducer(flowReducer, initialFlowState);
+  const { copy, locale } = useLocale();
+  const labels = STEP_LABELS[locale];
+  const [state, setState] = useState<FlowState>(initialFlowState);
+  const [unrecoverableStep, setUnrecoverableStep] = useState<UrlStep | null>(null);
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const mainRef = useRef<HTMLElement>(null);
+  const historySnapshotsRef = useRef(new Map<string, FlowState>());
+  const historyEntryIdsRef = useRef<string[]>([]);
+  const historyIndexRef = useRef(0);
+  const currentNavigationIdRef = useRef<string | null>(null);
+  const nonRestorableNavigationIdsRef = useRef(new Set<string>());
+  const ignoreLockedPopStateRef = useRef(false);
+  const suppressHistorySyncRef = useRef(false);
+  const navigationIdRef = useRef(0);
   const [examples, setExamples] = useState<ExampleSummary[] | null>(null);
   const [examplesError, setExamplesError] = useState<DisplayError | null>(null);
   const [documentTypes, setDocumentTypes] = useState<DocumentType[] | null>(null);
@@ -99,6 +227,114 @@ function GuidedFlowShell() {
   // `lib/demoVaultExplorer.ts`'s own gate, which is what actually decides
   // whether the vault explorer route ever forwards a request upstream.
   const [demoVaultExplorerEnabled, setDemoVaultExplorerEnabled] = useState(false);
+
+  const dispatch = useCallback((event: GuidedFlowEvent) => {
+    if (event.type !== "SET_DOCUMENT_TYPE") {
+      setUnrecoverableStep(null);
+    }
+    setState((current) => reduceGuidedFlow(current, event));
+  }, []);
+
+  useEffect(() => {
+    const heading = mainRef.current?.querySelector("h1");
+    if (!(heading instanceof HTMLElement)) {
+      return;
+    }
+    if (!heading.hasAttribute("tabindex")) {
+      heading.setAttribute("tabindex", "-1");
+    }
+    heading.focus({ preventScroll: true });
+  }, [state.screen, unrecoverableStep]);
+
+  useEffect(() => {
+    const currentStep = urlStepFromSearch(window.location.search);
+    if (currentStep !== null && currentStep !== "intro") {
+      setUnrecoverableStep(currentStep);
+      suppressHistorySyncRef.current = true;
+      window.history.replaceState({ flowNavigationId: null }, "", replaceStepInUrl(currentStep));
+    } else {
+      const initialId = `flow-${navigationIdRef.current}`;
+      currentNavigationIdRef.current = initialId;
+      historyEntryIdsRef.current = [initialId];
+      historyIndexRef.current = 0;
+      historySnapshotsRef.current.set(initialId, initialFlowState);
+      window.history.replaceState({ flowNavigationId: initialId }, "", replaceStepInUrl("intro"));
+    }
+
+    function handlePopState(event: PopStateEvent) {
+      if (ignoreLockedPopStateRef.current) {
+        ignoreLockedPopStateRef.current = false;
+        return;
+      }
+      const id =
+        typeof event.state?.flowNavigationId === "string" ? event.state.flowNavigationId : null;
+      const targetIndex = id === null ? -1 : historyEntryIdsRef.current.indexOf(id);
+      if (
+        stateRef.current.screen === "executing" &&
+        targetIndex >= 0 &&
+        targetIndex < historyIndexRef.current
+      ) {
+        ignoreLockedPopStateRef.current = true;
+        window.history.go(1);
+        return;
+      }
+      if (id === null || targetIndex < 0) {
+        setUnrecoverableStep(urlStepFromSearch(window.location.search) ?? "intro");
+        return;
+      }
+      const snapshot = historySnapshotsRef.current.get(id);
+      if (
+        snapshot === undefined ||
+        !isStableNavigationState(snapshot) ||
+        nonRestorableNavigationIdsRef.current.has(id)
+      ) {
+        setUnrecoverableStep(urlStepFromSearch(window.location.search) ?? "intro");
+        return;
+      }
+      historyIndexRef.current = targetIndex;
+      currentNavigationIdRef.current = id;
+      setUnrecoverableStep(null);
+      suppressHistorySyncRef.current = true;
+      dispatch({ type: "RESTORE_NAVIGATION_STATE", state: snapshot });
+    }
+
+    window.addEventListener("popstate", handlePopState);
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+      window.history.replaceState(null, "", replaceStepInUrl("intro"));
+    };
+  }, [dispatch]);
+
+  useEffect(() => {
+    if (unrecoverableStep !== null || !isStableNavigationState(state)) {
+      return;
+    }
+    if (suppressHistorySyncRef.current) {
+      suppressHistorySyncRef.current = false;
+      return;
+    }
+    const step = urlStepForState(state);
+    const currentStep = urlStepFromSearch(window.location.search);
+    const currentId = currentNavigationIdRef.current;
+    const nextUrl = replaceStepInUrl(step);
+    if (currentId !== null && currentStep === step) {
+      historySnapshotsRef.current.set(currentId, state);
+      window.history.replaceState({ flowNavigationId: currentId }, "", nextUrl);
+      return;
+    }
+    const abandonedIds = historyEntryIdsRef.current.slice(historyIndexRef.current + 1);
+    for (const abandonedId of abandonedIds) {
+      historySnapshotsRef.current.delete(abandonedId);
+      nonRestorableNavigationIdsRef.current.delete(abandonedId);
+    }
+    historyEntryIdsRef.current = historyEntryIdsRef.current.slice(0, historyIndexRef.current + 1);
+    const id = `flow-${++navigationIdRef.current}`;
+    currentNavigationIdRef.current = id;
+    historySnapshotsRef.current.set(id, state);
+    historyEntryIdsRef.current.push(id);
+    historyIndexRef.current = historyEntryIdsRef.current.length - 1;
+    window.history.pushState({ flowNavigationId: id }, "", nextUrl);
+  }, [state, unrecoverableStep]);
 
   useEffect(() => {
     let cancelled = false;
@@ -147,7 +383,7 @@ function GuidedFlowShell() {
         analysisMode: primary.default_analysis_mode,
       });
     }
-  }, [state, documentTypes]);
+  }, [state, documentTypes, dispatch]);
 
   useEffect(() => {
     let cancelled = false;
@@ -172,7 +408,7 @@ function GuidedFlowShell() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [dispatch]);
 
   useEffect(() => {
     if (state.screen !== "compose" || examples !== null || examplesError !== null) {
@@ -220,6 +456,7 @@ function GuidedFlowShell() {
   }
 
   async function handleConfirmReview(review: Extract<FlowState, { screen: "review" }>) {
+    const reviewNavigationId = currentNavigationIdRef.current;
     dispatch({ type: "CONFIRM_REVIEW" });
     if (review.compose.mode === "upload") {
       if (review.confirmationToken === null) {
@@ -235,6 +472,9 @@ function GuidedFlowShell() {
         copy,
       );
       if (result.ok) {
+        if (reviewNavigationId !== null) {
+          nonRestorableNavigationIdsRef.current.add(reviewNavigationId);
+        }
         dispatch({ type: "EXECUTE_SUCCEEDED", execute: result.data });
       } else {
         dispatch({
@@ -249,6 +489,9 @@ function GuidedFlowShell() {
     const body = buildRequestBody(compose);
     const result = await executeDisclosure(body, copy);
     if (result.ok) {
+      if (reviewNavigationId !== null) {
+        nonRestorableNavigationIdsRef.current.add(reviewNavigationId);
+      }
       dispatch({ type: "EXECUTE_SUCCEEDED", execute: result.data });
     } else {
       dispatch({ type: "EXECUTE_FAILED", error: result.error });
@@ -284,18 +527,72 @@ function GuidedFlowShell() {
     }
   }
 
+  function resetAfterUnrecoverableStep() {
+    setUnrecoverableStep(null);
+    dispatch({ type: "RESTORE_NAVIGATION_STATE", state: initialFlowState });
+  }
+
+  function handleBack() {
+    window.history.back();
+  }
+
+  const showBackButton =
+    state.screen === "compose" ||
+    state.screen === "review" ||
+    state.screen === "technicalDetails" ||
+    state.screen === "comparison";
+
   return (
     <div className={styles.app}>
       <header className={styles.header}>
         <LocaleSwitcher />
         <ThemeToggle />
       </header>
-      <main className={styles.main}>
-        {state.screen === "welcome" && (
+      <main ref={mainRef} className={styles.main}>
+        <nav className={styles.progress} aria-label={labels.currentStepPrefix}>
+          <ol className={styles.progressList}>
+            {PRIMARY_STEPS.map((step) => {
+              const current = step === primaryStepForState(state);
+              return (
+                <li
+                  key={step}
+                  className={`${styles.progressItem} ${current ? styles.progressItemCurrent : ""}`}
+                  aria-current={current ? "step" : undefined}
+                >
+                  <span className={styles.progressMarker} aria-hidden="true" />
+                  <span className={styles.progressLabel}>{labels[step]}</span>
+                </li>
+              );
+            })}
+          </ol>
+        </nav>
+
+        {showBackButton && (
+          <div className={styles.backBar}>
+            <button type="button" className={styles.backButton} onClick={handleBack}>
+              {labels.back}
+            </button>
+          </div>
+        )}
+
+        {unrecoverableStep !== null && (
+          <section aria-labelledby="navigation-recovery-heading" className={styles.recovery}>
+            <p className={styles.recoveryStep}>
+              {labels.currentStepPrefix} {labels[unrecoverableStep]}
+            </p>
+            <h1 id="navigation-recovery-heading">{labels.recoveryHeading}</h1>
+            <p>{labels.recoveryBody}</p>
+            <button type="button" className={styles.backButton} onClick={resetAfterUnrecoverableStep}>
+              {labels.recoveryAction}
+            </button>
+          </section>
+        )}
+
+        {unrecoverableStep === null && state.screen === "welcome" && (
           <WelcomeScreen onStart={() => dispatch({ type: "START_TEST" })} />
         )}
 
-        {state.screen === "compose" && (
+        {unrecoverableStep === null && state.screen === "compose" && (
           <ComposeScreen
             compose={state.compose}
             submitError={state.submitError}
@@ -308,7 +605,7 @@ function GuidedFlowShell() {
           />
         )}
 
-        {state.screen === "previewing" && (
+        {unrecoverableStep === null && state.screen === "previewing" && (
           <ProcessingStatus
             stages={
               state.compose.mode === "upload"
@@ -326,7 +623,7 @@ function GuidedFlowShell() {
           />
         )}
 
-        {state.screen === "review" && (
+        {unrecoverableStep === null && state.screen === "review" && (
           <ReviewScreen
             preview={state.preview}
             executeError={state.executeError}
@@ -338,13 +635,13 @@ function GuidedFlowShell() {
           />
         )}
 
-        {state.screen === "executing" && (
+        {unrecoverableStep === null && state.screen === "executing" && (
           <ProcessingStatus
             stages={[copy.processingStages.consultingModel, copy.processingStages.reconstructingAnswer]}
           />
         )}
 
-        {state.screen === "result" && (
+        {unrecoverableStep === null && state.screen === "result" && (
           <ResultScreen
             execute={state.execute}
             health={health}
@@ -357,21 +654,21 @@ function GuidedFlowShell() {
           />
         )}
 
-        {state.screen === "technicalDetails" && (
+        {unrecoverableStep === null && state.screen === "technicalDetails" && (
           <TechnicalDetailsScreen
             execute={state.execute}
-            onBack={() => dispatch({ type: "RETURN_TO_RESULT" })}
+            onBack={handleBack}
           />
         )}
 
-        {state.screen === "comparing" && (
+        {unrecoverableStep === null && state.screen === "comparing" && (
           <ProcessingStatus stages={[copy.processingStages.comparingStrategies]} />
         )}
 
-        {state.screen === "comparison" && (
+        {unrecoverableStep === null && state.screen === "comparison" && (
           <ComparisonScreen
             comparison={state.comparison}
-            onBack={() => dispatch({ type: "RETURN_TO_RESULT" })}
+            onBack={handleBack}
           />
         )}
       </main>
