@@ -593,6 +593,16 @@ function GuidedFlowShell() {
    * `handleConfirmReview` already send.
    */
   async function handleRequestComparison(compose: ComposeState) {
+    if (historyCorrectionRef.current !== null) {
+      // Same guard as handleRestart/handleViewTechnicalDetails below: a
+      // corrective history.go(...) is still in flight (see
+      // historyCorrectionRef's declaration), so the browser is not at
+      // currentNavigationIdRef yet. Requesting a comparison now would both
+      // fire `/disclosure/compare` and let the history-sync effect's later
+      // push write "comparing"/"comparison" relative to the wrong entry,
+      // discarding Result before it is ever registered in history (#101).
+      return;
+    }
     dispatch({ type: "REQUEST_COMPARISON" });
     if (compose.mode === "upload") {
       dispatch({
@@ -621,6 +631,38 @@ function GuidedFlowShell() {
 
   function handleBack() {
     window.history.back();
+  }
+
+  /**
+   * Result-action lock during a pending correction (#101 follow-up): execute
+   * can settle to "result" BEFORE the corrective popstate that
+   * historyCorrectionRef is waiting for (see its declaration and the
+   * history-sync effect above, which already holds the write back for
+   * exactly this reason). Result renders and stays visible -- that is
+   * correct and must not change -- but the browser is not at
+   * currentNavigationIdRef yet, so any action from here that would dispatch
+   * a screen change must wait too, or the history-sync effect's next push
+   * would write relative to the wrong entry and Result would never be
+   * registered in history (e.g. Review -> Technical Details with no Result
+   * entry between them, so Back from Technical Details lands on the
+   * fail-closed Review instead of Result). Reading the ref here, inside an
+   * event handler rather than during render, needs no extra React state:
+   * historyCorrectionRef stays the single source of truth the popstate/sync
+   * effect logic already uses, unchanged.
+   */
+  function handleRestart() {
+    if (historyCorrectionRef.current !== null) {
+      return;
+    }
+    dispatch({ type: "RESTART" });
+  }
+
+  function handleViewTechnicalDetails() {
+    if (historyCorrectionRef.current !== null) {
+      // Same guard as handleRestart above.
+      return;
+    }
+    dispatch({ type: "OPEN_TECHNICAL_DETAILS" });
   }
 
   const showBackButton =
@@ -733,9 +775,9 @@ function GuidedFlowShell() {
             execute={state.execute}
             health={health}
             compareError={state.compareError}
-            onRestart={() => dispatch({ type: "RESTART" })}
+            onRestart={handleRestart}
             onCompareStrategies={() => handleRequestComparison(state.compose)}
-            onViewTechnicalDetails={() => dispatch({ type: "OPEN_TECHNICAL_DETAILS" })}
+            onViewTechnicalDetails={handleViewTechnicalDetails}
             demoVaultExplorerEnabled={demoVaultExplorerEnabled}
             vaultExplorerToken={state.preview.vault_explorer_token}
           />
