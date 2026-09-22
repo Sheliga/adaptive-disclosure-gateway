@@ -59,8 +59,9 @@ semantics findings Issue #85 §8 filed rather than fixed. Fixed and frozen as
 
 **Current operational dependency: Issue #93** (numeric-format stabilization end-to-end,
 `post-pilot-v5`, resolving #88 and #91) — the pre-Gate-7 checkpoint requiring the treatment's own
-amount grammar and the scorer's fidelity/date grammars to agree, end to end, before a
-confirmatory Contracts corpus may be authored. **Implemented and pending review** in a PR to
+amount grammar and the scorer's monetary fidelity grammar to agree, end to end, before a
+confirmatory Contracts corpus may be authored. Date utility semantics stay inherited from v4;
+the separate date treatment/scorer finding remains Issue #96. **Implemented and pending review** in a PR to
 `develop` — not yet merged. Issue #93 is not itself a closure gate; it is a prerequisite decision
 Gate 7 authoring depends on, exactly like #87 was. **Owner-decided resulting order: Gate 6 ✅ →
 Issue #85 ✅ (`post-pilot-v3`, merged) → Issue #87 ✅ (`post-pilot-v4`, merged) → Issue #93
