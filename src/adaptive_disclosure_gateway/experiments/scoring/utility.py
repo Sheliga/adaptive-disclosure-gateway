@@ -283,19 +283,6 @@ _YEAR_ONLY_PATTERN = re.compile(r"^(\d{4})$")
 _YEAR_MONTH_PATTERN = re.compile(r"^(\d{4})-(\d{2})$")
 _YEAR_MONTH_DAY_PATTERN = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
 
-# ASCII-only, fullmatch-only counterparts of the four date patterns above,
-# used only by the ``post-pilot-v5`` date-grammar functions below (Issue #91
-# / #93, M3). The v2-era patterns above stay byte-for-byte for v3/v4
-# (historical-corpus scoring pins) -- two defects Issue #91 found in them are
-# deliberately NOT backported there: (1) bare ``\d`` also matches non-ASCII
-# Unicode decimal digits under Python's default `re` semantics; (2) `.match`
-# with a `$` anchor still accepts one trailing ``\n``. Both are closed here
-# with explicit ``[0-9]`` classes and ``fullmatch``.
-_V5_ORIGINAL_DATE_PATTERN = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
-_V5_YEAR_ONLY_PATTERN = re.compile(r"([0-9]{4})")
-_V5_YEAR_MONTH_PATTERN = re.compile(r"([0-9]{4})-([0-9]{2})")
-_V5_YEAR_MONTH_DAY_PATTERN = re.compile(r"([0-9]{4})-([0-9]{2})-([0-9]{2})")
-
 
 def _parse_original_date(original: str | None) -> tuple[int, int, int] | None:
     """The oracle span's own date value, parsed strictly: ``YYYY-MM-DD``
@@ -374,79 +361,6 @@ def classify_generalized_date(
         return "not_answerable", "generalized_date_unscorable_original"
 
     parsed_transformed = _parse_transformed_date(transformed)
-    if parsed_transformed is None:
-        return "not_answerable", "generalized_date_invalid"
-
-    granularity, t_year, t_month, t_day = parsed_transformed
-    o_year, o_month, o_day = parsed_original
-
-    if t_year != o_year:
-        return "not_answerable", "generalized_date_wrong_value"
-    if granularity in ("month", "day") and t_month != o_month:
-        return "not_answerable", "generalized_date_wrong_value"
-    if granularity == "day" and t_day != o_day:
-        return "not_answerable", "generalized_date_wrong_value"
-
-    if granularity == "day":
-        return "not_answerable", "generalized_date_excess_precision"
-
-    if _DATE_GRANULARITY_ORDER[granularity] > _DATE_GRANULARITY_ORDER[required]:
-        return "not_answerable", "generalized_date_insufficient_granularity"
-
-    return "answerable", "generalized_date_sufficient_granularity"
-
-
-def _parse_original_date_v5(original: str | None) -> tuple[int, int, int] | None:
-    """``post-pilot-v5`` (Issue #91 / #93) counterpart of
-    ``_parse_original_date``: identical semantics, ASCII-only digits and
-    ``fullmatch`` (never a trailing ``\\n``)."""
-    if not isinstance(original, str) or _V5_ORIGINAL_DATE_PATTERN.fullmatch(original) is None:
-        return None
-    year, month, day = (int(part) for part in original.split("-"))
-    try:
-        date(year, month, day)
-    except ValueError:
-        return None
-    return (year, month, day)
-
-
-def _parse_transformed_date_v5(
-    transformed: str | None,
-) -> tuple[str, int, int | None, int | None] | None:
-    """``post-pilot-v5`` counterpart of ``_parse_transformed_date``."""
-    if not transformed or not isinstance(transformed, str):
-        return None
-    if match := _V5_YEAR_MONTH_DAY_PATTERN.fullmatch(transformed):
-        year, month, day = (int(part) for part in match.groups())
-        try:
-            date(year, month, day)
-        except ValueError:
-            return None
-        return ("day", year, month, day)
-    if match := _V5_YEAR_MONTH_PATTERN.fullmatch(transformed):
-        year, month = (int(part) for part in match.groups())
-        if not 1 <= month <= 12:
-            return None
-        return ("month", year, month, None)
-    if match := _V5_YEAR_ONLY_PATTERN.fullmatch(transformed):
-        return ("year", int(match.group(1)), None, None)
-    return None
-
-
-def classify_generalized_date_v5(
-    original: str | None, transformed: str | None, required: str
-) -> tuple[UtilityOutcome, str]:
-    """``post-pilot-v5`` (Issue #91 / #93, M3) counterpart of
-    ``classify_generalized_date``: identical rule and identical closed
-    reason set, using the ASCII-only, ``fullmatch``-only date grammar above
-    instead of the v2-era ``\\d``/``match``+``$`` patterns. ``classify_generalized_date``
-    itself is untouched and stays the v3/v4 historical pin.
-    """
-    parsed_original = _parse_original_date_v5(original)
-    if parsed_original is None:
-        return "not_answerable", "generalized_date_unscorable_original"
-
-    parsed_transformed = _parse_transformed_date_v5(transformed)
     if parsed_transformed is None:
         return "not_answerable", "generalized_date_invalid"
 
@@ -911,15 +825,14 @@ def score_utility(
     scoring protocol it wants, never inherit one implicitly).
 
     ``protocol_id`` must be one of ``SCORABLE_PROTOCOL_IDS``
-    (``post-pilot-v3``/``post-pilot-v4`` today); anything else raises via
-    ``validate_scorable_protocol_id`` before any scoring happens. The two
-    protocols share every rule except the numeric-band GENERALIZE
-    sufficiency check: v3 extracts free-text reference figures from
-    ``case_input.text`` (``_legacy_v3_reference_values``, frozen,
-    historical-corpus-compatible); v4 reads the oracle's own structured
-    ``utility_references`` and never touches ``case_input.text`` for this
-    purpose at all (Issue #87's fix for the category-blind, text-coupled
-    v3 mechanism).
+    (``post-pilot-v3``/``post-pilot-v4``/``post-pilot-v5`` today); anything
+    else raises via ``validate_scorable_protocol_id`` before any scoring
+    happens. v3 extracts free-text reference figures from ``case_input.text``
+    (``_legacy_v3_reference_values``, frozen, historical-corpus-compatible);
+    v4 reads the oracle's own structured ``utility_references`` and never
+    touches ``case_input.text`` for this purpose at all (Issue #87's fix for
+    the category-blind, text-coupled v3 mechanism); v5 keeps v4's structured
+    reference semantics and changes only the numeric amount/band grammar.
     """
     validate_scorable_protocol_id(protocol_id)
 
@@ -1008,16 +921,8 @@ def score_utility(
             elif action is DisclosureAction.GENERALIZE:
                 required_granularity = DATE_UTILITY_REQUIRED_GRANULARITY.get(category)
                 if required_granularity is not None:
-                    # post-pilot-v5 uses the ASCII-only date grammar (Issue
-                    # #91); v3/v4 share the frozen, byte-for-byte v2-era
-                    # function unchanged.
-                    date_classifier = (
-                        classify_generalized_date_v5
-                        if protocol_id == "post-pilot-v5"
-                        else classify_generalized_date
-                    )
                     outcomes.append(
-                        date_classifier(
+                        classify_generalized_date(
                             span.value,
                             transformation.transformed,
                             required_granularity,
