@@ -1075,4 +1075,124 @@ describe("GuidedFlow navigation foundation", () => {
       goSpy.mockRestore();
     }
   });
+
+  /**
+   * Result-action lock during a pending correction (#101 follow-up).
+   *
+   * Execute can settle to Result BEFORE the corrective popstate lands (see
+   * the race test above): Result renders and its actions are clickable, but
+   * `historyCorrectionRef.current` is still non-null, so the browser is not
+   * actually at `currentNavigationIdRef` yet. Opening Technical Details,
+   * requesting Comparison, or Restarting in that window would dispatch
+   * straight into the history-sync effect's push branch relative to the
+   * WRONG entry (the sending Review, not yet the settled Result), forking
+   * history without ever registering Result. This test drives exactly that
+   * window and asserts the three actions are inert until the correction
+   * lands.
+   */
+  it("blocks Technical Details, Compare, and Restart on Result while a Back correction is pending", async () => {
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+    const pendingExecute = deferred<Awaited<ReturnType<typeof executeDisclosure>>>();
+    mockedExecuteDisclosure.mockReturnValue(pendingExecute.promise);
+    const goSpy = vi.spyOn(window.history, "go").mockImplementation(() => {});
+    let writes: ReturnType<typeof trackHistoryWrites> | null = null;
+    try {
+      render(<GuidedFlow />);
+      const { composeId } = await reachPendingExampleSend();
+      await waitFor(() => expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1));
+
+      dispatchPopState(composeId);
+      expect(goSpy).toHaveBeenCalledWith(1);
+
+      // Execute settles BEFORE the corrective popstate: Result renders, but
+      // the correction is still pending.
+      pendingExecute.resolve({ ok: true, data: executeResponse() });
+      await screen.findByRole("heading", { name: copy.result.heading });
+
+      writes = trackHistoryWrites();
+
+      // Technical Details: still on Result, no history write, no Technical
+      // Details branch, execute not called again.
+      await userEvent.click(screen.getByRole("button", { name: copy.buttons.viewTechnicalDetails }));
+      expect(screen.getByRole("heading", { name: copy.result.heading })).toBeInTheDocument();
+      expect(
+        screen.queryByRole("heading", { name: copy.sectionHeadings.technicalDetails }),
+      ).not.toBeInTheDocument();
+      expect(writes.log).toEqual([]);
+
+      // Compare: compareStrategies is never called, no history write.
+      await userEvent.click(screen.getByRole("button", { name: copy.buttons.compareStrategies }));
+      expect(mockedCompareStrategies).not.toHaveBeenCalled();
+      expect(screen.getByRole("heading", { name: copy.result.heading })).toBeInTheDocument();
+      expect(writes.log).toEqual([]);
+
+      // Restart: no Compose, Result stays, history unchanged.
+      await userEvent.click(screen.getByRole("button", { name: copy.result.restart }));
+      expect(screen.queryByRole("heading", { name: copy.newTest.heading })).not.toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: copy.result.heading })).toBeInTheDocument();
+      expect(writes.log).toEqual([]);
+
+      expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+    } finally {
+      writes?.restore();
+      goSpy.mockRestore();
+    }
+  });
+
+  it("allows Technical Details, Compare, and Restart on Result once a pending Back correction resolves", async () => {
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+    const pendingExecute = deferred<Awaited<ReturnType<typeof executeDisclosure>>>();
+    mockedExecuteDisclosure.mockReturnValue(pendingExecute.promise);
+    mockedCompareStrategies.mockResolvedValue({ ok: true, data: compareResponse() });
+    const goSpy = vi.spyOn(window.history, "go").mockImplementation(() => {});
+    let writes: ReturnType<typeof trackHistoryWrites> | null = null;
+    try {
+      render(<GuidedFlow />);
+      const { composeId, sendingReviewId } = await reachPendingExampleSend();
+      await waitFor(() => expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1));
+
+      dispatchPopState(composeId);
+      expect(goSpy).toHaveBeenCalledWith(1);
+
+      pendingExecute.resolve({ ok: true, data: executeResponse() });
+      await screen.findByRole("heading", { name: copy.result.heading });
+
+      writes = trackHistoryWrites();
+
+      // The corrective popstate lands: Result is registered, pushed exactly
+      // once, directly after the sending Review.
+      dispatchPopState(sendingReviewId);
+      await waitFor(() => expect(window.history.state.flowNavigationId).not.toBe(sendingReviewId));
+      const resultId = window.history.state.flowNavigationId as string;
+      expect(writes.log).toEqual([`push:${resultId}`]);
+      expect(goSpy).toHaveBeenCalledTimes(1);
+
+      // From here on the correction is resolved: switch to real browser
+      // navigation (matching the rest of this suite) rather than synthetic
+      // popstate, so the real and tracked history stacks stay consistent.
+      goSpy.mockRestore();
+
+      // Technical Details now opens normally, and Back restores Result.
+      await userEvent.click(screen.getByRole("button", { name: copy.buttons.viewTechnicalDetails }));
+      await screen.findByRole("heading", { name: copy.sectionHeadings.technicalDetails });
+      await userEvent.click(screen.getByRole("button", { name: copy.technicalDetails.backToResult }));
+      await screen.findByRole("heading", { name: copy.result.heading });
+
+      // Compare now calls compareStrategies and navigates to Comparison.
+      await userEvent.click(screen.getByRole("button", { name: copy.buttons.compareStrategies }));
+      await waitFor(() => expect(mockedCompareStrategies).toHaveBeenCalledTimes(1));
+      await screen.findByRole("heading", { name: copy.comparison.heading });
+      await userEvent.click(screen.getByRole("button", { name: copy.comparison.backToResult }));
+      await screen.findByRole("heading", { name: copy.result.heading });
+
+      // Restart now works normally.
+      await userEvent.click(screen.getByRole("button", { name: copy.result.restart }));
+      await screen.findByRole("heading", { name: copy.newTest.heading });
+
+      expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+    } finally {
+      writes?.restore();
+      goSpy.mockRestore();
+    }
+  });
 });
