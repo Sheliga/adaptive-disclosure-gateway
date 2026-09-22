@@ -129,6 +129,7 @@ beforeEach(() => {
   mockMatchMedia();
   window.history.replaceState(null, "", "/");
   window.localStorage.clear();
+  window.sessionStorage.clear();
   resetVolatileLocaleForTests();
   mockedGetHealth.mockResolvedValue({ ok: true, data: healthResponse() });
   mockedGetExamples.mockResolvedValue({
