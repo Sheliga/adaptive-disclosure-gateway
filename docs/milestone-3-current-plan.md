@@ -4,17 +4,19 @@ Last updated: 2026-09-21 (America/Sao_Paulo)
 
 Normative methodology is in `docs/research/post-pilot-protocol-v1.md` (frozen, historical),
 `docs/research/post-pilot-protocol-v2.md` (frozen, historical, superseded),
-`docs/research/post-pilot-protocol-v3.md` (frozen, historical, superseded) and
-`docs/research/post-pilot-protocol-v4.md` (current, `CURRENT_PROTOCOL_ID`). This document
+`docs/research/post-pilot-protocol-v3.md` (frozen, historical, superseded),
+`docs/research/post-pilot-protocol-v4.md` (frozen, historical, superseded) and
+`docs/research/post-pilot-protocol-v5.md` (current, `CURRENT_PROTOCOL_ID`). This document
 records execution order only.
 
-## Operational status: Issue #85 merged, Issue #87 in review (2026-09-21)
+## Operational status: Issue #87 done, Issue #93 pending review (2026-09-21)
 
 Milestone 3 remains scientifically open. The demo track that previously paused it is done: T20
 demo integration, T21/T30 guided Next.js UI (T30 / Issue #82, merged to `master` in #83 at
 `509c4bf`) and T25 deploy/publish are all complete, and a hosted advisor-facing demo URL exists.
-M3 resumed at **gate 6**, which has since merged; Issue #85 has since merged into `develop`; the
-current dependency is Issue #87.
+M3 resumed at **gate 6**, which has since merged; Issue #85 and Issue #87 have since merged into
+`develop`; the current dependency is Issue #93 (numeric-format stabilization,
+`post-pilot-v5`), implemented and pending review in a PR to `develop`.
 
 ```text
 T20 demo integration ✅
@@ -23,21 +25,23 @@ T21/T30 / Issue #82 — guided Next.js UI ✅
   ↓
 T25 / Issue #42 — containerize/deploy and publish advisor URL ✅
   ↓
-Gate 6 / Issue #38 — date-aware GENERALIZE utility scoring (post-pilot-v2) ✅ MERGED (PR #86, d1583f6)
+Gate 6 / Issue #38 — date-aware GENERALIZE utility scoring (post-pilot-v2) ✅ MERGED into master (PR #86, d1583f6)
   ↓
 Issue #85 — numeric-band GENERALIZE fidelity (post-pilot-v3) ✅ MERGED into develop (PR #89, 7d3644e)
   ↓
-Issue #87 — structured oracle references (post-pilot-v4) — IN REVIEW (current dependency)
+Issue #87 — structured oracle references (post-pilot-v4) ✅ MERGED into develop (PR #92, dc2236b)
   ↓
-Issue #88 — NumericBandStrategy Brazilian-format amount parsing — MOVED BEFORE GATE 7 BY OWNER
+Issue #93 — numeric-format stabilization end-to-end (post-pilot-v5; resolves #88, #91) — IMPLEMENTED, PENDING REVIEW (current dependency)
   ↓
-Gate 7 — newly authored confirmatory-eligible Contracts corpus, authored under post-pilot-v4
+Gate 7 — newly authored confirmatory-eligible Contracts corpus, authored under post-pilot-v5 — RELEASED, NOT STARTED
   ↓
-Gate 8 — next authoritative B0–B4 batch
+Issue #90 — utility-side MIN_NUMERIC_BAND_WIDTH exposure check (moved to scoring/exposure.py) — NOT STARTED
+  ↓
+Gate 8 — next authoritative B0–B4 batch — NOT STARTED
 ```
 
-**Gate 6 is merged** (PR #86, merge commit `d1583f6`): the methodological finding below (item 1
-in "Current scientific findings carried forward") is fixed by
+**Gate 6 is merged into `master`** (PR #86, merge commit `d1583f6`): the methodological finding
+below (item 1 in "Current scientific findings carried forward") is fixed by
 `docs/research/post-pilot-protocol-v2.md`, following v1 §11's change procedure exactly —
 `post-pilot-v1` is not edited, `CURRENT_PROTOCOL_ID` moved to `post-pilot-v2`. Gate 6 now counts
 as complete (per CLAUDE.md's Workflow state section: merged into `develop`/`master` is not a
@@ -48,15 +52,26 @@ synonym for "PR open" — this PR is merged).
 audit and deliberately left open by that PR's scope discipline (numeric-band GENERALIZE fidelity)
 is fixed and frozen as `docs/research/post-pilot-protocol-v3.md`. Issue #85 is closed.
 
-**Current operational dependency: Issue #87** (structured numeric utility references,
-`post-pilot-v4`) — the two remaining reference-extraction/sufficiency-semantics findings Issue
-#85 §8 filed rather than fixed. Fixed and frozen as `docs/research/post-pilot-protocol-v4.md`, in
-review in a PR to `develop`. Issue #87 is not itself a closure gate; it is a prerequisite decision
-Gate 7 authoring depends on. **Owner-decided resulting order: Gate 6 ✅ → Issue #85 ✅
-(`post-pilot-v3`, merged) → Issue #87 (`post-pilot-v4`, structured oracle references, in review)
-→ Issue #88 (decision/fix) → Gate 7 → Gate 8** — see "Issue #87 (reviewer's 'Issue #1') —
-methodological ordering decision" below for the analysis and the owner's decision on both issues.
-Neither Gate 7 nor Gate 8 has started.
+**Issue #87 is merged into `develop`** (PR #92, merge commit
+`dc2236bc81d16eac7a283edcd30a3ef2769c18ae`): the two remaining reference-extraction/sufficiency-
+semantics findings Issue #85 §8 filed rather than fixed. Fixed and frozen as
+`docs/research/post-pilot-protocol-v4.md`.
+
+**Current operational dependency: Issue #93** (numeric-format stabilization end-to-end,
+`post-pilot-v5`, resolving #88 and #91) — the pre-Gate-7 checkpoint requiring the treatment's own
+amount grammar and the scorer's monetary fidelity grammar to agree, end to end, before a
+confirmatory Contracts corpus may be authored. Date utility semantics stay inherited from v4;
+the separate date treatment/scorer finding remains Issue #96. **Implemented and pending review** in a PR to
+`develop` — not yet merged. Issue #93 is not itself a closure gate; it is a prerequisite decision
+Gate 7 authoring depends on, exactly like #87 was. **Owner-decided resulting order: Gate 6 ✅ →
+Issue #85 ✅ (`post-pilot-v3`, merged) → Issue #87 ✅ (`post-pilot-v4`, merged) → Issue #93
+(`post-pilot-v5`, numeric-format stabilization, pending review) → Gate 7 → Issue #90 → Gate 8**
+— see "Issue #87 (reviewer's 'Issue #1') — methodological ordering decision" below for the
+analysis and the owner's decision that moved #88 (now folded into #93) before Gate 7. **Gate 7 is
+released (its prerequisite chain up to and including #93 is implemented) but has NOT started**:
+no confirmatory corpus directory, case file or authoring work exists yet. Neither Gate 7 nor
+Gate 8 has started, and Issue #93's own PR does not implement Gate 7, Issue #90, or any
+confirmatory corpus.
 
 ## M3 state preserved
 
@@ -70,21 +85,24 @@ Completed closure gates:
 6. Gate 6 / Issue #38 — date-aware GENERALIZE utility scoring, `post-pilot-v2` ✅ (merged via
    PR #86, `d1583f6`)
 
-Current state: **6/8 closure gates complete**. Issue #85 (merged into `develop`) and Issue #87
-(in review) are prerequisite decisions for Gate 7, not closure gates themselves — M3 stays at
-6/8 until Gate 7 itself is authored and frozen.
+Current state: **6/8 closure gates complete**. Issue #85 (merged into `develop`), Issue #87
+(merged into `develop`) and Issue #93 (pending review) are prerequisite decisions for Gate 7, not
+closure gates themselves — M3 stays at 6/8 until Gate 7 itself is authored and frozen.
 
 Remaining:
 
 7. a newly authored confirmatory-eligible Contracts corpus, frozen only after the applicable
-   methodology/scorer/provider configuration is frozen — **next gate after Issue #87 (in review)
-   and Issue #88 (not started)**, authored under `post-pilot-v4` (once #87 merges into `develop`)
-   rather than `post-pilot-v3`. The owner decided both #87 (option 1: `post-pilot-v4`, structured
-   category/operator/value oracle references) and #88 (Brazilian-format amount parsing) must be
-   settled *before* Gate 7 authoring, not merely before Gate 8 — see below. Neither Gate 7 nor
-   Gate 8 has started;
+   methodology/scorer/provider configuration is frozen — **next gate after Issue #93 merges**,
+   authored under `post-pilot-v5` rather than `post-pilot-v4`/`v3`. The owner decided #87 (option
+   1: `post-pilot-v4`, structured category/operator/value oracle references) and #88/#91 (folded
+   into Issue #93, `post-pilot-v5`: numeric amount format end to end) must be settled *before*
+   Gate 7 authoring, not merely before Gate 8 — see below. **Gate 7 is released (its prerequisite
+   chain is implemented, pending review) but has NOT started** — no confirmatory corpus exists
+   yet;
 8. next B0–B4 launch readiness with provider/config/treatment/scoring provenance frozen in
-   advance — depends on Gate 7 above, with #87/#88 already resolved ahead of it.
+   advance — depends on Gate 7 above and on Issue #90 (utility-side `MIN_NUMERIC_BAND_WIDTH`
+   exposure check, `scoring/exposure.py`, filed alongside `post-pilot-v4` and still not started).
+   Neither Gate 7 nor Gate 8 has started.
 
 ## Current scientific findings carried forward
 
@@ -102,8 +120,9 @@ T24 produced findings that remain intentionally unresolved during demo work:
    own Brazilian-format amount parsing (#88) were found during that fix and filed as their own
    issues; the owner decided both must be resolved *before* Gate 7 authoring — see "Issue #87
    (reviewer's 'Issue #1') — methodological ordering decision" below. **#87 is resolved by
-   `post-pilot-v4`** (`docs/research/post-pilot-protocol-v4.md`, in review); #88 remains open and
-   is next.
+   `post-pilot-v4`** (`docs/research/post-pilot-protocol-v4.md`, merged into `develop` via PR
+   #92); **#88 is resolved, together with #91, by Issue #93 / `post-pilot-v5`**
+   (`docs/research/post-pilot-protocol-v5.md`, implemented, pending review in a PR to `develop`).
 2. `contracts-v1` preserves deadlines unconditionally, so B4 can disclose a deadline even where the task marks it `NOT_REQUIRED`.
 3. B2 pseudonymizes CNPJ/CPF where the Contracts policy/oracle require REMOVE; this remains a legitimate treatment difference.
 4. Detector performance is near-perfect by construction on the labeled-line corpus and must not be generalized to natural contracts.
@@ -242,26 +261,31 @@ contract. **The Gate 7 corpus cannot be frozen until this audit is evidenced for
 reference.**
 
 **Owner-decided resulting order:** Gate 6 ✅ → #85 (`post-pilot-v3`) ✅ MERGED → #87
-(`post-pilot-v4`, structured oracle references, in review) → #88 (decision/fix) → Gate 7 → Gate 8.
+(`post-pilot-v4`) ✅ MERGED → #93 (`post-pilot-v5`, numeric-format stabilization, resolving #88 and
+#91) — implemented, pending review → Gate 7 (released, not started) → #90 → Gate 8.
 
 `Issue #1 (#87): A`
-`Próximo passo após #85: #87 (post-pilot-v4)` — implemented, in review.
+`Próximo passo após #87: #93 (post-pilot-v5)` — implemented, pending review.
 
 ## Resume point
 
 M3 resumed at gate 6, which has merged (see Operational status above). Issue #85 (numeric-band
 GENERALIZE fidelity, `post-pilot-v3`) has since merged into `develop` via PR #89 (`7d3644e`) and
-is closed. The current dependency is **Issue #87** (`post-pilot-v4`, structured
-category/operator/value oracle references — owner-decided, option 1), implemented and in review
-in a PR to `develop`. The next step after #87 merges is **Issue #88** (Brazilian-format amount
-parsing, moved before Gate 7 by the owner) — both must be settled before Gate 7 authoring starts.
-Only after both are settled does **Gate 7** start: authoring and freezing a new
-confirmatory-eligible Contracts corpus, without tuning, under `post-pilot-v4`. Neither Gate 7 nor
-Gate 8 has started.
+is closed. **Issue #87** (`post-pilot-v4`, structured category/operator/value oracle references —
+owner-decided, option 1) has since merged into `develop` via PR #92 (`dc2236b`) and is done. The
+current dependency is **Issue #93** (`post-pilot-v5`, numeric-format stabilization end to end —
+folds in #88's Brazilian-format amount parsing and #91's ASCII/Unicode scorer-grammar defect,
+both moved before Gate 7 by the owner) — implemented and pending review in a PR to `develop`.
+Only after Issue #93 merges does **Gate 7** start: authoring and freezing a new
+confirmatory-eligible Contracts corpus, without tuning, under `post-pilot-v5`. **Gate 7 is
+released (its prerequisite chain is implemented, pending review) but has NOT started.** After
+Gate 7 is frozen, **Issue #90** (utility-side `MIN_NUMERIC_BAND_WIDTH` exposure check) must be
+resolved or explicitly accepted before **Gate 8**. Neither Gate 7 nor Gate 8 has started, and M3
+remains at **6/8**.
 
 Do not skip directly to a new confirmatory corpus or authoritative B0–B4 run — Gate 7 must be
-frozen before its own results are inspected, per `post-pilot-v3`/`post-pilot-v4` §1 (inherited
-from v2 and v1).
+frozen before its own results are inspected, per `post-pilot-v3`/`post-pilot-v4`/`post-pilot-v5`
+§1 (inherited from v2 and v1).
 
 ## Branch boundary
 

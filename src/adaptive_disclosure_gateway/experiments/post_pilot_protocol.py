@@ -31,6 +31,17 @@ free-text reference extraction in the oracle for evaluation purposes only.
 ``docs/research/post-pilot-protocol-v4.md`` freezes this as ``post-pilot-v4``
 -- ``post-pilot-v1``/``-v2``/``-v3`` are, again, never edited.
 
+Issue #93 / M3 is the fourth: the numeric amount format contract used by the
+treatment (`transformations/generalization.py`) and the v4 fidelity scorer
+disagreed on which monetary representations are supported (Issue #88), while
+Issue #91 showed that the v3/v4 scorer's amount grammar used
+``\\d``/``match``+``$`` in ways that could accept non-ASCII digits or trailing
+newlines. `docs/research/post-pilot-protocol-v5.md` freezes the closed amount
+grammar, the ASCII-only scorer amount grammar and the new pre-run
+amount-format check as `post-pilot-v5`. Date behavior intentionally remains
+v4-compatible in v5; the separate treatment/scorer date asymmetry is tracked
+in Issue #96. `post-pilot-v1`/`-v2`/`-v3`/`-v4` are, again, never edited.
+
 A later methodological change creates a new protocol document
 (``docs/research/post-pilot-protocol-vN.md``) with its own id, added to
 ``FROZEN_PROTOCOL_IDS`` below -- no id already in that set is ever removed
@@ -70,7 +81,7 @@ from __future__ import annotations
 # under docs/research/) -- an existing id is never removed or reassigned to
 # different content.
 FROZEN_PROTOCOL_IDS: frozenset[str] = frozenset(
-    {"post-pilot-v1", "post-pilot-v2", "post-pilot-v3", "post-pilot-v4"}
+    {"post-pilot-v1", "post-pilot-v2", "post-pilot-v3", "post-pilot-v4", "post-pilot-v5"}
 )
 
 # The subset of FROZEN_PROTOCOL_IDS this codebase's scorer can still execute
@@ -81,14 +92,16 @@ FROZEN_PROTOCOL_IDS: frozenset[str] = frozenset(
 # behavior to dispatch to). A caller asking to score a *new* run under v1/v2
 # gets UnsupportedScoringProtocolError, not a silent fallback to whatever the
 # current scorer happens to do.
-SCORABLE_PROTOCOL_IDS: frozenset[str] = frozenset({"post-pilot-v3", "post-pilot-v4"})
+SCORABLE_PROTOCOL_IDS: frozenset[str] = frozenset(
+    {"post-pilot-v3", "post-pilot-v4", "post-pilot-v5"}
+)
 
 # The protocol version currently in force for any run this codebase
 # produces. Confirmatory-run tooling records this value in the run's
-# provenance (docs/research/post-pilot-protocol-v4.md, section on
+# provenance (docs/research/post-pilot-protocol-v5.md, section on
 # provenance/version boundary; docs/research/post-pilot-protocol-v1.md,
 # section 13).
-CURRENT_PROTOCOL_ID = "post-pilot-v4"
+CURRENT_PROTOCOL_ID = "post-pilot-v5"
 
 
 class UnknownProtocolIdError(ValueError):

@@ -64,6 +64,7 @@ from adaptive_disclosure_gateway.experiments.run_identity import (
 )
 from adaptive_disclosure_gateway.experiments.runner import ALL_TREATMENTS, run_pilot
 from adaptive_disclosure_gateway.providers import FakeProvider
+from adaptive_disclosure_gateway.transformations.generalization import NUMERIC_AMOUNT_GRAMMAR_ID
 
 REPO_ROOT = Path(__file__).parents[1]
 CORPUS_DIR = REPO_ROOT / "corpus" / "contracts" / "v1" / "cases"
@@ -158,6 +159,11 @@ def _reproducibility_manifest(*, results, policy_dir: Path) -> dict[str, object]
         "contracts_domain_freeze_commit": CONTRACTS_DOMAIN_FREEZE_COMMIT,
         # --- protocol ---
         "protocol_id": PROTOCOL_ID,
+        # Issue #93 / M3 (post-pilot-v5): the treatment's own numeric amount
+        # format contract, independent of which scoring protocol id this run
+        # is scored under -- NumericBandStrategy implements this grammar
+        # regardless of protocol_id.
+        "numeric_amount_grammar_id": NUMERIC_AMOUNT_GRAMMAR_ID,
         "parser_ingestion_version": PARSER_INGESTION_VERSION,
         # --- run classification, and the fact it was fixed in advance ---
         "run_classification": PILOT_DEVELOPMENT,

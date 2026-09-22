@@ -20,6 +20,7 @@ import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 
 # Documented information-preservation floor for numeric bands (issue #16's
 # "no leakage through over-narrow bands" requirement): a band narrower than
@@ -27,6 +28,17 @@ from datetime import datetime
 # generalizing rather than removing the value outright. Expressed in the
 # same unit as the generalized quantity (BRL for salary today).
 MIN_NUMERIC_BAND_WIDTH = 1000.0
+
+# Identifies the closed amount grammar `_AMOUNT_PATTERN` below implements
+# (Issue #93 / M3, `post-pilot-v5`) -- recorded in run-script manifests'
+# `reproducibility` block so a result can be tied back to exactly which
+# amount-format contract its treatment ran under. Bumping this grammar
+# (accepting or rejecting a different set of strings) requires a new id
+# here, mirroring how `post_pilot_protocol.py` versions the scoring
+# methodology: this constant versions the *treatment*-side parsing contract,
+# which is a separate axis (a treatment-behavior change, not a scoring-only
+# one -- see Issue #88).
+NUMERIC_AMOUNT_GRAMMAR_ID = "amount-grammar-v1"
 
 
 class GeneralizationError(Exception):
@@ -52,18 +64,74 @@ class GeneralizationStrategy(ABC):
         raise NotImplementedError
 
 
-_AMOUNT_PATTERN = re.compile(r"-?\d+(?:\.\d+)?")
+# Closed, fullmatch-only, ASCII-digit grammar for a supported monetary
+# amount (Issue #88 / #91 / #93, M3, `post-pilot-v5`, `NUMERIC_AMOUNT_GRAMMAR_ID`
+# above). Formally:
+#
+#   AMOUNT  := "R$" SEP ( DOTTED | BRAZIL )
+#   SEP     := exactly one of U+0020 (space) or U+00A0 (NBSP)
+#   DOTTED  := (0|[1-9][0-9]{0,14}) "." [0-9]{2}
+#   BRAZIL  := ( 0 | [1-9][0-9]{0,2}(\.[0-9]{3}){0,4} | [1-9][0-9]{3,14} ) "," [0-9]{2}
+#
+# Deliberately `[0-9]`, never `\d` (Issue #91: `\d` also matches non-ASCII
+# Unicode decimal digits under Python's default, non-`re.ASCII` `re` module
+# semantics), and matched with `fullmatch` only, never `search`/`match`+`$`
+# (a `$` anchor alone still accepts one trailing `\n`).
+#
+# Both alternatives require exactly two cents digits -- an integer amount
+# with no cents (`R$ 1.000`, `R$ 125000`) is rejected outright rather than
+# guessed, and so is a grouped-but-cent-less Brazilian amount (`R$ 125.000`)
+# because it is ambiguous with a dotted-decimal integer amount one order of
+# magnitude smaller. `DOTTED` and `BRAZIL` are otherwise disjoint by
+# construction: every `BRAZIL` string has exactly one `,` and no `DOTTED`
+# string has one, so a string is never valid under both readings.
+#
+# `BRAZIL`'s three integer-part alternatives, in order: a bare `0`; 1-3
+# leading digits followed by zero to four canonically-grouped `.ddd` triples
+# (`999`, `1.000`, `999.999.999.999.999`); or, per the orchestrator's
+# decision recorded in Issue #93, an *ungrouped* 4-15 digit Brazilian amount
+# (`R$ 125000,00`) -- unambiguous because the comma unambiguously marks the
+# decimal point regardless of grouping. No leading zero is accepted in
+# either family (`0` alone is the only string starting with `0`), and no
+# negative sign exists in the grammar at all (Issue #93: rejected outright,
+# not merely undocumented -- there is no protocol need for one, and the
+# pre-#93 `-?` prefix predates any rationale or test for it). The integer
+# part is capped at 15 digits in both families, safely below 2^53, so no
+# amount this grammar accepts can ever motivate a float round-trip.
+_AMOUNT_PATTERN = re.compile(
+    r"R\$[  ]"
+    r"(?:(?P<dotted>(?:0|[1-9][0-9]{0,14})\.[0-9]{2})"
+    r"|(?P<brazil>(?:0|[1-9][0-9]{0,2}(?:\.[0-9]{3}){0,4}|[1-9][0-9]{3,14}),[0-9]{2}))"
+)
 
 
-def _parse_amount(value: str) -> float:
-    match = _AMOUNT_PATTERN.search(value)
-    if match is None:
+def _parse_amount(value: str) -> Decimal:
+    """Parse ``value`` under the closed amount grammar above into an exact
+    ``Decimal`` -- never a ``float`` (Issue #88's mis-banding/inf-NaN
+    defects both trace to a float round-trip; ``Decimal`` has no rounding
+    error and no overflow for any amount this grammar can accept).
+
+    ``value`` is typed as ``str`` for callers (a detected span's value is
+    always a string), but a non-``str`` input (a defensive case this
+    grammar's own cross-check table exercises, e.g. ``None``) is rejected
+    the same way as any other unparseable string, rather than raising
+    ``TypeError`` from deep inside ``re``.
+    """
+    if not isinstance(value, str):
         # Never interpolate the raw value here: this message can reach logs
         # and OTel exception recording (issue #16 / 2a). The category and
         # failure kind are named by the caller (``generalize()``), which has
         # the category and wraps this into a category-scoped message.
         raise GeneralizationError("Could not parse a numeric amount from the supplied value")
-    return float(match.group())
+    match = _AMOUNT_PATTERN.fullmatch(value)
+    if match is None:
+        raise GeneralizationError("Could not parse a numeric amount from the supplied value")
+    dotted = match.group("dotted")
+    if dotted is not None:
+        return Decimal(dotted)
+    brazil = match.group("brazil")
+    integer_part, _, cents = brazil.partition(",")
+    return Decimal(f"{integer_part.replace('.', '')}.{cents}")
 
 
 @dataclass(frozen=True)
@@ -87,13 +155,29 @@ class NumericBandStrategy(GeneralizationStrategy):
                 f"band_width={self.band_width!r} is narrower than the documented minimum "
                 f"({MIN_NUMERIC_BAND_WIDTH}); a tighter band risks identifying the original value"
             )
+        if self.band_width != int(self.band_width):
+            # Issue #93 / M3: banding is done in exact integer arithmetic
+            # (see generalize() below) now that amounts are parsed as
+            # Decimal rather than float -- a fractional band_width has no
+            # meaning under integer floor-division and would silently
+            # truncate. Both registered widths today (5000.0, 50000.0) are
+            # already integral; this only guards against a future
+            # misconfiguration.
+            raise ValueError(
+                f"band_width={self.band_width!r} must be an integral value "
+                "(e.g. 5000.0, not 5000.5) -- banding uses exact integer arithmetic"
+            )
 
     def generalize(self, value: str) -> str:
         amount = _parse_amount(value)
-        band_index = amount // self.band_width
-        lower = band_index * self.band_width
-        upper = lower + self.band_width
-        return f"{self.prefix}{int(lower)}-{int(upper)}"
+        width = int(self.band_width)
+        # `amount` is guaranteed non-negative by the closed amount grammar
+        # (no `-` sign exists in it at all), so truncation (`int()`) and
+        # floor are the same operation here.
+        units = int(amount)
+        lower = (units // width) * width
+        upper = lower + width
+        return f"{self.prefix}{lower}-{upper}"
 
 
 @dataclass(frozen=True)
