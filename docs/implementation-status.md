@@ -10,7 +10,7 @@ deliberately left open. M3 / Issue #87 (structured numeric utility references, `
 that were not fixed by `post-pilot-v3` itself. M3 / Issue #93 (numeric amount format
 stabilization end-to-end, `post-pilot-v5`) is now **in validation** in an open PR to `develop`
 -- the pre-Gate-7 checkpoint resolving Issue #88 (Brazilian-formatted amount misparse) and
-Issue #91 (non-ASCII-digit/trailing-newline scorer grammar defects). T30 / Issue #82 (guided
+the monetary path of Issue #91 (non-ASCII-digit/trailing-newline amount grammar defects). T30 / Issue #82 (guided
 demo UX with progressive disclosure) merged to `master` in PR #83. T29 / Issue #72 (local Vault
 Explorer for demo/debug) is now **in validation** in an open PR to `develop`. Issue #56
 (Contracts domain extensions) **merged into `develop` via PR #59** (merge commit
@@ -457,14 +457,16 @@ outside the grammar, so a future Gate 7 corpus cannot be authored against an amo
 treatment/scorer contract does not actually support. Historical impact re-verified directly
 against the live implementation: all 33 numeric-category oracle spans across both frozen
 corpora parse to the identical band under the new grammar as under the old one, and a full
-`post-pilot-v3` run over both corpora (125 case executions) is unaffected. Three further,
-narrower findings surfaced during this work and are recorded as their own new issues rather than
-fixed here: [Issue #94](https://github.com/Sheliga/adaptive-disclosure-gateway/issues/94) (CRLF
-trailing `\r` on a detected labeled-line value), [Issue
-#95](https://github.com/Sheliga/adaptive-disclosure-gateway/issues/95) (manifest
-code-commit/per-row treatment provenance for Gate 8), and [Issue
+`post-pilot-v3` run over both corpora (125 case executions) is unaffected. PR #97's review also
+closed [Issue #94](https://github.com/Sheliga/adaptive-disclosure-gateway/issues/94): labeled-line
+detector spans now exclude CRLF's trailing `\r` while preserving exact
+`input.text[start:end] == span.value` coherence for LF and CRLF HR/Contracts lines, with an
+end-to-end CRLF detector → GENERALIZE → v5 scorer test. Two narrower findings remain separate:
+[Issue #95](https://github.com/Sheliga/adaptive-disclosure-gateway/issues/95) (manifest
+code-commit/per-row treatment provenance for Gate 8) and [Issue
 #96](https://github.com/Sheliga/adaptive-disclosure-gateway/issues/96) (`MonthYearDateStrategy`
-accepting Unicode digits via `strptime`) -- see `docs/research/post-pilot-protocol-v5.md` §10/§12.
+accepting Unicode digits via `strptime`). Date utility semantics intentionally stay inherited
+from v4 in `post-pilot-v5`; see `docs/research/post-pilot-protocol-v5.md` §8/§10/§12.
 
 **Findings recorded, not fixed** (see `corpus/contracts/v1/README.md`):
 
