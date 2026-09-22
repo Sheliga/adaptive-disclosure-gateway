@@ -422,7 +422,7 @@ describe("GuidedFlow navigation foundation", () => {
     await screen.findByRole("heading", { name: copy.result.heading });
     await userEvent.click(screen.getByRole("button", { name: copy.buttons.viewTechnicalDetails }));
     await screen.findByRole("heading", { name: copy.sectionHeadings.technicalDetails });
-    await userEvent.click(screen.getByRole("button", { name: copy.buttons.backToResult }));
+    await userEvent.click(screen.getByRole("button", { name: copy.technicalDetails.backToResult }));
     await screen.findByRole("heading", { name: copy.result.heading });
     window.history.back();
 
