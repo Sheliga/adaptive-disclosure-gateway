@@ -215,7 +215,13 @@ function GuidedFlowShell() {
   const historyIndexRef = useRef(0);
   const currentNavigationIdRef = useRef<string | null>(null);
   const nonRestorableNavigationIdsRef = useRef(new Set<string>());
-  const ignoreLockedPopStateRef = useRef(false);
+  // The id of the entry a corrective `history.go(...)` (see handlePopState's
+  // executing lock) is expected to land back on. Tracking the EXPECTED ID
+  // rather than a bare boolean means only the popstate that actually returns
+  // to that entry gets swallowed -- a second, unrelated popstate that races
+  // ahead of the correction (e.g. the user presses Back again) is handled
+  // normally instead of being silently eaten.
+  const ignoreLockedPopStateForIdRef = useRef<string | null>(null);
   const suppressHistorySyncRef = useRef(false);
   const navigationIdRef = useRef(0);
   const [examples, setExamples] = useState<ExampleSummary[] | null>(null);
@@ -269,20 +275,41 @@ function GuidedFlowShell() {
     }
 
     function handlePopState(event: PopStateEvent) {
-      if (ignoreLockedPopStateRef.current) {
-        ignoreLockedPopStateRef.current = false;
-        return;
+      const expectedId = ignoreLockedPopStateForIdRef.current;
+      if (expectedId !== null) {
+        ignoreLockedPopStateForIdRef.current = null;
+        if (event.state?.flowNavigationId === expectedId) {
+          // This is the corrective popstate our own history.go(...) call
+          // (below) triggered to undo an out-of-band Back/Forward while a
+          // send was in flight -- we are already back where we should be.
+          return;
+        }
+        // Some other popstate arrived instead of the one we were waiting
+        // for (e.g. the user pressed Back again before the correction
+        // landed). Fall through and handle THIS event on its own merits
+        // rather than silently swallowing it.
       }
       const id =
         typeof event.state?.flowNavigationId === "string" ? event.state.flowNavigationId : null;
       const targetIndex = id === null ? -1 : historyEntryIdsRef.current.indexOf(id);
-      if (
-        stateRef.current.screen === "executing" &&
-        targetIndex >= 0 &&
-        targetIndex < historyIndexRef.current
-      ) {
-        ignoreLockedPopStateRef.current = true;
-        window.history.go(1);
+      if (stateRef.current.screen === "executing" && (targetIndex < 0 || targetIndex < historyIndexRef.current)) {
+        // A send is in flight. The only history entry that legitimately
+        // exists for it is the Review entry that triggered it -- still
+        // historyIndexRef.current, since entering "executing" never pushes
+        // a new entry (see the push effect below). Any Back/Forward landing
+        // anywhere else -- a known earlier entry, or a target we don't even
+        // recognize -- must not be presented as the send having been
+        // cancelled: falling through to Compose/Review would offer a resend
+        // the user never asked for, and the generic unrecoverable screen
+        // would hide an in-flight request behind "start again". So the
+        // browser position is corrected back to the sending entry instead.
+        // The delta is exact when the target is a known entry; for an
+        // unrecognized one we cannot compute the real distance, so a single
+        // corrective step is the simplest safe fallback (the common case of
+        // one Back past the sending entry).
+        const delta = targetIndex >= 0 ? historyIndexRef.current - targetIndex : 1;
+        ignoreLockedPopStateForIdRef.current = currentNavigationIdRef.current;
+        window.history.go(delta);
         return;
       }
       if (id === null || targetIndex < 0) {
