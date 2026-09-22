@@ -203,6 +203,7 @@ function GuidedFlowShell() {
   const mainRef = useRef<HTMLElement>(null);
   const historySnapshotsRef = useRef(new Map<string, FlowState>());
   const currentNavigationIdRef = useRef<string | null>(null);
+  const nonRestorableNavigationIdsRef = useRef(new Set<string>());
   const suppressHistorySyncRef = useRef(false);
   const navigationIdRef = useRef(0);
   const [examples, setExamples] = useState<ExampleSummary[] | null>(null);
@@ -225,6 +226,9 @@ function GuidedFlowShell() {
   const dispatch = useCallback((event: GuidedFlowEvent) => {
     if (event.type !== "SET_DOCUMENT_TYPE") {
       setUnrecoverableStep(null);
+    }
+    if (event.type === "EXECUTE_SUCCEEDED" && currentNavigationIdRef.current !== null) {
+      nonRestorableNavigationIdsRef.current.add(currentNavigationIdRef.current);
     }
     setState((current) => reduceGuidedFlow(current, event));
   }, []);
@@ -261,7 +265,11 @@ function GuidedFlowShell() {
         return;
       }
       const snapshot = historySnapshotsRef.current.get(id);
-      if (snapshot === undefined || !isStableNavigationState(snapshot)) {
+      if (
+        snapshot === undefined ||
+        !isStableNavigationState(snapshot) ||
+        nonRestorableNavigationIdsRef.current.has(id)
+      ) {
         setUnrecoverableStep(urlStepFromSearch(window.location.search) ?? "intro");
         return;
       }
