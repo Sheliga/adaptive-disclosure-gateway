@@ -49,6 +49,48 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+/**
+ * Spies on BOTH `Map.prototype.set` and `.delete`, and mirrors every write
+ * that looks like a GuidedFlow history snapshot (a `flow-<n>` key holding a
+ * FlowState-shaped value, i.e. an object with a `screen` field) into a
+ * plain `Set`. Unlike asserting "delete was called with X", this tracks
+ * actual retention: a snapshot counts as retained only until its OWN key is
+ * deleted, so a test can assert an abandoned entry's id is (or is not)
+ * still retained regardless of how many other Map writes happen around it.
+ */
+function trackRetainedFlowSnapshots() {
+  const retained = new Set<string>();
+  const isSnapshotKey = (key: unknown): key is string =>
+    typeof key === "string" && /^flow-\d+$/.test(key);
+  const isFlowStateValue = (value: unknown): boolean =>
+    typeof value === "object" && value !== null && "screen" in value;
+  const originalSet = Map.prototype.set;
+  const originalDelete = Map.prototype.delete;
+  const mapSet = vi
+    .spyOn(Map.prototype, "set")
+    .mockImplementation(function (this: Map<unknown, unknown>, key: unknown, value: unknown) {
+      if (isSnapshotKey(key) && isFlowStateValue(value)) {
+        retained.add(key);
+      }
+      return originalSet.call(this, key, value);
+    });
+  const mapDelete = vi
+    .spyOn(Map.prototype, "delete")
+    .mockImplementation(function (this: Map<unknown, unknown>, key: unknown) {
+      if (isSnapshotKey(key)) {
+        retained.delete(key);
+      }
+      return originalDelete.call(this, key);
+    });
+  return {
+    retained,
+    restore: () => {
+      mapSet.mockRestore();
+      mapDelete.mockRestore();
+    },
+  };
+}
+
 function compareResponse(): CompareResponse {
   return {
     contract_version: "t20-application-api-v1",
@@ -439,14 +481,15 @@ describe("GuidedFlow navigation foundation", () => {
 
   it("prunes a discarded Review snapshot before creating a new forward branch", async () => {
     mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
-    const mapDelete = vi.spyOn(Map.prototype, "delete");
+    const tracker = trackRetainedFlowSnapshots();
     render(<GuidedFlow />);
 
     await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
     await userEvent.selectOptions(await screen.findByLabelText(copy.newTest.exampleFieldLabel), "ex-1");
     await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
     await screen.findByRole("heading", { name: copy.review.heading });
-    const abandonedReviewId = window.history.state.flowNavigationId;
+    const abandonedReviewId = window.history.state.flowNavigationId as string;
+    expect(tracker.retained.has(abandonedReviewId)).toBe(true);
 
     window.history.back();
     await screen.findByRole("heading", { name: copy.newTest.heading });
@@ -454,11 +497,61 @@ describe("GuidedFlow navigation foundation", () => {
     await screen.findByRole("heading", { name: copy.review.heading });
 
     expect(window.history.state.flowNavigationId).not.toBe(abandonedReviewId);
-    expect(mapDelete).toHaveBeenCalledWith(abandonedReviewId);
-    mapDelete.mockRestore();
+    expect(tracker.retained.has(abandonedReviewId)).toBe(false);
+
+    // A synthetic popstate to the abandoned id must not resurrect the old
+    // Review: its snapshot is gone, so the flow falls back to the
+    // unrecoverable screen instead of silently restoring stale data.
+    window.dispatchEvent(
+      new PopStateEvent("popstate", { state: { flowNavigationId: abandonedReviewId } }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Esta etapa não pode ser restaurada" }),
+    ).toBeInTheDocument();
+
+    tracker.restore();
   });
 
-  it("keeps a pending send in progress when browser Back is attempted", async () => {
+  it("does not retain the Result snapshot after backing into an unrecoverable send and starting a new flow", async () => {
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+    mockedExecuteDisclosure.mockResolvedValue({ ok: true, data: executeResponse() });
+    const tracker = trackRetainedFlowSnapshots();
+    render(<GuidedFlow />);
+
+    await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
+    await userEvent.selectOptions(await screen.findByLabelText(copy.newTest.exampleFieldLabel), "ex-1");
+    await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+    await screen.findByRole("heading", { name: copy.review.heading });
+    await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+    await screen.findByRole("heading", { name: copy.result.heading });
+    const resultId = window.history.state.flowNavigationId as string;
+    expect(tracker.retained.has(resultId)).toBe(true);
+
+    // Compose -> Review -> Confirm -> Result -> Back lands on the sent
+    // Review entry, which is unrecoverable.
+    window.history.back();
+    expect(
+      await screen.findByRole("heading", { name: "Esta etapa não pode ser restaurada" }),
+    ).toBeInTheDocument();
+
+    // Start an entirely new flow from there -- the only affordance the
+    // unrecoverable screen offers.
+    await userEvent.click(screen.getByRole("button", { name: "Voltar à introdução" }));
+    await screen.findByRole("heading", { name: copy.howItWorks.title });
+    await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
+    await userEvent.selectOptions(await screen.findByLabelText(copy.newTest.exampleFieldLabel), "ex-1");
+    await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+    await screen.findByRole("heading", { name: copy.review.heading });
+
+    // The abandoned Result entry (which carries the execute payload) must
+    // not still be retained once a new branch has been pushed.
+    expect(tracker.retained.has(resultId)).toBe(false);
+    expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+
+    tracker.restore();
+  });
+
+  it("computes the exact delta to correct a multi-step Back during a pending send", async () => {
     mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
     const pendingExecute = deferred<Awaited<ReturnType<typeof executeDisclosure>>>();
     mockedExecuteDisclosure.mockReturnValue(pendingExecute.promise);
@@ -468,20 +561,135 @@ describe("GuidedFlow navigation foundation", () => {
     await userEvent.selectOptions(await screen.findByLabelText(copy.newTest.exampleFieldLabel), "ex-1");
     await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
     await screen.findByRole("heading", { name: copy.review.heading });
-    const sendingReviewId = window.history.state.flowNavigationId;
+    const sendingReviewId = window.history.state.flowNavigationId as string;
     await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
     await waitFor(() => expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1));
 
-    window.history.back();
-    await waitFor(() => expect(window.history.state.flowNavigationId).toBe(sendingReviewId));
+    // Simulate a multi-step Back that lands two entries behind the sending
+    // Review (e.g. two presses collapsed into one browser navigation, or an
+    // explicit history.go(-2)): the browser now reports the very first
+    // tracked entry ("flow-0"), two steps before the sending Review
+    // ("flow-2"). The real `window.history.go` is stubbed out so the test
+    // observes exactly what GuidedFlow asks the browser to do, rather than
+    // depending on jsdom's own navigation timing.
+    const goSpy = vi.spyOn(window.history, "go").mockImplementation(() => {});
+    window.dispatchEvent(new PopStateEvent("popstate", { state: { flowNavigationId: "flow-0" } }));
+
+    // A single history.go(1) correction (the old hard-coded behavior) would
+    // land one entry short of the sending Review; the fix must compute the
+    // exact distance back (historyIndexRef.current - targetIndex = 2).
+    expect(goSpy).toHaveBeenCalledWith(2);
+    expect(screen.queryByRole("heading", { name: copy.newTest.heading })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: copy.review.confirmSend })).not.toBeInTheDocument();
+    expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+    goSpy.mockRestore();
+
+    // The corrective go(2) landing back on the sending entry must be
+    // swallowed -- but only that specific popstate, not a bare flag that
+    // would also eat an unrelated one.
+    window.dispatchEvent(
+      new PopStateEvent("popstate", { state: { flowNavigationId: sendingReviewId } }),
+    );
+    expect(screen.queryByRole("heading", { name: copy.newTest.heading })).not.toBeInTheDocument();
+
+    pendingExecute.resolve({ ok: true, data: executeResponse() });
+    await screen.findByRole("heading", { name: copy.result.heading });
+
+    // Back to the sent Review entry, again via a synthetic popstate (see
+    // the comment above `goSpy`): its snapshot was dropped the moment the
+    // send succeeded, so it must now read as unrecoverable.
+    window.dispatchEvent(
+      new PopStateEvent("popstate", { state: { flowNavigationId: sendingReviewId } }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Esta etapa não pode ser restaurada" }),
+    ).toBeInTheDocument();
+    expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not present a pending send as cancelled when Back reaches an unrecognized history entry", async () => {
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+    const pendingExecute = deferred<Awaited<ReturnType<typeof executeDisclosure>>>();
+    mockedExecuteDisclosure.mockReturnValue(pendingExecute.promise);
+    render(<GuidedFlow />);
+
+    await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
+    await userEvent.selectOptions(await screen.findByLabelText(copy.newTest.exampleFieldLabel), "ex-1");
+    await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+    await screen.findByRole("heading", { name: copy.review.heading });
+    await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+    await waitFor(() => expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1));
+
+    const goSpy = vi.spyOn(window.history, "go").mockImplementation(() => {});
+    // An id this session never tracked (e.g. a stale entry surviving a
+    // reload) -- targetIndex resolves to -1.
+    window.dispatchEvent(
+      new PopStateEvent("popstate", { state: { flowNavigationId: "unknown-entry" } }),
+    );
+
+    // Neither Compose (a resend-from-scratch affordance) nor the generic
+    // unrecoverable screen may stand in for "the send is still in flight" --
+    // both would read to the user as their pending send having been
+    // cancelled or lost.
+    expect(goSpy).toHaveBeenCalledWith(1);
+    expect(screen.queryByRole("heading", { name: copy.newTest.heading })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Esta etapa não pode ser restaurada" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: copy.review.confirmSend })).not.toBeInTheDocument();
+    expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+    goSpy.mockRestore();
+  });
+
+  it("keeps a pending send in progress when browser Back is attempted", async () => {
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+    const pendingExecute = deferred<Awaited<ReturnType<typeof executeDisclosure>>>();
+    mockedExecuteDisclosure.mockReturnValue(pendingExecute.promise);
+    render(<GuidedFlow />);
+
+    await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
+    const composeNavigationId = window.history.state.flowNavigationId as string;
+    await userEvent.selectOptions(await screen.findByLabelText(copy.newTest.exampleFieldLabel), "ex-1");
+    await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+    await screen.findByRole("heading", { name: copy.review.heading });
+    const sendingReviewId = window.history.state.flowNavigationId as string;
+    await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+    await waitFor(() => expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1));
+
+    // Simulate the browser having navigated Back to Compose while the send
+    // is in flight, via a synthetic popstate rather than jsdom's own
+    // `history.back()` task queue -- which defers/interleaves unpredictably
+    // relative to the pending-promise resolution later in this test, making
+    // the real navigation APIs nondeterministic here. This is the same
+    // technique used elsewhere for popstate assertions.
+    const goSpy = vi.spyOn(window.history, "go").mockImplementation(() => {});
+    window.dispatchEvent(
+      new PopStateEvent("popstate", { state: { flowNavigationId: composeNavigationId } }),
+    );
+    expect(goSpy).toHaveBeenCalledWith(1);
+    goSpy.mockRestore();
+
+    // The corrective go(1) landing back on the sending Review must be
+    // swallowed, keeping the flow on "executing" rather than falling back
+    // to Compose or offering a resend on Review.
+    window.dispatchEvent(
+      new PopStateEvent("popstate", { state: { flowNavigationId: sendingReviewId } }),
+    );
+    expect(screen.queryByRole("heading", { name: copy.newTest.heading })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: copy.review.confirmSend })).not.toBeInTheDocument();
     expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
 
     pendingExecute.resolve({ ok: true, data: executeResponse() });
     await screen.findByRole("heading", { name: copy.result.heading });
-    window.history.back();
 
+    // Back to the sent Review entry, again via a synthetic popstate for the
+    // same determinism reason as above: its snapshot was dropped the moment
+    // the send succeeded, so it must now read as unrecoverable.
+    window.dispatchEvent(
+      new PopStateEvent("popstate", { state: { flowNavigationId: sendingReviewId } }),
+    );
     expect(await screen.findByRole("heading", { name: "Esta etapa não pode ser restaurada" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: copy.newTest.heading })).not.toBeInTheDocument();
     expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
   });
 
