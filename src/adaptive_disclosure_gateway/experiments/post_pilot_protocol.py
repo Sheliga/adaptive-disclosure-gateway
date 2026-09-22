@@ -33,12 +33,14 @@ free-text reference extraction in the oracle for evaluation purposes only.
 
 Issue #93 / M3 is the fourth: the numeric amount format contract used by the
 treatment (`transformations/generalization.py`) and the v4 fidelity scorer
-disagreed on which monetary representations are supported (Issue #88), and
-the v3/v4 scorer's own date/amount grammars used ``\\d``/``match``+``$``, which also
-match non-ASCII Unicode digits and accept a trailing newline (Issue #91).
-`docs/research/post-pilot-protocol-v5.md` freezes the closed amount grammar,
-the ASCII-only scorer grammar and the new pre-run amount-format check as
-`post-pilot-v5` -- `post-pilot-v1`/`-v2`/`-v3`/`-v4` are, again, never edited.
+disagreed on which monetary representations are supported (Issue #88), while
+Issue #91 showed that the v3/v4 scorer's amount grammar used
+``\\d``/``match``+``$`` in ways that could accept non-ASCII digits or trailing
+newlines. `docs/research/post-pilot-protocol-v5.md` freezes the closed amount
+grammar, the ASCII-only scorer amount grammar and the new pre-run
+amount-format check as `post-pilot-v5`. Date behavior intentionally remains
+v4-compatible in v5; the separate treatment/scorer date asymmetry is tracked
+in Issue #96. `post-pilot-v1`/`-v2`/`-v3`/`-v4` are, again, never edited.
 
 A later methodological change creates a new protocol document
 (``docs/research/post-pilot-protocol-vN.md``) with its own id, added to
