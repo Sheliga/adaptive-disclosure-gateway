@@ -176,11 +176,14 @@ function reduceGuidedFlow(state: FlowState, event: GuidedFlowEvent): FlowState {
   return flowReducer(state, event);
 }
 
-function isRestorableNavigationState(state: FlowState) {
+function isStableNavigationState(state: FlowState) {
   return (
-    state.screen !== "previewing" &&
-    state.screen !== "executing" &&
-    state.screen !== "comparing"
+    state.screen === "welcome" ||
+    state.screen === "compose" ||
+    state.screen === "review" ||
+    state.screen === "result" ||
+    state.screen === "technicalDetails" ||
+    state.screen === "comparison"
   );
 }
 
@@ -199,6 +202,7 @@ function GuidedFlowShell() {
   const [unrecoverableStep, setUnrecoverableStep] = useState<UrlStep | null>(null);
   const mainRef = useRef<HTMLElement>(null);
   const historySnapshotsRef = useRef(new Map<string, FlowState>());
+  const currentNavigationIdRef = useRef<string | null>(null);
   const suppressHistorySyncRef = useRef(false);
   const navigationIdRef = useRef(0);
   const [examples, setExamples] = useState<ExampleSummary[] | null>(null);
@@ -244,6 +248,7 @@ function GuidedFlowShell() {
       window.history.replaceState({ flowNavigationId: null }, "", replaceStepInUrl(currentStep));
     } else {
       const initialId = `flow-${navigationIdRef.current}`;
+      currentNavigationIdRef.current = initialId;
       historySnapshotsRef.current.set(initialId, initialFlowState);
       window.history.replaceState({ flowNavigationId: initialId }, "", replaceStepInUrl("intro"));
     }
@@ -256,10 +261,11 @@ function GuidedFlowShell() {
         return;
       }
       const snapshot = historySnapshotsRef.current.get(id);
-      if (snapshot === undefined || !isRestorableNavigationState(snapshot)) {
+      if (snapshot === undefined || !isStableNavigationState(snapshot)) {
         setUnrecoverableStep(urlStepFromSearch(window.location.search) ?? "intro");
         return;
       }
+      currentNavigationIdRef.current = id;
       setUnrecoverableStep(null);
       suppressHistorySyncRef.current = true;
       dispatch({ type: "RESTORE_NAVIGATION_STATE", state: snapshot });
@@ -273,7 +279,7 @@ function GuidedFlowShell() {
   }, [dispatch]);
 
   useEffect(() => {
-    if (unrecoverableStep !== null) {
+    if (unrecoverableStep !== null || !isStableNavigationState(state)) {
       return;
     }
     if (suppressHistorySyncRef.current) {
@@ -282,17 +288,16 @@ function GuidedFlowShell() {
     }
     const step = urlStepForState(state);
     const currentStep = urlStepFromSearch(window.location.search);
-    const id = `flow-${++navigationIdRef.current}`;
-    historySnapshotsRef.current.set(id, state);
+    const currentId = currentNavigationIdRef.current;
     const nextUrl = replaceStepInUrl(step);
-    if (currentStep === step) {
-      window.history.replaceState({ flowNavigationId: id }, "", nextUrl);
+    if (currentId !== null && currentStep === step) {
+      historySnapshotsRef.current.set(currentId, state);
+      window.history.replaceState({ flowNavigationId: currentId }, "", nextUrl);
       return;
     }
-    if (state.screen === "previewing" || state.screen === "executing" || state.screen === "comparing") {
-      window.history.replaceState({ flowNavigationId: id }, "", nextUrl);
-      return;
-    }
+    const id = `flow-${++navigationIdRef.current}`;
+    currentNavigationIdRef.current = id;
+    historySnapshotsRef.current.set(id, state);
     window.history.pushState({ flowNavigationId: id }, "", nextUrl);
   }, [state, unrecoverableStep]);
 
@@ -486,20 +491,7 @@ function GuidedFlowShell() {
   }
 
   function handleBack() {
-    switch (state.screen) {
-      case "compose":
-        dispatch({ type: "BACK_TO_WELCOME" });
-        break;
-      case "review":
-        dispatch({ type: "CANCEL_REVIEW" });
-        break;
-      case "technicalDetails":
-      case "comparison":
-        dispatch({ type: "RETURN_TO_RESULT" });
-        break;
-      default:
-        break;
-    }
+    window.history.back();
   }
 
   const showBackButton =
