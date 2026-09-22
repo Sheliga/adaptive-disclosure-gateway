@@ -957,6 +957,66 @@ describe("GuidedFlow navigation foundation", () => {
     }
   });
 
+  it("does not restore the sending Review when a popstate lands on its own entry during a pending send", async () => {
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+    const pendingExecute = deferred<Awaited<ReturnType<typeof executeDisclosure>>>();
+    mockedExecuteDisclosure.mockReturnValue(pendingExecute.promise);
+    const goSpy = vi.spyOn(window.history, "go").mockImplementation(() => {});
+    try {
+      render(<GuidedFlow />);
+      const { sendingReviewId } = await reachPendingExampleSend();
+      await waitFor(() => expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1));
+
+      // Synthetic, for the same determinism reason as the other popstate
+      // tests: a popstate reporting the sending entry itself while no
+      // correction is outstanding. The Review snapshot is still held at
+      // this point (it is only dropped once the send succeeds), so handling
+      // this as an ordinary restore would put Confirm back on screen.
+      dispatchPopState(sendingReviewId);
+      expect(goSpy).not.toHaveBeenCalled();
+      expectNoComposeAndNoResend();
+      expect(screen.queryByRole("heading", { name: copy.review.heading })).not.toBeInTheDocument();
+
+      pendingExecute.resolve({ ok: true, data: executeResponse() });
+      await screen.findByRole("heading", { name: copy.result.heading });
+      expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+    } finally {
+      goSpy.mockRestore();
+    }
+  });
+
+  it("writes no history after unmount while a Back correction is still pending", async () => {
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+    const pendingExecute = deferred<Awaited<ReturnType<typeof executeDisclosure>>>();
+    mockedExecuteDisclosure.mockReturnValue(pendingExecute.promise);
+    const goSpy = vi.spyOn(window.history, "go").mockImplementation(() => {});
+    let writes: ReturnType<typeof trackHistoryWrites> | null = null;
+    try {
+      const { unmount } = render(<GuidedFlow />);
+      const { composeId, sendingReviewId } = await reachPendingExampleSend();
+      await waitFor(() => expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1));
+
+      dispatchPopState(composeId);
+      expect(goSpy).toHaveBeenCalledWith(1);
+      unmount();
+
+      // Execute settling and the correction landing after unmount must be
+      // inert: no throw, and nothing written into a history the component
+      // no longer owns.
+      writes = trackHistoryWrites();
+      await act(async () => {
+        pendingExecute.resolve({ ok: true, data: executeResponse() });
+        await pendingExecute.promise;
+      });
+      dispatchPopState(sendingReviewId);
+      expect(writes.log).toEqual([]);
+      expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+    } finally {
+      writes?.restore();
+      goSpy.mockRestore();
+    }
+  });
+
   it("registers an uploaded document's Result only after the corrective popstate when executeDocument resolves first", async () => {
     mockedPreviewDocument.mockResolvedValue({
       ok: true,
