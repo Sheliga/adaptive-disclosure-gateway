@@ -312,7 +312,7 @@ describe("GuidedFlow navigation foundation", () => {
     await screen.findByRole("heading", { name: copy.result.heading });
 
     window.history.back();
-    await screen.findByRole("heading", { name: copy.sectionHeadings.technicalDetails });
+    await screen.findByRole("heading", { name: "Esta etapa não pode ser restaurada" });
     window.history.forward();
     await screen.findByRole("heading", { name: copy.result.heading });
 
