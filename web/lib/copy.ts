@@ -212,7 +212,35 @@ const ptBR = {
      * mechanical action -- the primary decision this screen exists for.
      */
     confirmSend: "Confirmar e enviar ao provedor externo",
-    backToCompose: "Voltar e editar",
+    /**
+     * T32.2 / #102: the irreversible boundary, stated in plain language right
+     * next to the CTA -- confirming is what starts the external call, and
+     * once it has started, navigating away does not cancel or undo it.
+     */
+    confirmConsequence: "Ao confirmar, a solicitação é enviada ao provedor externo.",
+    afterSendNotice:
+      "Depois que o envio começar, voltar ou sair desta tela não cancela nem desfaz o envio.",
+    /** Shown under an execute error: a new attempt is only ever the user's explicit choice. */
+    executeErrorNoAutoRetry:
+      "Nada é reenviado automaticamente. Para tentar novamente, confirme outra vez.",
+    /**
+     * T32.2 / #102: "What you asked for" -- re-presents the retained compose
+     * context before any disclosure detail, so the reviewer does not have to
+     * remember what they chose on the previous screen.
+     */
+    contextHeading: "O que você pediu",
+    sourceLabel: "Origem",
+    sourceExample: "Exemplo preparado",
+    sourceUpload: "Arquivo enviado",
+    sourcePaste: "Texto colado",
+    exampleLabel: "Exemplo",
+    taskLabel: "Tarefa",
+    exampleSuggestedTask: "(tarefa sugerida pelo exemplo)",
+    noTaskProvided: "Nenhuma tarefa informada",
+    /** Fail-closed label for any value this UI has no human copy for. */
+    unknownValue: "Não identificado",
+    /** Returns to the existing Compose snapshot (browser history), every field preserved. */
+    changeRequest: "Alterar dados da solicitação",
     /**
      * T30 / issue #82: Level-2 disclosure wrapping the T27 transformation
      * inspector -- "understand what changed and why" sits one level below

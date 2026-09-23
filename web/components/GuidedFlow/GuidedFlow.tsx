@@ -758,7 +758,8 @@ function GuidedFlowShell() {
             preview={state.preview}
             executeError={state.executeError}
             onConfirm={() => handleConfirmReview(state)}
-            onCancel={() => dispatch({ type: "CANCEL_REVIEW" })}
+            onEdit={handleBack}
+            examples={examples}
             compose={state.compose}
             demoTransparencyEnabled={demoTransparencyEnabled}
             demoVaultExplorerEnabled={demoVaultExplorerEnabled}
