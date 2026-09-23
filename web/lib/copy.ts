@@ -246,7 +246,7 @@ const ptBR = {
      * inspector -- "understand what changed and why" sits one level below
      * the plain-language local/sent lists.
      */
-    understandChangesToggle: "Entender o que o gateway mudou e por quê",
+    understandChangesToggle: "Ver a explicação detalhada das transformações",
     /**
      * T30 / issue #82: Level-3 disclosure wrapping the T28 export/restore
      * panel and the T29 Vault Explorer -- collapsed by default, framed
@@ -626,6 +626,53 @@ const ptBR = {
     submit: "Enviar",
     cancel: "Cancelar",
     tryAgain: "Tentar novamente",
+  },
+
+  /**
+   * T32.3 / #103: the primary before/after ("O que o gateway fez"), built
+   * only from `preview.inspection.segments` -- visible by default in Review
+   * and in the Approved Review, and as a recap in Result. Answers only what
+   * was there, what changed and what goes out; technical reasons, treatment,
+   * strategy and ids stay in the detailed inspector. `{n}` is a plain count.
+   */
+  beforeAfter: {
+    heading: "O que o gateway fez",
+    intro:
+      "Antes de qualquer envio, o gateway transformou localmente os trechos destacados. Primeiro, o que você enviou; depois, o que sai para o modelo externo.",
+    originalHeading: "Original",
+    originalCaption: "O conteúdo que você enviou ao gateway. Ele não sai daqui.",
+    transformationStep: "Transformação local no gateway",
+    disclosedHeadingReview: "Enviado ao modelo externo",
+    disclosedCaptionReview:
+      "Exatamente esta representação cruza a fronteira para o modelo externo quando você confirmar.",
+    disclosedHeadingApproved: "Aprovado para envio ao modelo externo",
+    disclosedCaptionApproved:
+      "Exatamente esta representação foi aprovada para cruzar a fronteira para o modelo externo.",
+    handledCount: "Trechos tratados pelo gateway: {n}",
+    noChanges: "O gateway não precisou alterar nenhum trecho: o texto cruza a fronteira como está.",
+    unavailableBlocked:
+      "Nenhuma representação foi liberada para envio: a solicitação foi bloqueada no gateway e nada sai para o modelo externo.",
+    unavailableAlignmentFailed:
+      "A transformação foi aplicada, mas a visualização detalhada de antes/depois não pôde ser produzida com segurança.",
+    unavailableUnknown: "A visualização de antes/depois não está disponível para esta solicitação.",
+  },
+
+  /**
+   * T32.3 / #103: the short Result recap -- which transformation this answer
+   * came after. Wording is chosen from `ExecuteResponse.provider`: never
+   * "sent"/"consulted" when `provider.called` is false, and a failed call
+   * is described as an attempt, not a consultation that produced an answer.
+   */
+  resultRecap: {
+    heading: "O que aconteceu antes do envio",
+    sent:
+      "Antes de consultar o modelo externo, o gateway transformou localmente o seu conteúdo, como você revisou. Esta resposta veio depois dessa transformação.",
+    providerFailed:
+      "O gateway transformou localmente o seu conteúdo e tentou consultar o modelo externo, mas a consulta falhou: nenhuma resposta foi produzida.",
+    notSent:
+      "O gateway preparou a representação transformada, mas nada foi enviado: o modelo externo não foi consultado.",
+    handledCount: "Trechos tratados pelo gateway antes da fronteira externa: {n}",
+    seeBeforeAfter: "Ver o antes/depois aprovado na revisão",
   },
 
   /**

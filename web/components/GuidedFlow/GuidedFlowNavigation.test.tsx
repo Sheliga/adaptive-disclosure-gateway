@@ -314,7 +314,7 @@ beforeEach(() => {
   });
   mockedGetDemoFeatures.mockResolvedValue({
     ok: true,
-    data: { demo_transparency_enabled: false, demo_vault_explorer_enabled: false },
+    data: { demo_inspection_enabled: false, demo_transparency_enabled: false, demo_vault_explorer_enabled: false },
   });
 });
 

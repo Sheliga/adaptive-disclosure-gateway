@@ -175,7 +175,7 @@ export const en: AppCopy = {
     noTaskProvided: "No task provided",
     unknownValue: "Not identified",
     changeRequest: "Change request details",
-    understandChangesToggle: "Understand what the gateway changed and why",
+    understandChangesToggle: "See detailed explanation of the transformations",
     technicalToolsToggle: "Technical details and research tools",
     technicalToolsIntro:
       "These tools exist for evaluation and research purposes. A final product would restrict or remove this layer.",
@@ -398,6 +398,40 @@ export const en: AppCopy = {
     submit: "Submit",
     cancel: "Cancel",
     tryAgain: "Try again",
+  },
+
+  beforeAfter: {
+    heading: "What the gateway did",
+    intro:
+      "Before anything is sent, the gateway transformed the highlighted passages locally. First, what you submitted; then, what goes out to the external model.",
+    originalHeading: "Original",
+    originalCaption: "The content you submitted to the gateway. It does not leave.",
+    transformationStep: "Local transformation in the gateway",
+    disclosedHeadingReview: "Sent to the external model",
+    disclosedCaptionReview:
+      "Exactly this representation crosses the boundary to the external model when you confirm.",
+    disclosedHeadingApproved: "Approved for sending to the external model",
+    disclosedCaptionApproved:
+      "Exactly this representation was approved to cross the boundary to the external model.",
+    handledCount: "Passages handled by the gateway: {n}",
+    noChanges: "The gateway did not need to change any passage: the text crosses the boundary as it is.",
+    unavailableBlocked:
+      "No representation was released for sending: the request was blocked in the gateway and nothing goes out to the external model.",
+    unavailableAlignmentFailed:
+      "The transformation was applied, but the detailed before/after view could not be produced safely.",
+    unavailableUnknown: "The before/after view is not available for this request.",
+  },
+
+  resultRecap: {
+    heading: "What happened before sending",
+    sent:
+      "Before consulting the external model, the gateway transformed your content locally, as you reviewed. This answer came after that transformation.",
+    providerFailed:
+      "The gateway transformed your content locally and tried to consult the external model, but the call failed: no answer was produced.",
+    notSent:
+      "The gateway prepared the transformed representation, but nothing was sent: the external model was not consulted.",
+    handledCount: "Passages handled by the gateway before the external boundary: {n}",
+    seeBeforeAfter: "See the before/after you approved in Review",
   },
 
   inspectionActions: {

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -410,6 +410,7 @@ describe("ReviewScreen -- disclosure inspector (T27), now behind a Level-2 discl
     render(
       <ReviewScreen
         preview={preview([category({})], "allowed", inspection)}
+        demoInspectionEnabled
         executeError={null}
         onConfirm={vi.fn()}
         onEdit={vi.fn()}
@@ -422,11 +423,14 @@ describe("ReviewScreen -- disclosure inspector (T27), now behind a Level-2 discl
     await userEvent.click(screen.getByText(copy.review.understandChangesToggle));
 
     expect(screen.getByText(copy.disclosureInspector.toggleLabel)).toBeInTheDocument();
-    expect(screen.queryByText(copy.disclosureInspector.originalColumnHeading)).not.toBeInTheDocument();
+    // Scoped to the Level-2 disclosure: the T32.3 before/after above it has
+    // its own "Original" heading.
+    const levelTwo = screen.getByText(copy.review.understandChangesToggle).closest("details") as HTMLElement;
+    expect(within(levelTwo).queryByText(copy.disclosureInspector.originalColumnHeading)).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByText(copy.disclosureInspector.toggleLabel));
 
-    expect(screen.getByText(copy.disclosureInspector.originalColumnHeading)).toBeInTheDocument();
+    expect(within(levelTwo).getByText(copy.disclosureInspector.originalColumnHeading)).toBeInTheDocument();
   });
 
   it("renders the unavailable message once the Level-2 disclosure is opened, when inspection.available is false", async () => {
@@ -434,6 +438,7 @@ describe("ReviewScreen -- disclosure inspector (T27), now behind a Level-2 discl
     render(
       <ReviewScreen
         preview={preview([category({})], "allowed", inspection)}
+        demoInspectionEnabled
         executeError={null}
         onConfirm={vi.fn()}
         onEdit={vi.fn()}
@@ -836,5 +841,171 @@ describe("ReviewScreen -- context and boundary copy in English (#102)", () => {
     expect(screen.getByText(en.review.confirmConsequence)).toBeInTheDocument();
     expect(screen.getByText(en.newTest.documentTypeLabels.contract)).toBeInTheDocument();
     expect(screen.queryByText(copy.review.contextHeading)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * T32.3 / #103: the primary before/after ("What the gateway did") is visible
+ * by default -- no click -- right after "What you asked for", built only from
+ * `preview.inspection`, and only when the INSPECTION capability is on. It is
+ * never implied by the transparency (export/restore) or vault capabilities.
+ */
+describe("ReviewScreen -- primary before/after (T32.3 / #103)", () => {
+  const SEGMENTS = [
+    { action: null, category: null, original: "Relatório de ", disclosed: "Relatório de " },
+    { action: "pseudonymize", category: "employee_name", original: "Maria Silva", disclosed: "PESSOA_7f3a" },
+    { action: null, category: null, original: ", salário ", disclosed: ", salário " },
+    { action: "generalize", category: "salary", original: "R$ 8.500,00", disclosed: "R$ 5.000-10.000" },
+    { action: null, category: null, original: ", CPF ", disclosed: ", CPF " },
+    { action: "remove", category: "cpf", original: "123.456.789-00", disclosed: "" },
+    { action: null, category: null, original: " fim.", disclosed: " fim." },
+  ];
+  const AVAILABLE: DisclosureInspection = { available: true, unavailable_reason: null, segments: SEGMENTS };
+
+  function renderReview(
+    props: {
+      inspection?: DisclosureInspection | null;
+      status?: "allowed" | "blocked";
+      demoInspectionEnabled?: boolean;
+      demoTransparencyEnabled?: boolean;
+      demoVaultExplorerEnabled?: boolean;
+    } = {},
+  ) {
+    const { inspection = AVAILABLE, status = "allowed", ...flags } = props;
+    return render(
+      <ReviewScreen
+        preview={preview([category({})], status, inspection)}
+        executeError={null}
+        onConfirm={vi.fn()}
+        onEdit={vi.fn()}
+        {...flags}
+      />,
+    );
+  }
+
+  it("is in the DOM without any click when inspection is enabled and available", () => {
+    renderReview({ demoInspectionEnabled: true });
+
+    const summary = screen.getByTestId("before-after-summary");
+    expect(within(summary).getByRole("heading", { name: copy.beforeAfter.heading })).toBeInTheDocument();
+    expect(within(screen.getByTestId("before-after-original")).getByText("Maria Silva")).toBeInTheDocument();
+    expect(within(screen.getByTestId("before-after-disclosed")).getByText("PESSOA_7f3a")).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("before-after-disclosed")).getByText(copy.inspectionActions.removedMarker),
+    ).toBeInTheDocument();
+    expect(screen.getByText(copy.beforeAfter.disclosedCaptionReview)).toBeInTheDocument();
+  });
+
+  it("sits right after 'What you asked for' and before detected/local/sent, details, and Confirm", () => {
+    renderReview({ demoInspectionEnabled: true });
+
+    const order = [
+      screen.getByRole("heading", { name: copy.review.contextHeading }),
+      screen.getByTestId("before-after-summary"),
+      screen.getByText(copy.sectionHeadings.whatWasDetected),
+      screen.getByText(copy.review.willBeSentHeading),
+      screen.getByText(copy.review.understandChangesToggle),
+      screen.getByRole("button", { name: copy.review.confirmSend }),
+    ];
+    for (let i = 0; i < order.length - 1; i += 1) {
+      expect(order[i].compareDocumentPosition(order[i + 1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+  });
+
+  it("does not need the detailed inspector: its content stays out of the DOM until opened", () => {
+    renderReview({ demoInspectionEnabled: true });
+
+    expect(screen.queryByText(copy.disclosureInspector.toggleLabel)).not.toBeInTheDocument();
+    expect(screen.queryByText(copy.disclosureInspector.detailReasonLabel)).not.toBeInTheDocument();
+  });
+
+  it("shows no b0-b4 code, strategy, policy version or technical reason before the details are opened", () => {
+    renderReview({ demoInspectionEnabled: true });
+
+    const text = document.body.textContent ?? "";
+    expect(text).not.toMatch(/\bb[0-4]\b/i);
+    expect(text).not.toContain("recommended");
+    expect(text).not.toMatch(/\bv1\b/);
+    expect(text).not.toContain("detected by rule X");
+  });
+
+  it("renders nothing extra when inspection is null, and Review keeps working with the overview", () => {
+    renderReview({ demoInspectionEnabled: true, inspection: null });
+
+    expect(screen.queryByTestId("before-after-summary")).not.toBeInTheDocument();
+    expect(screen.queryByText(copy.review.understandChangesToggle)).not.toBeInTheDocument();
+    expect(screen.getByText(copy.review.willBeSentHeading)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: copy.review.confirmSend })).toBeInTheDocument();
+  });
+
+  it("fails closed when the inspection capability is off, even if the body carries an inspection", () => {
+    renderReview({ demoInspectionEnabled: false });
+
+    expect(screen.queryByTestId("before-after-summary")).not.toBeInTheDocument();
+    expect(screen.queryByText(copy.review.understandChangesToggle)).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("Maria Silva");
+  });
+
+  it("(0,1,0) transparency alone never shows the before/after, but keeps its own technical tools", () => {
+    renderReview({ demoTransparencyEnabled: true });
+
+    expect(screen.queryByTestId("before-after-summary")).not.toBeInTheDocument();
+    expect(screen.getByText(copy.review.technicalToolsToggle)).toBeInTheDocument();
+  });
+
+  it("(0,0,1) the vault explorer alone never shows the before/after", () => {
+    renderReview({ demoVaultExplorerEnabled: true });
+
+    expect(screen.queryByTestId("before-after-summary")).not.toBeInTheDocument();
+    expect(screen.getByText(copy.review.technicalToolsToggle)).toBeInTheDocument();
+  });
+
+  it("(1,0,0) the public posture: before/after shown, no export/restore and no Vault Explorer at all", () => {
+    renderReview({ demoInspectionEnabled: true });
+
+    expect(screen.getByTestId("before-after-summary")).toBeInTheDocument();
+    expect(screen.queryByText(copy.review.technicalToolsToggle)).not.toBeInTheDocument();
+    expect(screen.queryByText(copy.exportRestorePanel.exportButton)).not.toBeInTheDocument();
+    expect(screen.queryByText(copy.vaultExplorerPanel.toggleLabel)).not.toBeInTheDocument();
+  });
+
+  it("a blocked preview explains no representation was released, with no sent column and no Confirm", () => {
+    renderReview({
+      demoInspectionEnabled: true,
+      status: "blocked",
+      inspection: { available: false, unavailable_reason: "blocked", segments: [] },
+    });
+
+    expect(screen.getByText(copy.beforeAfter.unavailableBlocked)).toBeInTheDocument();
+    expect(screen.queryByTestId("before-after-disclosed")).not.toBeInTheDocument();
+    expect(screen.queryByText(copy.beforeAfter.disclosedHeadingReview)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: copy.review.confirmSend })).not.toBeInTheDocument();
+  });
+
+  it("alignment_failed says the view could not be produced safely, inventing no before/after", () => {
+    renderReview({
+      demoInspectionEnabled: true,
+      inspection: { available: false, unavailable_reason: "alignment_failed", segments: [] },
+    });
+
+    expect(screen.getByText(copy.beforeAfter.unavailableAlignmentFailed)).toBeInTheDocument();
+    expect(screen.queryByTestId("before-after-original")).not.toBeInTheDocument();
+  });
+
+  it("renders the before/after in English under the en locale", async () => {
+    await renderWithLocale(
+      <ReviewScreen
+        preview={preview([category({})], "allowed", AVAILABLE)}
+        executeError={null}
+        onConfirm={vi.fn()}
+        onEdit={vi.fn()}
+        demoInspectionEnabled
+      />,
+      "en",
+    );
+
+    expect(screen.getByRole("heading", { name: en.beforeAfter.heading })).toBeInTheDocument();
+    expect(screen.getByText(en.beforeAfter.transformationStep)).toBeInTheDocument();
+    expect(screen.getByText(en.review.understandChangesToggle)).toBeInTheDocument();
   });
 });

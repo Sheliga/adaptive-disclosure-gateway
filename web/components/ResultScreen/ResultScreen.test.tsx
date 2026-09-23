@@ -1,9 +1,9 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { renderWithLocale } from "@/i18n/renderWithLocale";
-import type { ExecuteResponse, HealthResponse } from "@/lib/contracts";
+import type { DisclosureInspection, ExecuteResponse, HealthResponse } from "@/lib/contracts";
 import type { ProviderModeState } from "@/lib/providerMode";
 import { copy } from "@/lib/copy";
 import { en } from "@/lib/copy.en";
@@ -653,5 +653,186 @@ describe("ResultScreen -- Vault Explorer gating (T29 / issue #72)", () => {
 
     expect(screen.getByText(copy.vaultExplorerPanel.heading)).toBeInTheDocument();
     expect(screen.getByText(copy.vaultExplorerPanel.unavailableForDecision)).toBeInTheDocument();
+  });
+});
+
+/**
+ * T32.3 / #103: the Result recap answers "which transformation did this
+ * answer come after?" from the preview ALREADY held in flow state (the
+ * `inspection` prop) -- `ExecuteResponse` is not widened. Wording follows
+ * `execute.provider`: nothing is ever said to have been sent when the
+ * provider was not called, and a failed call is an attempt, not an answer.
+ */
+describe("ResultScreen -- before-sending recap (T32.3 / #103)", () => {
+  const SEGMENTS = [
+    { action: null, category: null, original: "Relatório de ", disclosed: "Relatório de " },
+    { action: "pseudonymize", category: "employee_name", original: "Maria Silva", disclosed: "PESSOA_7f3a" },
+    { action: null, category: null, original: ", salário ", disclosed: ", salário " },
+    { action: "generalize", category: "salary", original: "R$ 8.500,00", disclosed: "R$ 5.000-10.000" },
+    { action: "remove", category: "cpf", original: "123.456.789-00", disclosed: "" },
+  ];
+  const AVAILABLE: DisclosureInspection = { available: true, unavailable_reason: null, segments: SEGMENTS };
+  const COUNT = copy.resultRecap.handledCount.replace("{n}", "3");
+
+  function renderResult(e: ExecuteResponse, inspection?: DisclosureInspection | null) {
+    return render(
+      <ResultScreen
+        execute={e}
+        health={{ status: "loading" }}
+        onRestart={vi.fn()}
+        compareError={null}
+        onCompareStrategies={vi.fn()}
+        onViewTechnicalDetails={vi.fn()}
+        inspection={inspection}
+      />,
+    );
+  }
+
+  function recap(): HTMLElement {
+    return screen.getByTestId("result-recap");
+  }
+
+  it("success: a short visible recap with the count, and no technical detail", () => {
+    renderResult(execute(), AVAILABLE);
+
+    expect(within(recap()).getByRole("heading", { name: copy.resultRecap.heading })).toBeInTheDocument();
+    expect(within(recap()).getByText(copy.resultRecap.sent)).toBeInTheDocument();
+    expect(within(recap()).getByText(COUNT)).toBeInTheDocument();
+    const text = recap().textContent ?? "";
+    expect(text).not.toMatch(/\bb[0-4]\b/i);
+    expect(text).not.toContain("recommended");
+    expect(text).not.toContain("employee_name");
+  });
+
+  it("counts transformations by segment.action, not by category occurrence counts", () => {
+    const e = execute({
+      summary: {
+        status: "allowed",
+        categories: [
+          {
+            category: "employee_name",
+            outcome: "pseudonymized",
+            action: "pseudonymize",
+            crosses_trust_boundary: true,
+            occurrence_count: 9,
+            required_for_task: null,
+            technical_reason: "r",
+            policy_version: null,
+            policy_restricted: null,
+            impossible_under_policy: null,
+          },
+        ],
+        detected_span_count: 9,
+        detected_categories: ["employee_name"],
+      },
+    });
+    renderResult(e, AVAILABLE);
+
+    expect(within(recap()).getByText(COUNT)).toBeInTheDocument();
+  });
+
+  it("keeps the full before/after collapsed, out of the DOM, until asked for", async () => {
+    renderResult(execute(), AVAILABLE);
+
+    expect(screen.queryByText("PESSOA_7f3a")).not.toBeInTheDocument();
+    expect(screen.queryByText("Maria Silva")).not.toBeInTheDocument();
+
+    await userEvent.click(within(recap()).getByText(copy.resultRecap.seeBeforeAfter));
+
+    expect(within(recap()).getByText("PESSOA_7f3a")).toBeInTheDocument();
+    expect(within(recap()).getByText(copy.beforeAfter.disclosedHeadingApproved)).toBeInTheDocument();
+  });
+
+  it("sits right after the answer and before the protections summary", () => {
+    renderResult(execute(), AVAILABLE);
+
+    const answer = screen.getByText(copy.sectionHeadings.finalAnswer);
+    const protections = screen.getByText(copy.result.protectionsAppliedHeading);
+    expect(answer.compareDocumentPosition(recap()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(recap().compareDocumentPosition(protections) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("provider failure: says the call was attempted and failed, never that an answer came after it", () => {
+    const e = execute({
+      final_answer: null,
+      provider: { ...execute().provider, called: true, failed: true, failure_kind: "timeout" },
+    });
+    renderResult(e, AVAILABLE);
+
+    expect(within(recap()).getByText(copy.resultRecap.providerFailed)).toBeInTheDocument();
+    expect(within(recap()).queryByText(copy.resultRecap.sent)).not.toBeInTheDocument();
+  });
+
+  it("provider not called: says nothing was sent, even when the preview had an available before/after", () => {
+    const e = execute({
+      final_answer: null,
+      provider: { ...execute().provider, called: false, transmitted_bytes: null },
+    });
+    renderResult(e, AVAILABLE);
+
+    expect(within(recap()).getByText(copy.resultRecap.notSent)).toBeInTheDocument();
+    expect(within(recap()).queryByText(copy.resultRecap.sent)).not.toBeInTheDocument();
+    expect(within(recap()).queryByText(copy.resultRecap.providerFailed)).not.toBeInTheDocument();
+  });
+
+  it("blocked: no metrics, no before/after, and no claim that anything was sent", () => {
+    const e = execute({
+      status: "blocked",
+      final_answer: null,
+      summary: { status: "blocked", categories: [], detected_span_count: 0, detected_categories: [] },
+      provider: { ...execute().provider, called: false, transmitted_bytes: null },
+    });
+    renderResult(e, { available: false, unavailable_reason: "blocked", segments: [] });
+
+    expect(within(recap()).getByText(copy.resultRecap.notSent)).toBeInTheDocument();
+    expect(within(recap()).getByText(copy.beforeAfter.unavailableBlocked)).toBeInTheDocument();
+    expect(within(recap()).queryByText(/\d/)).not.toBeInTheDocument();
+    expect(within(recap()).queryByText(copy.resultRecap.seeBeforeAfter)).not.toBeInTheDocument();
+    expect(within(recap()).queryByText(copy.resultRecap.sent)).not.toBeInTheDocument();
+  });
+
+  it("blocked at execute even though the provider flag says called: still never claims a send", () => {
+    const e = execute({
+      status: "blocked",
+      final_answer: null,
+      summary: { status: "blocked", categories: [], detected_span_count: 0, detected_categories: [] },
+    });
+    renderResult(e, AVAILABLE);
+
+    expect(within(recap()).getByText(copy.resultRecap.notSent)).toBeInTheDocument();
+    expect(within(recap()).queryByText(copy.resultRecap.sent)).not.toBeInTheDocument();
+  });
+
+  it("alignment_failed: plain message, no count and no before/after toggle", () => {
+    renderResult(execute(), { available: false, unavailable_reason: "alignment_failed", segments: [] });
+
+    expect(within(recap()).getByText(copy.beforeAfter.unavailableAlignmentFailed)).toBeInTheDocument();
+    expect(within(recap()).queryByText(copy.resultRecap.seeBeforeAfter)).not.toBeInTheDocument();
+    expect(recap().textContent).not.toMatch(/\d/);
+  });
+
+  it.each([null, undefined])("renders no recap at all when inspection is %s", (inspection) => {
+    renderResult(execute(), inspection);
+
+    expect(screen.queryByTestId("result-recap")).not.toBeInTheDocument();
+  });
+
+  it("renders the recap in English under the en locale", async () => {
+    await renderWithLocale(
+      <ResultScreen
+        execute={execute()}
+        health={{ status: "loading" }}
+        onRestart={vi.fn()}
+        compareError={null}
+        onCompareStrategies={vi.fn()}
+        onViewTechnicalDetails={vi.fn()}
+        inspection={AVAILABLE}
+      />,
+      "en",
+    );
+
+    expect(screen.getByRole("heading", { name: en.resultRecap.heading })).toBeInTheDocument();
+    expect(screen.getByText(en.resultRecap.sent)).toBeInTheDocument();
+    expect(screen.getByText(en.resultRecap.handledCount.replace("{n}", "3"))).toBeInTheDocument();
   });
 });

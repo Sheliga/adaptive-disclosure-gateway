@@ -160,3 +160,14 @@
   color: var(--text-muted);
   font-size: 0.9rem;
 }
+
+/* T32.3 / #103: the short before-sending recap, right after the answer. */
+.recap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+}

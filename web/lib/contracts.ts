@@ -482,22 +482,30 @@ export interface VaultExplorerResponse {
 // --- GET /api/demo/features (web-only; not part of application/wire.py) -----
 
 /**
- * A web-invented, purely presentational endpoint (T28 / issue #70): whether
- * the export/restore UI should render at all, computed server-side from the
- * SAME `ADG_ENABLE_DEMO_TRANSPARENCY` gate the route handlers themselves
- * enforce (`lib/demoTransparency.ts`). Carries no `contract_version` -- it
- * is not part of the Python application-layer wire contract this module
- * otherwise mirrors, and never will be: it exists only so the client knows
- * whether to bother rendering export/restore controls, never to decide
- * anything security-relevant (the route handlers gate that independently,
- * per request, regardless of what this endpoint last reported).
+ * A web-invented, purely presentational endpoint reporting three
+ * independent demo capabilities, each computed server-side from its own
+ * gate and each carrying no `contract_version` -- none of the three is
+ * part of the Python application-layer wire contract this module otherwise
+ * mirrors, and none ever will be: this endpoint exists only so the client
+ * knows whether to bother rendering a given capability's controls, never
+ * to decide anything security-relevant (each capability's own gate is
+ * enforced independently, server-side, regardless of what this endpoint
+ * last reported).
  *
- * `demo_vault_explorer_enabled` (T29 / issue #72) is the SAME kind of
- * presentational-only flag, computed from the independent
- * `ADG_ENABLE_DEMO_VAULT_EXPLORER` gate -- the two booleans are unrelated
- * deployment toggles and neither is derived from the other.
+ * - `demo_inspection_enabled` (T32.3 / issue #103), from
+ *   `lib/demoInspection.ts`'s own gate (see that module for the env var it
+ *   reads -- deliberately not repeated here; it is read server-side in
+ *   exactly one place, and `tests/test_demo_deployment_config.py` pins that).
+ * - `demo_transparency_enabled` (T28 / issue #70), from
+ *   `lib/demoTransparency.ts`'s `ADG_ENABLE_DEMO_TRANSPARENCY` gate.
+ * - `demo_vault_explorer_enabled` (T29 / issue #72), from
+ *   `lib/demoVaultExplorer.ts`'s `ADG_ENABLE_DEMO_VAULT_EXPLORER` gate.
+ *
+ * The three booleans are unrelated deployment toggles; none is derived from
+ * another, in either direction.
  */
 export interface DemoFeaturesResponse {
+  demo_inspection_enabled: boolean;
   demo_transparency_enabled: boolean;
   demo_vault_explorer_enabled: boolean;
 }

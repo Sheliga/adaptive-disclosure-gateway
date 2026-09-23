@@ -523,5 +523,6 @@ export const isDemoFeaturesResponse: ResponseGuard<DemoFeaturesResponse> = (
   value: unknown,
 ): value is DemoFeaturesResponse =>
   isRecord(value) &&
+  isBoolean(value.demo_inspection_enabled) &&
   isBoolean(value.demo_transparency_enabled) &&
   isBoolean(value.demo_vault_explorer_enabled);

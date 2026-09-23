@@ -59,6 +59,17 @@
  * button, back to the retained Compose snapshot -- never a parallel reducer
  * transition. The post-send, read-only counterpart is `ApprovedReviewScreen`,
  * a different component over a different (token-free) flow state.
+ *
+ * T32.3 / issue #103 adds the PRIMARY before/after right after "What you
+ * asked for": `DisclosureTransformationSummary`, visible by default, built
+ * only from `preview.inspection`. Both it and the Level-2 inspector render
+ * only when `demoInspectionEnabled` (the INSPECTION capability, fetched by
+ * GuidedFlow; any fetch failure is already `false`) AND
+ * `preview.inspection !== null` agree -- neither the transparency nor the
+ * vault flag ever implies it. Final order: heading -> "What you asked for"
+ * -> "What the gateway did" -> detected / stays local / will be sent ->
+ * Level 2 (detailed explanation) -> Level 3 (technical tools) -> consequence
+ * -> Confirm.
  */
 
 import { useState } from "react";
@@ -69,6 +80,7 @@ import type { ExampleSummary, PreviewResponse } from "@/lib/contracts";
 import { initialComposeState, type ComposeState } from "@/lib/flow";
 
 import { DisclosureInspector } from "../DisclosureInspector/DisclosureInspector";
+import { DisclosureTransformationSummary } from "../DisclosureTransformationSummary/DisclosureTransformationSummary";
 import { ExportRestorePanel } from "../ExportRestorePanel/ExportRestorePanel";
 import { VaultExplorerPanel } from "../VaultExplorerPanel/VaultExplorerPanel";
 import { DisclosureOverview } from "./DisclosureOverview";
@@ -90,6 +102,13 @@ export interface ReviewScreenProps {
   compose?: ComposeState;
   /** The examples catalog, used only to give an example its human label. */
   examples?: readonly ExampleSummary[] | null;
+  /**
+   * T32.3 / issue #103. The INSPECTION capability (`demo_inspection_enabled`
+   * from `getDemoFeatures`). Defaults to `false`: with it off, neither the
+   * before/after nor the detailed inspector renders, even if the body
+   * carries an inspection.
+   */
+  demoInspectionEnabled?: boolean;
   /** T28 / issue #70. See this module's docstring. Defaults to `false` (disabled) so existing callers/tests are unaffected. */
   demoTransparencyEnabled?: boolean;
   /**
@@ -114,6 +133,7 @@ export function ReviewScreen({
   onEdit,
   compose = initialComposeState,
   examples = null,
+  demoInspectionEnabled = false,
   demoTransparencyEnabled = false,
   demoVaultExplorerEnabled = false,
 }: ReviewScreenProps) {
@@ -122,6 +142,7 @@ export function ReviewScreen({
   const [technicalToolsOpen, setTechnicalToolsOpen] = useState(false);
 
   const isBlocked = preview.summary.status === "blocked";
+  const inspection = demoInspectionEnabled ? preview.inspection : null;
 
   const showExportRestore = demoTransparencyEnabled && !isBlocked;
   const showVaultExplorer = demoVaultExplorerEnabled;
@@ -143,13 +164,15 @@ export function ReviewScreen({
         }
       />
 
+      {inspection !== null && <DisclosureTransformationSummary inspection={inspection} variant="review" />}
+
       <DisclosureOverview
         preview={preview}
         sentHeading={copy.review.willBeSentHeading}
         payloadToggleLabel={copy.review.showPayloadToggle}
       />
 
-      {preview.inspection !== null && (
+      {inspection !== null && (
         <details
           className={styles.levelDisclosure}
           open={changesOpen}
@@ -158,7 +181,7 @@ export function ReviewScreen({
           <summary>{copy.review.understandChangesToggle}</summary>
           {changesOpen && (
             <DisclosureInspector
-              inspection={preview.inspection}
+              inspection={inspection}
               categories={preview.summary.categories}
               treatment={preview.treatment}
               strategy={preview.strategy}

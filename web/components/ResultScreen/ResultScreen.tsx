@@ -35,6 +35,17 @@
  * FAILED health check is distinguishable here from one still in flight --
  * conflating them made a failed check silently erase the indication. Its
  * CSS is deliberately small/muted (T30) so it never outcompetes the answer.
+ *
+ * T32.3 / issue #103 adds a short recap right after the answer: "which
+ * transformation did this answer come after?". It reads the `inspection`
+ * prop -- the SAME `preview.inspection` GuidedFlow already holds for this
+ * run (no new preview, no extra execute, `ExecuteResponse` not widened) --
+ * and `execute.provider` for the wording: `provider.called === false` (or a
+ * blocked summary) never says anything was sent; a failed call says the
+ * gateway TRIED to consult the model; only a successful call says the answer
+ * came after the transformation. The count is `segment.action !== null`,
+ * never category occurrence counts, and an unavailable inspection shows its
+ * plain message with no count. The full before/after stays one click away.
  */
 
 import { useState } from "react";
@@ -46,6 +57,7 @@ import type { DisplayError } from "@/lib/api";
 import { KNOWN_DISCLOSURE_OUTCOMES } from "@/lib/contracts";
 import type {
   CategoryDisclosureSummary,
+  DisclosureInspection,
   ExecuteResponse,
   KnownDisclosureOutcome,
   ReconstructionStage,
@@ -53,6 +65,7 @@ import type {
 import { describeCategoryOutcome } from "@/lib/outcomes";
 import { describeProviderMode, type ProviderModeState } from "@/lib/providerMode";
 
+import { DisclosureTransformationSummary } from "../DisclosureTransformationSummary/DisclosureTransformationSummary";
 import { VaultExplorerPanel } from "../VaultExplorerPanel/VaultExplorerPanel";
 import styles from "./ResultScreen.module.css";
 
@@ -122,6 +135,44 @@ function buildReconstructionNote(reconstruction: ReconstructionStage, copy: AppC
   return copy.result.reconstructionApplied;
 }
 
+/**
+ * T32.3 / issue #103. What the provider stage actually says, in the three
+ * cases the recap distinguishes. A blocked summary is "not sent" even if a
+ * malformed body claimed `called: true` -- fail closed on the claim.
+ */
+function recapStatus(execute: ExecuteResponse, copy: AppCopy): string {
+  if (!execute.provider.called || execute.summary.status === "blocked") {
+    return copy.resultRecap.notSent;
+  }
+  return execute.provider.failed ? copy.resultRecap.providerFailed : copy.resultRecap.sent;
+}
+
+function ResultRecap({ execute, inspection }: { execute: ExecuteResponse; inspection: DisclosureInspection }) {
+  const copy = useCopy();
+  const [open, setOpen] = useState(false);
+  const handled = inspection.available ? inspection.segments.filter((segment) => segment.action !== null).length : 0;
+
+  return (
+    <section aria-labelledby="result-recap-heading" className={styles.recap} data-testid="result-recap">
+      <h2 id="result-recap-heading" className={styles.subheading}>
+        {copy.resultRecap.heading}
+      </h2>
+      <p>{recapStatus(execute, copy)}</p>
+      {inspection.available ? (
+        <>
+          <p className={styles.protectionsSummary}>{copy.resultRecap.handledCount.replace("{n}", String(handled))}</p>
+          <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+            <summary>{copy.resultRecap.seeBeforeAfter}</summary>
+            {open && <DisclosureTransformationSummary inspection={inspection} variant="approved" showHeading={false} />}
+          </details>
+        </>
+      ) : (
+        <DisclosureTransformationSummary inspection={inspection} variant="approved" showHeading={false} />
+      )}
+    </section>
+  );
+}
+
 export interface ResultScreenProps {
   execute: ExecuteResponse;
   health: ProviderModeState;
@@ -156,6 +207,13 @@ export interface ResultScreenProps {
    * callers/tests), or when the decision had no explorable reference.
    */
   vaultExplorerToken?: string | null;
+  /**
+   * T32.3 / issue #103. The SAME preview's `inspection` this run's
+   * confirmed review carried, threaded through like `vaultExplorerToken`
+   * (GuidedFlow passes it only when the INSPECTION capability is on).
+   * `null`/absent renders no recap at all.
+   */
+  inspection?: DisclosureInspection | null;
 }
 
 export function ResultScreen({
@@ -167,6 +225,7 @@ export function ResultScreen({
   onViewTechnicalDetails,
   demoVaultExplorerEnabled = false,
   vaultExplorerToken = null,
+  inspection = null,
 }: ResultScreenProps) {
   const copy = useCopy();
   const [whatHappenedOpen, setWhatHappenedOpen] = useState(false);
@@ -210,6 +269,8 @@ export function ResultScreen({
           <p className={styles.finalAnswer}>{execute.final_answer}</p>
         </div>
       )}
+
+      {inspection !== null && <ResultRecap execute={execute} inspection={inspection} />}
 
       <div>
         <h2 className={styles.subheading}>{copy.result.protectionsAppliedHeading}</h2>

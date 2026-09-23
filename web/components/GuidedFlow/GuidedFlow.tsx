@@ -301,6 +301,12 @@ function GuidedFlowShell() {
   // `lib/demoVaultExplorer.ts`'s own gate, which is what actually decides
   // whether the vault explorer route ever forwards a request upstream.
   const [demoVaultExplorerEnabled, setDemoVaultExplorerEnabled] = useState(false);
+  // T32.3 / issue #103. The INSPECTION capability, from the SAME single
+  // features fetch -- independent of the two flags above (none implies
+  // another). It gates only presentation of `preview.inspection`, which the
+  // Python API populates only when its own inspection gate
+  // is on; the before/after renders only when both agree.
+  const [demoInspectionEnabled, setDemoInspectionEnabled] = useState(false);
 
   const dispatch = useCallback((event: GuidedFlowEvent) => {
     if (event.type !== "SET_DOCUMENT_TYPE") {
@@ -515,8 +521,9 @@ function GuidedFlowShell() {
       if (cancelled) {
         return;
       }
-      setDemoTransparencyEnabled(result.ok && result.data.demo_transparency_enabled);
-      setDemoVaultExplorerEnabled(result.ok && result.data.demo_vault_explorer_enabled);
+      setDemoInspectionEnabled(result.ok && result.data.demo_inspection_enabled === true);
+      setDemoTransparencyEnabled(result.ok && result.data.demo_transparency_enabled === true);
+      setDemoVaultExplorerEnabled(result.ok && result.data.demo_vault_explorer_enabled === true);
     });
     return () => {
       cancelled = true;
@@ -898,6 +905,7 @@ function GuidedFlowShell() {
             onEdit={handleBack}
             examples={examples}
             compose={state.compose}
+            demoInspectionEnabled={demoInspectionEnabled}
             demoTransparencyEnabled={demoTransparencyEnabled}
             demoVaultExplorerEnabled={demoVaultExplorerEnabled}
           />
@@ -909,6 +917,7 @@ function GuidedFlowShell() {
             preview={state.preview}
             examples={examples}
             onGoToResult={handleForward}
+            demoInspectionEnabled={demoInspectionEnabled}
           />
         )}
 
@@ -929,6 +938,7 @@ function GuidedFlowShell() {
             onViewTechnicalDetails={handleViewTechnicalDetails}
             demoVaultExplorerEnabled={demoVaultExplorerEnabled}
             vaultExplorerToken={state.preview.vault_explorer_token}
+            inspection={demoInspectionEnabled ? state.preview.inspection : null}
           />
         )}
 

@@ -15,12 +15,21 @@
  * snapshot, never a new request. The research/technical tools (inspector,
  * export/restore, Vault Explorer) belong to the pre-send decision and are
  * not repeated here.
+ *
+ * T32.3 / issue #103: the primary before/after (`DisclosureTransformationSummary`,
+ * "approved" wording) IS shown here, right after the request context, since
+ * it states what was approved to cross the boundary. It is presentation over
+ * the retained `preview.inspection` only -- read-only, no new request -- and
+ * it is gated exactly as on the live Review (`demoInspectionEnabled` AND a
+ * non-null inspection). The detailed inspector and every technical tool stay
+ * out of this screen.
  */
 
 import { useCopy } from "@/i18n/useLocale";
 import type { ExampleSummary, PreviewResponse } from "@/lib/contracts";
 import type { ComposeState } from "@/lib/flow";
 
+import { DisclosureTransformationSummary } from "../DisclosureTransformationSummary/DisclosureTransformationSummary";
 import { DisclosureOverview } from "../ReviewScreen/DisclosureOverview";
 import { ReviewContextSummary } from "../ReviewScreen/ReviewContextSummary";
 import styles from "../ReviewScreen/ReviewScreen.module.css";
@@ -30,10 +39,19 @@ export interface ApprovedReviewScreenProps {
   preview: PreviewResponse;
   examples: readonly ExampleSummary[] | null;
   onGoToResult: () => void;
+  /** T32.3 / issue #103. The INSPECTION capability; defaults to `false` (no before/after). */
+  demoInspectionEnabled?: boolean;
 }
 
-export function ApprovedReviewScreen({ compose, preview, examples, onGoToResult }: ApprovedReviewScreenProps) {
+export function ApprovedReviewScreen({
+  compose,
+  preview,
+  examples,
+  onGoToResult,
+  demoInspectionEnabled = false,
+}: ApprovedReviewScreenProps) {
   const copy = useCopy();
+  const inspection = demoInspectionEnabled ? preview.inspection : null;
 
   return (
     <section aria-labelledby="approved-review-heading" className={styles.section}>
@@ -44,6 +62,8 @@ export function ApprovedReviewScreen({ compose, preview, examples, onGoToResult 
       <p>{copy.approvedReview.readOnlyNotice}</p>
 
       <ReviewContextSummary compose={compose} examples={examples} />
+
+      {inspection !== null && <DisclosureTransformationSummary inspection={inspection} variant="approved" />}
 
       <DisclosureOverview
         preview={preview}

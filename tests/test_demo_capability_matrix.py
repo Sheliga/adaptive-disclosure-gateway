@@ -69,11 +69,11 @@ def _preview(client: TestClient) -> dict:
     ("inspection", "transparency", "vault"),
     list(itertools.product((False, True), repeat=3)),
 )
-def test_each_capability_is_gated_only_by_its_own_flag(monkeypatch, inspection, transparency, vault):
+def test_each_capability_is_gated_only_by_its_own_flag(
+    monkeypatch, inspection, transparency, vault
+):
     env = {
-        name: "1"
-        for name, on in zip(_FLAGS, (inspection, transparency, vault), strict=True)
-        if on
+        name: "1" for name, on in zip(_FLAGS, (inspection, transparency, vault), strict=True) if on
     }
     client = _client(monkeypatch, env)
 
@@ -108,10 +108,7 @@ def test_inspection_on_with_transparency_on_does_not_change_the_projection(monke
     def shape(inspection):
         # Pseudonyms are minted per vault (i.e. per app instance), so compare
         # everything but the pseudonymized disclosed text itself.
-        return [
-            (seg["action"], seg["category"], seg["original"])
-            for seg in inspection["segments"]
-        ]
+        return [(seg["action"], seg["category"], seg["original"]) for seg in inspection["segments"]]
 
     assert alone["inspection"]["available"] is True
     assert both["inspection"]["available"] is True
