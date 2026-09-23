@@ -181,6 +181,16 @@ export const en: AppCopy = {
       "These tools exist for evaluation and research purposes. A final product would restrict or remove this layer.",
   },
 
+  approvedReview: {
+    heading: "Approved review",
+    sentBadge: "Send already confirmed",
+    readOnlyNotice:
+      "This is the review you approved before sending. It is read-only: viewing it does not undo or repeat the send.",
+    sentHeading: "What was approved for sending to the external LLM",
+    payloadToggle: "View the exact payload approved for sending",
+    goToResult: "Go to the result",
+  },
+
   result: {
     heading: "Result",
     pathHeading: "Information path",
@@ -210,12 +220,10 @@ export const en: AppCopy = {
   },
 
   processingStages: {
-    readingFile: "Reading the file",
-    analyzingDocument: "Analyzing the document",
-    detectingSensitiveData: "Detecting sensitive data",
-    applyingDisclosurePolicy: "Applying disclosure policy",
-    consultingModel: "Consulting the model",
-    reconstructingAnswer: "Reconstructing the answer",
+    preparingReview: "Preparing the review…",
+    preparingDocumentReview: "Processing the document and preparing the review…",
+    sendConfirmed: "Send confirmed. The request is being processed.",
+    leavingDoesNotCancel: "Leaving this step does not cancel an external call that has already started.",
     comparingStrategies: "Comparing how each strategy would treat the same document…",
   },
 

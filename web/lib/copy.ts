@@ -258,6 +258,23 @@ const ptBR = {
       "Estas ferramentas existem para avaliação e pesquisa. Um produto final restringiria ou removeria esta camada.",
   },
 
+  /**
+   * T32.2 / #102: the read-only Review a confirmed send came from, reachable
+   * only through history (Result -> Back). It never offers Confirm, resend or
+   * Change, and says plainly that looking at it does not undo the send.
+   * "Envio já confirmado" rather than "enviado": a send can still end up
+   * blocked or failed at execute time, but it was confirmed either way.
+   */
+  approvedReview: {
+    heading: "Revisão aprovada",
+    sentBadge: "Envio já confirmado",
+    readOnlyNotice:
+      "Esta é a revisão que você aprovou antes do envio. Ela é somente leitura: visualizá-la não desfaz nem repete o envio.",
+    sentHeading: "O que foi aprovado para envio ao LLM externo",
+    payloadToggle: "Ver o payload exato aprovado para envio",
+    goToResult: "Ir para o resultado",
+  },
+
   /** Screen 4 -- "Resultado". */
   result: {
     heading: "Resultado",
@@ -320,13 +337,16 @@ const ptBR = {
     modeUnverifiedLabel: "Modo do provedor não pôde ser verificado.",
   },
 
+  /**
+   * T32.2 / #102: honest async states. The frontend has no backend progress
+   * telemetry, so each wait is ONE general message -- never a sequence of
+   * sub-stages that would imply observed progress it does not have.
+   */
   processingStages: {
-    readingFile: "Lendo o arquivo",
-    analyzingDocument: "Analisando o documento",
-    detectingSensitiveData: "Detectando dados sensíveis",
-    applyingDisclosurePolicy: "Aplicando política de divulgação",
-    consultingModel: "Consultando o modelo",
-    reconstructingAnswer: "Reconstruindo a resposta",
+    preparingReview: "Preparando a revisão…",
+    preparingDocumentReview: "Processando o documento e preparando a revisão…",
+    sendConfirmed: "Envio confirmado. A solicitação está sendo processada.",
+    leavingDoesNotCancel: "Sair desta etapa não cancela uma chamada externa já iniciada.",
     /**
      * Deliberately does NOT say "consultando cinco modelos" or anything
      * implying five provider calls happen -- the comparison never calls a
