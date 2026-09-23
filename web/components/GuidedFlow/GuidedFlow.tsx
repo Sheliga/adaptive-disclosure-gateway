@@ -409,6 +409,21 @@ function GuidedFlowShell() {
       historyIndexRef.current = targetIndex;
       currentNavigationIdRef.current = id;
       setUnrecoverableStep(null);
+      if (snapshot === stateRef.current) {
+        // The browser has landed back on the entry the flow is ALREADY
+        // showing (e.g. a same-id popstate, or one that raced an earlier
+        // correction): the tracked position above still needed updating,
+        // but dispatching RESTORE_NAVIGATION_STATE here would hand the
+        // reducer the very same FlowState object it already holds. React
+        // bails out of a setState that returns the previous state -- no
+        // re-render, so the history-sync effect (the only place that reads
+        // and clears suppressHistorySyncRef) would never run. Arming the
+        // flag here would then leave it stuck `true` for the NEXT, real
+        // transition, which would silently skip its own history write.
+        // Suppress may only be armed when a state change is guaranteed to
+        // follow and run that effect, so this case skips both.
+        return;
+      }
       suppressHistorySyncRef.current = true;
       dispatch({ type: "RESTORE_NAVIGATION_STATE", state: snapshot });
     }
