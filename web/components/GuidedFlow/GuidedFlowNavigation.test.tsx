@@ -1748,4 +1748,124 @@ describe("GuidedFlow check-before-send (#102)", () => {
     pendingExecute.resolve({ ok: true, data: executeResponse() });
     await screen.findByRole("heading", { name: copy.result.heading });
   });
+
+  /**
+   * Regression for a `suppressHistorySyncRef` staying armed past its own
+   * popstate.
+   *
+   * `handlePopState` arms the flag and dispatches `RESTORE_NAVIGATION_STATE`
+   * whenever the target entry is restorable -- including when the browser
+   * reports the entry the flow is ALREADY on. When that happens, the
+   * snapshot handed to the reducer is the exact same `FlowState` object as
+   * `stateRef.current` (both come from the same Map entry), so
+   * `reduceGuidedFlow`'s `RESTORE_NAVIGATION_STATE` branch returns that same
+   * reference. React bails out of a `setState` that returns the previous
+   * value: no re-render, so the history-sync effect -- the only place that
+   * reads and clears `suppressHistorySyncRef` -- never runs. The flag stays
+   * `true` and is silently consumed by the NEXT real transition instead,
+   * which then skips its own `pushState`.
+   *
+   * Drives exactly that: a same-id popstate on Result (already the current
+   * entry), then Technical Details, which is a real, distinct transition
+   * that must push its own entry.
+   */
+  it("does not swallow the Technical Details push after a same-entry popstate on Result", async () => {
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+    mockedExecuteDisclosure.mockResolvedValue({ ok: true, data: executeResponse() });
+    const tracker = trackRetainedFlowSnapshots();
+    let writes: ReturnType<typeof trackHistoryWrites> | null = null;
+    try {
+      render(<GuidedFlow />);
+
+      await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
+      await userEvent.selectOptions(await screen.findByLabelText(copy.newTest.exampleFieldLabel), "ex-1");
+      await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+      await screen.findByRole("heading", { name: copy.review.heading });
+      await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+      await screen.findByRole("heading", { name: copy.result.heading });
+      const resultId = window.history.state.flowNavigationId as string;
+
+      writes = trackHistoryWrites();
+
+      // A popstate reporting the entry the flow is ALREADY on: its snapshot
+      // (from the Map) is the very same FlowState object as the current
+      // state, not a different one being restored -- the React-bailout case
+      // this test pins.
+      dispatchPopState(resultId);
+
+      // A real, subsequent transition: it must push its OWN entry rather
+      // than silently reusing a suppress flag left armed by the popstate
+      // above.
+      await userEvent.click(screen.getByRole("button", { name: copy.buttons.viewTechnicalDetails }));
+      expect(
+        await screen.findByRole("heading", { name: copy.sectionHeadings.technicalDetails }),
+      ).toBeInTheDocument();
+
+      const pushes = writes.log.filter((entry) => entry.startsWith("push:"));
+      expect(pushes).toHaveLength(1);
+      const technicalDetailsId = window.history.state.flowNavigationId as string;
+      expect(pushes[0]).toBe(`push:${technicalDetailsId}`);
+      expect(technicalDetailsId).not.toBe(resultId);
+
+      // The Result snapshot itself was never touched by any of this.
+      expect(tracker.retained.has(resultId)).toBe(true);
+
+      // Browser Back from Technical Details lands back on Result.
+      dispatchPopState(resultId);
+      await screen.findByRole("heading", { name: copy.result.heading });
+
+      expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+      expect(mockedPreviewDisclosure).toHaveBeenCalledTimes(1);
+      expect(mockedCompareStrategies).not.toHaveBeenCalled();
+      expectNoComposeAndNoResend();
+      expect(screen.queryByRole("heading", { name: UNRECOVERABLE })).not.toBeInTheDocument();
+    } finally {
+      writes?.restore();
+      tracker.restore();
+    }
+  });
+
+  /**
+   * Companion to the regression above: a LEGITIMATE restore -- the target
+   * entry's snapshot is a genuinely different `FlowState` object from the
+   * current one (Result -> Back reaches the Approved Review, a different
+   * object recorded at that entry) -- must still arm and consume suppress
+   * exactly as before the fix: the restore itself writes nothing to
+   * history (no duplicate replace/push, no new entry), and nothing is
+   * re-executed.
+   */
+  it("still suppresses a legitimate popstate restore: no history write, no new entry, no replay", async () => {
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+    mockedExecuteDisclosure.mockResolvedValue({ ok: true, data: executeResponse() });
+    render(<GuidedFlow />);
+
+    await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
+    await userEvent.selectOptions(await screen.findByLabelText(copy.newTest.exampleFieldLabel), "ex-1");
+    await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+    await screen.findByRole("heading", { name: copy.review.heading });
+    const sendingReviewId = window.history.state.flowNavigationId as string;
+    await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+    await screen.findByRole("heading", { name: copy.result.heading });
+    const resultId = window.history.state.flowNavigationId as string;
+
+    const writes = trackHistoryWrites();
+    try {
+      // Result -> Back: a genuinely different snapshot (the read-only
+      // Approved Review) is restored.
+      dispatchPopState(sendingReviewId);
+      await expectApprovedReview();
+      expect(writes.log).toEqual([]);
+
+      // Forward returns to the already-registered Result -- again a
+      // different-object restore, again no write and no replay.
+      dispatchPopState(resultId);
+      await screen.findByRole("heading", { name: copy.result.heading });
+      expect(writes.log).toEqual([]);
+
+      expect(mockedPreviewDisclosure).toHaveBeenCalledTimes(1);
+      expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+    } finally {
+      writes.restore();
+    }
+  });
 });
