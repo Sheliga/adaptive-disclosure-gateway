@@ -123,6 +123,7 @@ function primaryStepForState(state: FlowState): PrimaryStep {
     case "previewing":
       return "prepare";
     case "review":
+    case "approvedReview":
       return "review";
     case "executing":
       return "send";

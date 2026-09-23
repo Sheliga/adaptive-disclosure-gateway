@@ -17,6 +17,14 @@
  * jumps straight from "compose" or "previewing" to "executing" -- see
  * `flow.test.ts`'s "never calls execute before the user confirms on
  * review" tests.
+ *
+ * T32.2 / #102 adds "approvedReview": the read-only, post-send view of the
+ * Review a successful execute came from (reached only by restoring a history
+ * snapshot -- see `approveReview` and GuidedFlow). It is a separate state
+ * kind rather than a flag on "review" so that "no resend from a sent Review"
+ * is structural: it carries no confirmation token, and its reducer accepts
+ * no screen-specific event at all -- CONFIRM_REVIEW from it is a no-op, so
+ * the "executing" screen stays reachable only from a live "review".
  */
 
 import type { DisclosureRequestBody } from "./contracts";
@@ -72,6 +80,16 @@ export type FlowState =
       executeError: DisplayError | null;
     }
   | { screen: "executing"; compose: ComposeState; preview: PreviewResponse; confirmationToken: string | null }
+  | {
+      /**
+       * The Review a send was confirmed from, frozen after execute succeeded.
+       * Deliberately has NO `confirmationToken` (nor `executeError`) field:
+       * the token that authorised the send never outlives it here.
+       */
+      screen: "approvedReview";
+      compose: ComposeState;
+      preview: PreviewResponse;
+    }
   | {
       screen: "result";
       compose: ComposeState;
@@ -157,6 +175,11 @@ export function flowReducer(state: FlowState, event: FlowEvent): FlowState {
       return comparingReducer(state, event);
     case "comparison":
       return comparisonReducer(state, event);
+    case "approvedReview":
+      // Read-only by construction: no screen-specific event applies, so no
+      // path leads from here to "executing", "previewing" or "compose"
+      // (only the global START_TEST/RESTART above, which start over).
+      return state;
     case "welcome":
       // No screen-specific event applies here besides the global ones
       // handled above -- unrecognized events are a no-op.
@@ -389,6 +412,18 @@ function comparisonReducer(
     default:
       return state;
   }
+}
+
+/**
+ * The approved (post-send) snapshot of a Review: same reviewed context and
+ * preview, and nothing else -- built field by field, never by spreading the
+ * review, so the confirmation token and any execute error can never leak
+ * into it.
+ */
+export function approveReview(
+  review: Extract<FlowState, { screen: "review" }>,
+): Extract<FlowState, { screen: "approvedReview" }> {
+  return { screen: "approvedReview", compose: review.compose, preview: review.preview };
 }
 
 /**
