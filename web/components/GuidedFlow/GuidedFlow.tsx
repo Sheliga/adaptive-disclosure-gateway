@@ -203,12 +203,33 @@ function GuidedFlowShell() {
   const stateRef = useRef(state);
   stateRef.current = state;
   const mainRef = useRef<HTMLElement>(null);
+  // Invariant: this Map holds exactly the snapshots of entries at or before
+  // historyIndexRef.current, plus any still-reachable forward entries. A
+  // push is a new branch: every entry after the current index is deleted
+  // (snapshot + non-restorable mark) before the new one is recorded -- see
+  // the push effect below. A non-restorable entry's own snapshot is deleted
+  // the moment it is marked (in handleConfirmReview), rather than waiting
+  // for a future push, since it can never be restored anyway.
   const historySnapshotsRef = useRef(new Map<string, FlowState>());
   const historyEntryIdsRef = useRef<string[]>([]);
   const historyIndexRef = useRef(0);
   const currentNavigationIdRef = useRef<string | null>(null);
   const nonRestorableNavigationIdsRef = useRef(new Set<string>());
-  const ignoreLockedPopStateRef = useRef(false);
+  // A corrective `history.go(...)` in flight (see handlePopState's executing
+  // lock): non-null from the moment it is requested until the popstate
+  // landing on `expectedId` (the sending Review's entry) arrives. While it is
+  // non-null the browser is NOT at currentNavigationIdRef, so:
+  //  - the history-sync effect must not push/replace (it would write
+  //    relative to the wrong entry -- e.g. a Result pushed while the browser
+  //    is physically on Compose discards the Review and forks history);
+  //  - any other popstate is corrected again toward `expectedId`, even if
+  //    execute has meanwhile settled, never restored on its own merits;
+  //  - only the popstate for `expectedId` is swallowed. Completing the
+  //    correction bumps `historySyncEpoch` so the sync effect re-runs once
+  //    and registers whatever state execute left behind (Result, or Review
+  //    with an error) against the now-correct browser position.
+  const historyCorrectionRef = useRef<{ expectedId: string } | null>(null);
+  const [historySyncEpoch, setHistorySyncEpoch] = useState(0);
   const suppressHistorySyncRef = useRef(false);
   const navigationIdRef = useRef(0);
   const [examples, setExamples] = useState<ExampleSummary[] | null>(null);
@@ -262,20 +283,54 @@ function GuidedFlowShell() {
     }
 
     function handlePopState(event: PopStateEvent) {
-      if (ignoreLockedPopStateRef.current) {
-        ignoreLockedPopStateRef.current = false;
-        return;
-      }
       const id =
         typeof event.state?.flowNavigationId === "string" ? event.state.flowNavigationId : null;
       const targetIndex = id === null ? -1 : historyEntryIdsRef.current.indexOf(id);
-      if (
-        stateRef.current.screen === "executing" &&
-        targetIndex >= 0 &&
-        targetIndex < historyIndexRef.current
-      ) {
-        ignoreLockedPopStateRef.current = true;
-        window.history.go(1);
+      const correction = historyCorrectionRef.current;
+      if (correction !== null && id === correction.expectedId) {
+        // This is the corrective popstate our own history.go(...) call
+        // (below) triggered to undo an out-of-band Back/Forward while a
+        // send was in flight -- the browser is back on the sending entry,
+        // which historyIndexRef/currentNavigationIdRef never stopped
+        // pointing at. Any state execute settled into meanwhile was held
+        // back by the sync effect; the epoch bump lets it sync now, once.
+        historyCorrectionRef.current = null;
+        setHistorySyncEpoch((epoch) => epoch + 1);
+        return;
+      }
+      if (correction !== null || stateRef.current.screen === "executing") {
+        // A send is in flight, or has just settled but the browser has not
+        // yet returned to the entry it was sent from. The only history
+        // entry that legitimately exists for it is the Review entry that
+        // triggered it -- still historyIndexRef.current, since entering
+        // "executing" never pushes a new entry and the sync effect holds
+        // back while a correction is pending. Any Back/Forward landing
+        // anywhere else -- a known earlier entry, or a target we don't even
+        // recognize -- must not be presented as the send having been
+        // cancelled: falling through to Compose/Review would offer a resend
+        // the user never asked for, and the generic unrecoverable screen
+        // would hide an in-flight request behind "start again". So the
+        // browser position is corrected back to the sending entry instead,
+        // from wherever THIS popstate says the browser now is (a second
+        // Back racing ahead of an earlier correction is re-corrected, not
+        // silently eaten or restored). The delta is exact when the target
+        // is a known entry; for an unrecognized one we cannot compute the
+        // real distance, so a single corrective step is the simplest safe
+        // fallback (the common case of one Back past the sending entry).
+        const expectedId = correction?.expectedId ?? currentNavigationIdRef.current;
+        if (expectedId === null) {
+          return;
+        }
+        const expectedIndex = historyEntryIdsRef.current.indexOf(expectedId);
+        if (targetIndex >= 0 && targetIndex === expectedIndex) {
+          // Already on the sending entry with no correction outstanding:
+          // nothing to undo, and restoring its Review snapshot here would
+          // put a Confirm button in front of an in-flight send.
+          return;
+        }
+        const delta = targetIndex >= 0 ? expectedIndex - targetIndex : 1;
+        historyCorrectionRef.current = { expectedId };
+        window.history.go(delta);
         return;
       }
       if (id === null || targetIndex < 0) {
@@ -288,6 +343,13 @@ function GuidedFlowShell() {
         !isStableNavigationState(snapshot) ||
         nonRestorableNavigationIdsRef.current.has(id)
       ) {
+        // The browser has genuinely moved to this entry even though it
+        // cannot be restored, so the tracked position must follow (see the
+        // Map's invariant comment above) -- otherwise a later push prunes
+        // nothing and a stale snapshot beyond this point (e.g. a completed
+        // Result carrying execute data) is retained indefinitely.
+        historyIndexRef.current = targetIndex;
+        currentNavigationIdRef.current = id;
         setUnrecoverableStep(urlStepFromSearch(window.location.search) ?? "intro");
         return;
       }
@@ -301,12 +363,23 @@ function GuidedFlowShell() {
     window.addEventListener("popstate", handlePopState);
     return () => {
       window.removeEventListener("popstate", handlePopState);
+      // A correction still in flight belongs to this listener's lifetime:
+      // its popstate can no longer reach us, so it must not survive into a
+      // remount (StrictMode/Fast Refresh keep refs) and hold the sync back.
+      historyCorrectionRef.current = null;
       window.history.replaceState(null, "", replaceStepInUrl("intro"));
     };
   }, [dispatch]);
 
   useEffect(() => {
     if (unrecoverableStep !== null || !isStableNavigationState(state)) {
+      return;
+    }
+    if (historyCorrectionRef.current !== null) {
+      // The browser is not at currentNavigationIdRef yet (see
+      // historyCorrectionRef): writing now would target the wrong entry.
+      // Completing the correction bumps historySyncEpoch, re-running this
+      // effect with whatever state is current by then.
       return;
     }
     if (suppressHistorySyncRef.current) {
@@ -322,6 +395,12 @@ function GuidedFlowShell() {
       window.history.replaceState({ flowNavigationId: currentId }, "", nextUrl);
       return;
     }
+    // This is the push side of the Map's invariant (see historySnapshotsRef's
+    // declaration): the Map holds exactly the snapshots of entries at or
+    // before the current index plus reachable forward entries; on push,
+    // every entry after the current index is deleted (snapshot +
+    // non-restorable mark) -- this is a new branch, so nothing after
+    // historyIndexRef.current is reachable anymore.
     const abandonedIds = historyEntryIdsRef.current.slice(historyIndexRef.current + 1);
     for (const abandonedId of abandonedIds) {
       historySnapshotsRef.current.delete(abandonedId);
@@ -334,7 +413,7 @@ function GuidedFlowShell() {
     historyEntryIdsRef.current.push(id);
     historyIndexRef.current = historyEntryIdsRef.current.length - 1;
     window.history.pushState({ flowNavigationId: id }, "", nextUrl);
-  }, [state, unrecoverableStep]);
+  }, [state, unrecoverableStep, historySyncEpoch]);
 
   useEffect(() => {
     let cancelled = false;
@@ -473,7 +552,13 @@ function GuidedFlowShell() {
       );
       if (result.ok) {
         if (reviewNavigationId !== null) {
+          // Marked non-restorable AND its snapshot dropped in the same
+          // step: a popstate back to this id will never use the snapshot
+          // again (see handlePopState's nonRestorable check), so keeping it
+          // around until a later push prunes it would retain a sent
+          // Review's data for longer than necessary.
           nonRestorableNavigationIdsRef.current.add(reviewNavigationId);
+          historySnapshotsRef.current.delete(reviewNavigationId);
         }
         dispatch({ type: "EXECUTE_SUCCEEDED", execute: result.data });
       } else {
@@ -490,7 +575,9 @@ function GuidedFlowShell() {
     const result = await executeDisclosure(body, copy);
     if (result.ok) {
       if (reviewNavigationId !== null) {
+        // See the comment on the upload-mode branch above -- same policy.
         nonRestorableNavigationIdsRef.current.add(reviewNavigationId);
+        historySnapshotsRef.current.delete(reviewNavigationId);
       }
       dispatch({ type: "EXECUTE_SUCCEEDED", execute: result.data });
     } else {
@@ -506,6 +593,16 @@ function GuidedFlowShell() {
    * `handleConfirmReview` already send.
    */
   async function handleRequestComparison(compose: ComposeState) {
+    if (historyCorrectionRef.current !== null) {
+      // Same guard as handleRestart/handleViewTechnicalDetails below: a
+      // corrective history.go(...) is still in flight (see
+      // historyCorrectionRef's declaration), so the browser is not at
+      // currentNavigationIdRef yet. Requesting a comparison now would both
+      // fire `/disclosure/compare` and let the history-sync effect's later
+      // push write "comparing"/"comparison" relative to the wrong entry,
+      // discarding Result before it is ever registered in history (#101).
+      return;
+    }
     dispatch({ type: "REQUEST_COMPARISON" });
     if (compose.mode === "upload") {
       dispatch({
@@ -534,6 +631,38 @@ function GuidedFlowShell() {
 
   function handleBack() {
     window.history.back();
+  }
+
+  /**
+   * Result-action lock during a pending correction (#101 follow-up): execute
+   * can settle to "result" BEFORE the corrective popstate that
+   * historyCorrectionRef is waiting for (see its declaration and the
+   * history-sync effect above, which already holds the write back for
+   * exactly this reason). Result renders and stays visible -- that is
+   * correct and must not change -- but the browser is not at
+   * currentNavigationIdRef yet, so any action from here that would dispatch
+   * a screen change must wait too, or the history-sync effect's next push
+   * would write relative to the wrong entry and Result would never be
+   * registered in history (e.g. Review -> Technical Details with no Result
+   * entry between them, so Back from Technical Details lands on the
+   * fail-closed Review instead of Result). Reading the ref here, inside an
+   * event handler rather than during render, needs no extra React state:
+   * historyCorrectionRef stays the single source of truth the popstate/sync
+   * effect logic already uses, unchanged.
+   */
+  function handleRestart() {
+    if (historyCorrectionRef.current !== null) {
+      return;
+    }
+    dispatch({ type: "RESTART" });
+  }
+
+  function handleViewTechnicalDetails() {
+    if (historyCorrectionRef.current !== null) {
+      // Same guard as handleRestart above.
+      return;
+    }
+    dispatch({ type: "OPEN_TECHNICAL_DETAILS" });
   }
 
   const showBackButton =
@@ -646,9 +775,9 @@ function GuidedFlowShell() {
             execute={state.execute}
             health={health}
             compareError={state.compareError}
-            onRestart={() => dispatch({ type: "RESTART" })}
+            onRestart={handleRestart}
             onCompareStrategies={() => handleRequestComparison(state.compose)}
-            onViewTechnicalDetails={() => dispatch({ type: "OPEN_TECHNICAL_DETAILS" })}
+            onViewTechnicalDetails={handleViewTechnicalDetails}
             demoVaultExplorerEnabled={demoVaultExplorerEnabled}
             vaultExplorerToken={state.preview.vault_explorer_token}
           />
