@@ -60,6 +60,7 @@ function deferred<T>() {
  */
 function trackRetainedFlowSnapshots() {
   const retained = new Set<string>();
+  const values = new Map<string, unknown>();
   const isSnapshotKey = (key: unknown): key is string =>
     typeof key === "string" && /^flow-\d+$/.test(key);
   const isFlowStateValue = (value: unknown): boolean =>
@@ -71,6 +72,7 @@ function trackRetainedFlowSnapshots() {
     .mockImplementation(function (this: Map<unknown, unknown>, key: unknown, value: unknown) {
       if (isSnapshotKey(key) && isFlowStateValue(value)) {
         retained.add(key);
+        originalSet.call(values, key, value);
       }
       return originalSet.call(this, key, value);
     });
@@ -84,6 +86,8 @@ function trackRetainedFlowSnapshots() {
     });
   return {
     retained,
+    /** The last FlowState snapshot written under `key` (whether or not still retained). */
+    lastValue: (key: string) => values.get(key),
     restore: () => {
       mapSet.mockRestore();
       mapDelete.mockRestore();
@@ -157,6 +161,26 @@ function expectNoComposeAndNoResend() {
     screen.queryByRole("button", { name: copy.newTest.continueToReview }),
   ).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: copy.review.confirmSend })).not.toBeInTheDocument();
+}
+
+/**
+ * T32.2 / #102: what "Result -> Back" must now show instead of the #105
+ * fail-closed screen -- the read-only Approved Review. Equivalent-or-stronger
+ * than the old assertions: no Confirm, no resend (no Compose, no Continue),
+ * no Change, and none of the fail-closed/unrecoverable fallback either.
+ */
+async function expectApprovedReview() {
+  expect(await screen.findByRole("heading", { name: copy.approvedReview.heading })).toBeInTheDocument();
+  expect(screen.getByText(copy.approvedReview.sentBadge)).toBeInTheDocument();
+  expect(screen.getByText(copy.approvedReview.readOnlyNotice)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: copy.review.confirmSend })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: copy.review.changeRequest })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: copy.newTest.continueToReview })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: copy.newTest.heading })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: copy.review.heading })).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("heading", { name: "Esta etapa não pode ser restaurada" }),
+  ).not.toBeInTheDocument();
 }
 
 function compareResponse(): CompareResponse {
@@ -421,8 +445,10 @@ describe("GuidedFlow navigation foundation", () => {
     await waitFor(() => expect(mockedCompareStrategies).toHaveBeenCalledTimes(1));
     await screen.findByRole("heading", { name: copy.result.heading });
 
+    // #102: Result -> Back is the read-only Approved Review (was the #105
+    // fail-closed screen), and Forward returns to Result without replay.
     window.history.back();
-    await screen.findByRole("heading", { name: "Esta etapa não pode ser restaurada" });
+    await expectApprovedReview();
     window.history.forward();
     await screen.findByRole("heading", { name: copy.result.heading });
 
@@ -449,7 +475,7 @@ describe("GuidedFlow navigation foundation", () => {
     expect(mockedPreviewDisclosure).toHaveBeenCalledTimes(1);
   });
 
-  it("does not restore executing after a pending send resolves or offer resend through browser Back", async () => {
+  it("shows the Approved Review, never executing or a resend, when Back follows a pending send that resolved", async () => {
     mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
     const pendingExecute = deferred<Awaited<ReturnType<typeof executeDisclosure>>>();
     mockedExecuteDisclosure.mockReturnValue(pendingExecute.promise);
@@ -467,9 +493,7 @@ describe("GuidedFlow navigation foundation", () => {
     await screen.findByRole("heading", { name: copy.result.heading });
     dispatchPopState(sendingReviewId);
 
-    expect(await screen.findByRole("heading", { name: "Esta etapa não pode ser restaurada" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: copy.review.confirmSend })).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: copy.newTest.heading })).not.toBeInTheDocument();
+    await expectApprovedReview();
     expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
     expect(mockedCompareStrategies).not.toHaveBeenCalled();
   });
@@ -547,7 +571,8 @@ describe("GuidedFlow navigation foundation", () => {
     await screen.findByRole("heading", { name: copy.result.heading });
     window.history.back();
 
-    expect(await screen.findByRole("heading", { name: "Esta etapa não pode ser restaurada" })).toBeInTheDocument();
+    await expectApprovedReview();
+    expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
   });
 
   it("prunes a discarded Review snapshot before creating a new forward branch", async () => {
@@ -583,7 +608,7 @@ describe("GuidedFlow navigation foundation", () => {
     tracker.restore();
   });
 
-  it("does not retain the Result snapshot after backing into an unrecoverable send and starting a new flow", async () => {
+  it("prunes the Approved Review and Result snapshots when a new branch starts from the historical Compose", async () => {
     mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
     mockedExecuteDisclosure.mockResolvedValue({ ok: true, data: executeResponse() });
     const tracker = trackRetainedFlowSnapshots();
@@ -599,23 +624,25 @@ describe("GuidedFlow navigation foundation", () => {
     expect(tracker.retained.has(resultId)).toBe(true);
 
     // Compose -> Review -> Confirm -> Result -> Back lands on the sent
-    // Review entry, which is unrecoverable.
+    // Review entry, now the read-only Approved Review (#102).
     window.history.back();
-    expect(
-      await screen.findByRole("heading", { name: "Esta etapa não pode ser restaurada" }),
-    ).toBeInTheDocument();
+    await expectApprovedReview();
+    const approvedId = window.history.state.flowNavigationId as string;
+    expect(tracker.retained.has(approvedId)).toBe(true);
 
-    // Start an entirely new flow from there -- the only affordance the
-    // unrecoverable screen offers.
-    await userEvent.click(screen.getByRole("button", { name: "Voltar à introdução" }));
-    await screen.findByRole("heading", { name: copy.howItWorks.title });
-    await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
-    await userEvent.selectOptions(await screen.findByLabelText(copy.newTest.exampleFieldLabel), "ex-1");
+    // Back once more to the historical Compose, then start a new branch
+    // from it: nothing external happens until the user continues, and the
+    // new Review is reached only through a fresh preview.
+    window.history.back();
+    await screen.findByRole("heading", { name: copy.newTest.heading });
+    expect(mockedPreviewDisclosure).toHaveBeenCalledTimes(1);
     await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
     await screen.findByRole("heading", { name: copy.review.heading });
+    expect(mockedPreviewDisclosure).toHaveBeenCalledTimes(2);
 
-    // The abandoned Result entry (which carries the execute payload) must
-    // not still be retained once a new branch has been pushed.
+    // Both abandoned entries -- the Approved Review and the Result carrying
+    // the execute payload -- must be gone once the new branch is pushed.
+    expect(tracker.retained.has(approvedId)).toBe(false);
     expect(tracker.retained.has(resultId)).toBe(false);
     expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
 
@@ -667,14 +694,12 @@ describe("GuidedFlow navigation foundation", () => {
     await screen.findByRole("heading", { name: copy.result.heading });
 
     // Back to the sent Review entry, again via a synthetic popstate (see
-    // the comment above `goSpy`): its snapshot was dropped the moment the
-    // send succeeded, so it must now read as unrecoverable.
+    // the comment above `goSpy`): its snapshot was converted to the
+    // read-only Approved Review the moment the send succeeded (#102).
     window.dispatchEvent(
       new PopStateEvent("popstate", { state: { flowNavigationId: sendingReviewId } }),
     );
-    expect(
-      await screen.findByRole("heading", { name: "Esta etapa não pode ser restaurada" }),
-    ).toBeInTheDocument();
+    await expectApprovedReview();
     expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
   });
 
@@ -754,13 +779,12 @@ describe("GuidedFlow navigation foundation", () => {
     await screen.findByRole("heading", { name: copy.result.heading });
 
     // Back to the sent Review entry, again via a synthetic popstate for the
-    // same determinism reason as above: its snapshot was dropped the moment
-    // the send succeeded, so it must now read as unrecoverable.
+    // same determinism reason as above: its snapshot was converted to the
+    // read-only Approved Review the moment the send succeeded (#102).
     window.dispatchEvent(
       new PopStateEvent("popstate", { state: { flowNavigationId: sendingReviewId } }),
     );
-    expect(await screen.findByRole("heading", { name: "Esta etapa não pode ser restaurada" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: copy.newTest.heading })).not.toBeInTheDocument();
+    await expectApprovedReview();
     expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
   });
 
@@ -778,8 +802,7 @@ describe("GuidedFlow navigation foundation", () => {
 
     window.history.back();
 
-    expect(await screen.findByRole("heading", { name: "Esta etapa não pode ser restaurada" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: copy.review.confirmSend })).not.toBeInTheDocument();
+    await expectApprovedReview();
     expect(mockedPreviewDisclosure).toHaveBeenCalledTimes(1);
     expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
     expect(mockedCompareStrategies).not.toHaveBeenCalled();
@@ -841,12 +864,10 @@ describe("GuidedFlow navigation foundation", () => {
       expect(screen.getByRole("heading", { name: copy.result.heading })).toBeInTheDocument();
       expect(goSpy).toHaveBeenCalledTimes(1);
 
-      // Back from Result lands on the sent Review entry: fail closed, never
-      // Compose and never a resend.
+      // Back from Result lands on the sent Review entry: the read-only
+      // Approved Review (#102), never Compose and never a resend.
       dispatchPopState(sendingReviewId);
-      expect(
-        await screen.findByRole("heading", { name: "Esta etapa não pode ser restaurada" }),
-      ).toBeInTheDocument();
+      await expectApprovedReview();
       expectNoComposeAndNoResend();
       expect(goSpy).toHaveBeenCalledTimes(1);
 
@@ -858,10 +879,14 @@ describe("GuidedFlow navigation foundation", () => {
       expect(mockedPreviewDisclosure).toHaveBeenCalledTimes(1);
       expect(writes.log.filter((entry) => entry.startsWith("push:"))).toEqual([`push:${resultId}`]);
 
-      // The sent Review's snapshot is gone; only the still-reachable
-      // Welcome, Compose and Result entries remain.
-      expect(tracker.retained.has(sendingReviewId)).toBe(false);
-      expect([...tracker.retained].sort()).toEqual([welcomeId, composeId, resultId].sort());
+      // The sent Review's snapshot was converted in place, not duplicated:
+      // exactly the four reachable entries remain, and the one at the sent
+      // Review's id is the token-free Approved Review.
+      expect([...tracker.retained].sort()).toEqual(
+        [welcomeId, composeId, sendingReviewId, resultId].sort(),
+      );
+      expect(tracker.lastValue(sendingReviewId)).toMatchObject({ screen: "approvedReview" });
+      expect(tracker.lastValue(sendingReviewId)).not.toHaveProperty("confirmationToken");
     } finally {
       writes?.restore();
       goSpy.mockRestore();
@@ -1066,11 +1091,16 @@ describe("GuidedFlow navigation foundation", () => {
       const resultId = window.history.state.flowNavigationId as string;
       expect(writes.log).toEqual(["back-popstate", "corrective-popstate", `push:${resultId}`]);
 
+      // #102: the upload path gets the same Approved Review through the
+      // same mechanism as paste/example, and it holds no token.
       dispatchPopState(sendingReviewId);
-      expect(
-        await screen.findByRole("heading", { name: "Esta etapa não pode ser restaurada" }),
-      ).toBeInTheDocument();
+      await expectApprovedReview();
       expectNoComposeAndNoResend();
+      expect(screen.getByText("synthetic-contract.pdf")).toBeInTheDocument();
+
+      // Forward returns to the registered Result without calling anything.
+      dispatchPopState(resultId);
+      await screen.findByRole("heading", { name: copy.result.heading });
       expect(mockedExecuteDocument).toHaveBeenCalledTimes(1);
       expect(mockedPreviewDocument).toHaveBeenCalledTimes(1);
     } finally {
@@ -1197,5 +1227,525 @@ describe("GuidedFlow navigation foundation", () => {
       writes?.restore();
       goSpy.mockRestore();
     }
+  });
+});
+
+/**
+ * T32.2 / #102 -- Review as a true check-before-send, built on the #101/#105
+ * history machinery (snapshots, pruning, corrections) rather than beside it.
+ */
+const UNRECOVERABLE = "Esta etapa não pode ser restaurada";
+
+async function startPasteReview(text: string, task: string) {
+  await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
+  const composeId = window.history.state.flowNavigationId as string;
+  await userEvent.click(screen.getByRole("radio", { name: copy.entryModes.pasteText }));
+  await userEvent.type(screen.getByLabelText(copy.newTest.pasteLabel), text);
+  await userEvent.type(screen.getByLabelText(copy.newTest.taskLabel), task);
+  await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+  await screen.findByRole("heading", { name: copy.review.heading });
+  const reviewId = window.history.state.flowNavigationId as string;
+  return { composeId, reviewId };
+}
+
+async function startUploadReview(file: File, task: string) {
+  await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
+  const composeId = window.history.state.flowNavigationId as string;
+  await userEvent.click(screen.getByRole("radio", { name: copy.entryModes.uploadFile }));
+  await userEvent.upload(screen.getByLabelText(copy.newTest.uploadFieldLabel), file);
+  await userEvent.type(screen.getByLabelText(copy.newTest.taskLabel), task);
+  await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+  await screen.findByRole("heading", { name: copy.review.heading });
+  const reviewId = window.history.state.flowNavigationId as string;
+  return { composeId, reviewId };
+}
+
+function syntheticPdf(name = "contrato-sintetico.pdf") {
+  return new File([new Uint8Array([0x25, 0x50, 0x44, 0x46])], name, { type: "application/pdf" });
+}
+
+function mockTwoAnalysisModes() {
+  mockedGetDocumentTypes.mockResolvedValue({
+    ok: true,
+    data: {
+      contract_version: "t20-application-api-v1",
+      document_types: [
+        {
+          document_type: "contract",
+          analysis_modes: ["contract_summary", "financial_audit"],
+          default_analysis_mode: "contract_summary",
+        },
+      ],
+    },
+  });
+}
+
+function mockTwoKnownExamples() {
+  mockedGetExamples.mockResolvedValue({
+    ok: true,
+    data: {
+      contract_version: "t20-application-api-v1",
+      examples: [
+        {
+          example_id: "hr_team_summary_001",
+          title: "hr_team_summary_001",
+          domain: "hr",
+          purpose: "team_summary",
+          task: "Resuma a equipe.",
+          character_count: 400,
+        },
+        {
+          example_id: "hr_salary_analysis_001",
+          title: "hr_salary_analysis_001",
+          domain: "hr",
+          purpose: "salary_analysis",
+          task: "Analise os salários.",
+          character_count: 400,
+        },
+      ],
+    },
+  });
+}
+
+/** A stale Review reached by Forward must be inert: fail closed, no Confirm, nothing called. */
+async function expectStaleReviewIsInert(reviewId: string) {
+  window.history.forward();
+  expect(await screen.findByRole("heading", { name: UNRECOVERABLE })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: copy.review.confirmSend })).not.toBeInTheDocument();
+  // Even an explicit popstate naming the old Review's id cannot resurrect it.
+  dispatchPopState(reviewId);
+  expect(screen.queryByRole("button", { name: copy.review.confirmSend })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: copy.review.heading })).not.toBeInTheDocument();
+}
+
+describe("GuidedFlow check-before-send (#102)", () => {
+  it("re-presents an example's human label and the task on Review", async () => {
+    mockTwoKnownExamples();
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+    render(<GuidedFlow />);
+
+    await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
+    await userEvent.selectOptions(
+      await screen.findByLabelText(copy.newTest.exampleFieldLabel),
+      "hr_salary_analysis_001",
+    );
+    await userEvent.type(screen.getByLabelText(copy.newTest.taskLabel), "Compare as faixas");
+    await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+    await screen.findByRole("heading", { name: copy.review.heading });
+
+    const context = screen.getByRole("region", { name: copy.review.contextHeading });
+    expect(context).toHaveTextContent(copy.review.sourceExample);
+    expect(context).toHaveTextContent(copy.examplePurposes.salary_analysis);
+    expect(context).toHaveTextContent("Compare as faixas");
+  });
+
+  it("Change returns to the retained Compose entry through history with every upload field and the same File", async () => {
+    mockedPreviewDocument.mockResolvedValue({
+      ok: true,
+      data: { ...previewResponse(), confirmation_token: "first-token" },
+    });
+    render(<GuidedFlow />);
+    const file = syntheticPdf();
+    const { composeId, reviewId } = await startUploadReview(file, "Quais são os prazos?");
+
+    const context = screen.getByRole("region", { name: copy.review.contextHeading });
+    expect(context).toHaveTextContent("contrato-sintetico.pdf");
+    expect(context).toHaveTextContent(copy.newTest.documentTypeLabels.contract);
+    expect(context).toHaveTextContent(copy.newTest.analysisModeLabels.contract_summary);
+    expect(context).toHaveTextContent("Quais são os prazos?");
+
+    await userEvent.click(screen.getByRole("button", { name: copy.review.changeRequest }));
+    await screen.findByRole("heading", { name: copy.newTest.heading });
+    // The SAME history entry (not a new one pushed by a reducer transition).
+    expect(window.history.state.flowNavigationId).toBe(composeId);
+    expect(screen.getByRole("radio", { name: copy.entryModes.uploadFile })).toBeChecked();
+    expect(screen.getByText("contrato-sintetico.pdf")).toBeInTheDocument();
+    expect(screen.getByLabelText(copy.newTest.taskLabel)).toHaveValue("Quais são os prazos?");
+    expect(screen.getByLabelText(copy.newTest.documentTypeLabel)).toHaveValue("contract");
+
+    // Nothing was edited, so Forward still reaches the same, still-valid Review.
+    window.history.forward();
+    await screen.findByRole("heading", { name: copy.review.heading });
+    expect(window.history.state.flowNavigationId).toBe(reviewId);
+    expect(mockedPreviewDocument).toHaveBeenCalledTimes(1);
+    expect(mockedExecuteDocument).not.toHaveBeenCalled();
+
+    // And a new preview from the restored Compose re-uploads the very same in-memory File.
+    window.history.back();
+    await screen.findByRole("heading", { name: copy.newTest.heading });
+    await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+    await screen.findByRole("heading", { name: copy.review.heading });
+    expect(mockedPreviewDocument).toHaveBeenCalledTimes(2);
+    const firstFile = mockedPreviewDocument.mock.calls[0][0].get("file") as File;
+    const secondFile = mockedPreviewDocument.mock.calls[1][0].get("file") as File;
+    expect(secondFile.name).toBe(firstFile.name);
+    expect(secondFile.size).toBe(firstFile.size);
+    expect(mockedExecuteDocument).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "the task",
+      async () => {
+        await userEvent.clear(screen.getByLabelText(copy.newTest.taskLabel));
+        await userEvent.type(screen.getByLabelText(copy.newTest.taskLabel), "Liste apenas os prazos");
+      },
+      { text: "Contrato com valor R$ 125.000,00", task: "Liste apenas os prazos" },
+    ],
+    [
+      "the pasted text",
+      async () => {
+        await userEvent.type(screen.getByLabelText(copy.newTest.pasteLabel), " e multa de 10%");
+      },
+      { text: "Contrato com valor R$ 125.000,00 e multa de 10%", task: "Resuma os riscos" },
+    ],
+  ])(
+    "editing %s after Review invalidates the old Review; Forward cannot confirm it and a fresh preview is required",
+    async (_label, edit, expectedBody) => {
+      mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+      mockedExecuteDisclosure.mockResolvedValue({ ok: true, data: executeResponse() });
+      render(<GuidedFlow />);
+      const { reviewId } = await startPasteReview("Contrato com valor R$ 125.000,00", "Resuma os riscos");
+
+      await userEvent.click(screen.getByRole("button", { name: copy.review.changeRequest }));
+      await screen.findByRole("heading", { name: copy.newTest.heading });
+      await edit();
+
+      await expectStaleReviewIsInert(reviewId);
+      expect(mockedPreviewDisclosure).toHaveBeenCalledTimes(1);
+      expect(mockedExecuteDisclosure).not.toHaveBeenCalled();
+
+      // Back to the edited Compose (edits preserved), then the only way on
+      // is a new preview -- called exactly once -- and a new Confirm.
+      window.history.back();
+      await screen.findByRole("heading", { name: copy.newTest.heading });
+      expect(mockedPreviewDisclosure).toHaveBeenCalledTimes(1);
+      await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+      await screen.findByRole("heading", { name: copy.review.heading });
+      expect(mockedPreviewDisclosure).toHaveBeenCalledTimes(2);
+      expect(mockedPreviewDisclosure.mock.calls[1][0]).toEqual(expectedBody);
+      expect(mockedExecuteDisclosure).not.toHaveBeenCalled();
+
+      await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+      await screen.findByRole("heading", { name: copy.result.heading });
+      expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+      expect(mockedExecuteDisclosure.mock.calls[0][0]).toEqual(expectedBody);
+    },
+  );
+
+  it("switching the entry mode after Review invalidates the old Review", async () => {
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+    render(<GuidedFlow />);
+    const { reviewId } = await startPasteReview("Contrato com valor R$ 125.000,00", "Resuma os riscos");
+
+    await userEvent.click(screen.getByRole("button", { name: copy.review.changeRequest }));
+    await screen.findByRole("heading", { name: copy.newTest.heading });
+    await userEvent.click(screen.getByRole("radio", { name: copy.entryModes.useExample }));
+
+    await expectStaleReviewIsInert(reviewId);
+    expect(mockedPreviewDisclosure).toHaveBeenCalledTimes(1);
+    expect(mockedExecuteDisclosure).not.toHaveBeenCalled();
+  });
+
+  it("choosing a different example after Review invalidates the old Review", async () => {
+    mockTwoKnownExamples();
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+    render(<GuidedFlow />);
+    await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
+    await userEvent.selectOptions(
+      await screen.findByLabelText(copy.newTest.exampleFieldLabel),
+      "hr_team_summary_001",
+    );
+    await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+    await screen.findByRole("heading", { name: copy.review.heading });
+    const reviewId = window.history.state.flowNavigationId as string;
+
+    window.history.back();
+    await screen.findByRole("heading", { name: copy.newTest.heading });
+    await userEvent.selectOptions(
+      screen.getByLabelText(copy.newTest.exampleFieldLabel),
+      "hr_salary_analysis_001",
+    );
+
+    await expectStaleReviewIsInert(reviewId);
+    expect(mockedPreviewDisclosure).toHaveBeenCalledTimes(1);
+    expect(mockedExecuteDisclosure).not.toHaveBeenCalled();
+  });
+
+  it("changing the upload's analysis type after Review invalidates the old Review and its token; only the fresh token is ever sent", async () => {
+    mockTwoAnalysisModes();
+    mockedPreviewDocument
+      .mockResolvedValueOnce({ ok: true, data: { ...previewResponse(), confirmation_token: "first-token" } })
+      .mockResolvedValueOnce({ ok: true, data: { ...previewResponse(), confirmation_token: "second-token" } });
+    mockedExecuteDocument.mockResolvedValue({ ok: true, data: executeResponse() });
+    render(<GuidedFlow />);
+    const { reviewId } = await startUploadReview(syntheticPdf(), "Quais são os prazos?");
+
+    await userEvent.click(screen.getByRole("button", { name: copy.review.changeRequest }));
+    await screen.findByRole("heading", { name: copy.newTest.heading });
+    await userEvent.selectOptions(screen.getByLabelText(copy.newTest.analysisModeLabel), "financial_audit");
+
+    await expectStaleReviewIsInert(reviewId);
+    expect(mockedExecuteDocument).not.toHaveBeenCalled();
+
+    window.history.back();
+    await screen.findByRole("heading", { name: copy.newTest.heading });
+    await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+    await screen.findByRole("heading", { name: copy.review.heading });
+    expect(mockedPreviewDocument).toHaveBeenCalledTimes(2);
+    expect(mockedPreviewDocument.mock.calls[1][0].get("analysis_mode")).toBe("financial_audit");
+    expect(mockedExecuteDocument).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+    await screen.findByRole("heading", { name: copy.result.heading });
+    expect(mockedExecuteDocument).toHaveBeenCalledTimes(1);
+    expect(mockedExecuteDocument.mock.calls[0][0].get("confirmation_token")).toBe("second-token");
+    expect(mockedExecuteDocument.mock.calls[0][0].get("analysis_mode")).toBe("financial_audit");
+  });
+
+  it("removing the uploaded file after Review invalidates the old Review", async () => {
+    mockedPreviewDocument.mockResolvedValue({
+      ok: true,
+      data: { ...previewResponse(), confirmation_token: "first-token" },
+    });
+    render(<GuidedFlow />);
+    const { reviewId } = await startUploadReview(syntheticPdf(), "Quais são os prazos?");
+
+    window.history.back();
+    await screen.findByRole("heading", { name: copy.newTest.heading });
+    await userEvent.click(screen.getByRole("button", { name: copy.newTest.removeFile }));
+
+    await expectStaleReviewIsInert(reviewId);
+    expect(mockedExecuteDocument).not.toHaveBeenCalled();
+  });
+
+  it("shows the Approved Review with its context after Result -> Back, and returns to Result without replay", async () => {
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+    mockedExecuteDisclosure.mockResolvedValue({ ok: true, data: executeResponse() });
+    render(<GuidedFlow />);
+    await startPasteReview("Contrato com valor R$ 125.000,00", "Resuma os riscos");
+    await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+    await screen.findByRole("heading", { name: copy.result.heading });
+    const resultId = window.history.state.flowNavigationId as string;
+
+    window.history.back();
+    await expectApprovedReview();
+    const context = screen.getByRole("region", { name: copy.review.contextHeading });
+    expect(context).toHaveTextContent(copy.review.sourcePaste);
+    expect(context).toHaveTextContent("Resuma os riscos");
+    expect(screen.getByText(copy.approvedReview.sentHeading)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: copy.approvedReview.goToResult }));
+    await screen.findByRole("heading", { name: copy.result.heading });
+    expect(window.history.state.flowNavigationId).toBe(resultId);
+
+    window.history.back();
+    await expectApprovedReview();
+    window.history.forward();
+    await screen.findByRole("heading", { name: copy.result.heading });
+
+    expect(mockedPreviewDisclosure).toHaveBeenCalledTimes(1);
+    expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+    expect(mockedCompareStrategies).not.toHaveBeenCalled();
+  });
+
+  it("keeps the confirmation token out of the Approved Review snapshot, history state, URL and storage", async () => {
+    const token = "opaque.confirmation.token-XYZ";
+    mockedPreviewDocument.mockResolvedValue({ ok: true, data: { ...previewResponse(), confirmation_token: token } });
+    mockedExecuteDocument.mockResolvedValue({ ok: true, data: executeResponse() });
+    const tracker = trackRetainedFlowSnapshots();
+    try {
+      render(<GuidedFlow />);
+      const { reviewId } = await startUploadReview(syntheticPdf("segredo-cliente.pdf"), "Tarefa sigilosa");
+      await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+      await screen.findByRole("heading", { name: copy.result.heading });
+
+      const approved = tracker.lastValue(reviewId) as Record<string, unknown>;
+      expect(approved.screen).toBe("approvedReview");
+      expect(approved).not.toHaveProperty("confirmationToken");
+      expect(JSON.stringify(approved)).not.toContain(token);
+
+      window.history.back();
+      await expectApprovedReview();
+      expect(document.body.textContent).not.toContain(token);
+      for (const channel of [JSON.stringify(window.history.state), window.location.href]) {
+        expect(channel).not.toContain(token);
+        expect(channel).not.toContain("segredo-cliente");
+        expect(channel).not.toContain("Tarefa sigilosa");
+      }
+      expect(window.localStorage.length).toBe(0);
+      expect(window.sessionStorage.length).toBe(0);
+      expect(mockedExecuteDocument).toHaveBeenCalledTimes(1);
+    } finally {
+      tracker.restore();
+    }
+  });
+
+  it("from the Approved Review, Back to the historical Compose calls nothing; a new send needs preview, Review and Confirm", async () => {
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+    mockedExecuteDisclosure.mockResolvedValue({ ok: true, data: executeResponse() });
+    render(<GuidedFlow />);
+    await startPasteReview("Contrato com valor R$ 125.000,00", "Resuma os riscos");
+    await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+    await screen.findByRole("heading", { name: copy.result.heading });
+
+    window.history.back();
+    await expectApprovedReview();
+    await userEvent.click(screen.getByRole("button", { name: "Voltar" }));
+    await screen.findByRole("heading", { name: copy.newTest.heading });
+    expect(screen.getByLabelText(copy.newTest.taskLabel)).toHaveValue("Resuma os riscos");
+    expect(mockedPreviewDisclosure).toHaveBeenCalledTimes(1);
+    expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+
+    await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+    await screen.findByRole("heading", { name: copy.review.heading });
+    expect(mockedPreviewDisclosure).toHaveBeenCalledTimes(2);
+    expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+    await screen.findByRole("heading", { name: copy.result.heading });
+    expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(2);
+  });
+
+  it("a provider failure keeps the live Review with its context; Back/Forward never re-executes and a retry needs an explicit Confirm", async () => {
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+    mockedExecuteDisclosure
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 502,
+        error: { message: copy.errors.upstreamUnreachable, kind: null, fields: null },
+      })
+      .mockResolvedValueOnce({ ok: true, data: executeResponse() });
+    render(<GuidedFlow />);
+    await startPasteReview("Contrato com valor R$ 125.000,00", "Resuma os riscos");
+    await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(copy.errors.upstreamUnreachable);
+    expect(screen.getByText(copy.review.executeErrorNoAutoRetry)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: copy.review.heading })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: copy.review.contextHeading })).toHaveTextContent("Resuma os riscos");
+    // A failed execute is NOT an approved send.
+    expect(screen.queryByRole("heading", { name: copy.approvedReview.heading })).not.toBeInTheDocument();
+    expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+
+    window.history.back();
+    await screen.findByRole("heading", { name: copy.newTest.heading });
+    window.history.forward();
+    await screen.findByRole("heading", { name: copy.review.heading });
+    expect(screen.queryByRole("heading", { name: copy.approvedReview.heading })).not.toBeInTheDocument();
+    expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+
+    await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+    await screen.findByRole("heading", { name: copy.result.heading });
+    expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(2);
+    expect(mockedPreviewDisclosure).toHaveBeenCalledTimes(1);
+  });
+
+  it("an expired confirmation returns to Compose with fields kept, and the expired Review can never be confirmed again", async () => {
+    mockedPreviewDocument
+      .mockResolvedValueOnce({ ok: true, data: { ...previewResponse(), confirmation_token: "expired-token" } })
+      .mockResolvedValueOnce({ ok: true, data: { ...previewResponse(), confirmation_token: "fresh-token" } });
+    mockedExecuteDocument
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        error: { message: copy.errors.previewExpired, kind: "PreviewConfirmationError", fields: null },
+      })
+      .mockResolvedValueOnce({ ok: true, data: executeResponse() });
+    render(<GuidedFlow />);
+    await startUploadReview(syntheticPdf(), "Quais são os prazos?");
+    await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+
+    await screen.findByRole("heading", { name: copy.newTest.heading });
+    expect(screen.getByRole("alert")).toHaveTextContent(copy.errors.previewExpired);
+    expect(screen.getByText("contrato-sintetico.pdf")).toBeInTheDocument();
+    expect(screen.getByLabelText(copy.newTest.taskLabel)).toHaveValue("Quais são os prazos?");
+    expect(mockedExecuteDocument).toHaveBeenCalledTimes(1);
+
+    // Browser Back lands on the expired Review's entry: fail closed.
+    window.history.back();
+    expect(await screen.findByRole("heading", { name: UNRECOVERABLE })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: copy.review.confirmSend })).not.toBeInTheDocument();
+    expect(mockedExecuteDocument).toHaveBeenCalledTimes(1);
+
+    window.history.forward();
+    await screen.findByRole("heading", { name: copy.newTest.heading });
+    await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+    await screen.findByRole("heading", { name: copy.review.heading });
+    expect(mockedPreviewDocument).toHaveBeenCalledTimes(2);
+    await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+    await screen.findByRole("heading", { name: copy.result.heading });
+    expect(mockedExecuteDocument).toHaveBeenCalledTimes(2);
+    expect(mockedExecuteDocument.mock.calls[1][0].get("confirmation_token")).toBe("fresh-token");
+  });
+
+  it("a preview failure returns to Compose with every field preserved", async () => {
+    mockedPreviewDisclosure.mockResolvedValue({
+      ok: false,
+      status: 422,
+      error: { message: copy.errors.validationFailed, kind: null, fields: null },
+    });
+    render(<GuidedFlow />);
+    await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
+    await userEvent.click(screen.getByRole("radio", { name: copy.entryModes.pasteText }));
+    await userEvent.type(screen.getByLabelText(copy.newTest.pasteLabel), "Texto a revisar");
+    await userEvent.type(screen.getByLabelText(copy.newTest.taskLabel), "Resuma");
+    await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(copy.errors.validationFailed);
+    expect(screen.getByLabelText(copy.newTest.pasteLabel)).toHaveValue("Texto a revisar");
+    expect(screen.getByLabelText(copy.newTest.taskLabel)).toHaveValue("Resuma");
+    expect(mockedExecuteDisclosure).not.toHaveBeenCalled();
+  });
+
+  it("preview processing shows one honest message, not a fabricated sequence of sub-stages", async () => {
+    const pendingPreview = deferred<Awaited<ReturnType<typeof previewDisclosure>>>();
+    mockedPreviewDisclosure.mockReturnValue(pendingPreview.promise);
+    render(<GuidedFlow />);
+    await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
+    await userEvent.selectOptions(await screen.findByLabelText(copy.newTest.exampleFieldLabel), "ex-1");
+    await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+
+    const status = await screen.findByRole("status");
+    expect(status.textContent?.trim()).toBe(copy.processingStages.preparingReview);
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/Detectando dados sensíveis|Aplicando política/);
+
+    pendingPreview.resolve({ ok: true, data: previewResponse() });
+    await screen.findByRole("heading", { name: copy.review.heading });
+  });
+
+  it("document preview processing names the document once, with no sub-stage list", async () => {
+    const pendingPreview = deferred<Awaited<ReturnType<typeof previewDocument>>>();
+    mockedPreviewDocument.mockReturnValue(pendingPreview.promise);
+    render(<GuidedFlow />);
+    await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
+    await userEvent.click(screen.getByRole("radio", { name: copy.entryModes.uploadFile }));
+    await userEvent.upload(screen.getByLabelText(copy.newTest.uploadFieldLabel), syntheticPdf());
+    await userEvent.type(screen.getByLabelText(copy.newTest.taskLabel), "Resuma");
+    await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+
+    const status = await screen.findByRole("status");
+    expect(status.textContent?.trim()).toBe(copy.processingStages.preparingDocumentReview);
+    expect(document.body.textContent).not.toMatch(/Lendo o arquivo|Analisando o documento/);
+    pendingPreview.resolve({ ok: true, data: { ...previewResponse(), confirmation_token: "t" } });
+    await screen.findByRole("heading", { name: copy.review.heading });
+  });
+
+  it("execute processing says the send was confirmed and that leaving does not cancel it -- no fake progress", async () => {
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+    const pendingExecute = deferred<Awaited<ReturnType<typeof executeDisclosure>>>();
+    mockedExecuteDisclosure.mockReturnValue(pendingExecute.promise);
+    render(<GuidedFlow />);
+    await reachPendingExampleSend();
+
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent(copy.processingStages.sendConfirmed);
+    expect(status).toHaveTextContent(copy.processingStages.leavingDoesNotCancel);
+    expect(status.querySelectorAll("p")).toHaveLength(2);
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/Consultando o modelo|Reconstruindo a resposta/);
+
+    pendingExecute.resolve({ ok: true, data: executeResponse() });
+    await screen.findByRole("heading", { name: copy.result.heading });
   });
 });
