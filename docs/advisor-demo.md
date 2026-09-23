@@ -149,6 +149,17 @@ B0–B4 to execute a test.
 
 This is the screen the whole product exists for. Level-1 content reads, in this order:
 
+0. T32.3 / Issue #103 -- when the deployment enables request-scoped inspection
+   (`ADG_ENABLE_DEMO_INSPECTION`, see "Demonstration surfaces" below), right after
+   `O que você pediu` comes **`O que o gateway fez`**: a before/after visible by default,
+   read in the order **Original → Transformação local no gateway → Enviado ao modelo externo**,
+   with each transformed passage highlighted and labeled in plain language (category on the
+   original side, action on the sent side; a removed passage shows `[trecho removido]`). The
+   copy states that the transformed side is exactly what crosses the external boundary. It is
+   built only from `preview.inspection.segments` (never a string diff) and shows no B0–B4 code,
+   strategy, policy version, technical reason or id. If inspection is unavailable it says so
+   plainly (blocked: nothing was released for sending; alignment failure: the view could not be
+   produced safely) and never fabricates a before/after;
 1. what was detected (`O que foi detectado`);
 2. what stays local (`O que permanece local`), each item's outcome label already stating what
    happened to it (removed / pseudonymized / generalized / preserved) and why;
@@ -161,8 +172,10 @@ a blocked decision renders no confirm action at all.
 
 Below that, two further, more advanced disclosures sit at Level 2 and Level 3 respectively:
 
-- **Level 2** — `Entender o que o gateway mudou e por quê`: the T27 transformation inspector
-  (original vs. disclosed, segment by segment).
+- **Level 2** — `Ver a explicação detalhada das transformações`: the T27 transformation
+  inspector (original vs. disclosed, segment by segment, with per-segment action, category,
+  treatment, strategy and technical reason) -- the detailed, secondary layer under the
+  primary before/after above.
 - **Level 3** — `Detalhes técnicos e ferramentas de pesquisa`, collapsed by default: the T28
   export/restore panel and the T29 Vault Explorer, framed as research/technical tooling.
 
@@ -174,7 +187,15 @@ outcome code -- see `lib/outcomes.ts`.
 The primary output is the **final locally reconstructed answer** -- the single most visually
 prominent element on this screen.
 
-Directly under it, a short, data-derived protections summary (e.g. "N itens protegidos; M
+Directly under it (T32.3 / Issue #103, when inspection is enabled), a short recap --
+`O que aconteceu antes do envio` -- says which transformation the answer came after: how many
+passages the gateway handled (counted from the retained preview's `inspection.segments`, no new
+request), with the full before/after one click away. Its wording follows
+`ExecuteResponse.provider`: when the provider was not called (e.g. blocked) it says nothing was
+sent; when the call failed it says the gateway tried and no answer was produced. The read-only
+Approved Review (Result → Back) shows the same before/after under "approved for sending" wording.
+
+Then a short, data-derived protections summary (e.g. "N itens protegidos; M
 pseudônimos reconstruídos localmente") is computed only from fields already on `ExecuteResponse`
 (`occurrence_count`, `reconstruction.attempted`), never invented.
 
@@ -529,12 +550,19 @@ anyone operating it:
   build ARG, see `web/Dockerfile`/`web/next.config.ts`) and the path nginx
   routes to it -- all three must agree, since Next.js's `basePath` cannot be
   changed without rebuilding the image.
-- **The demo transparency/vault-explorer flags stay off.** This URL is
-  public and unauthenticated, exactly the scenario `docs/advisor-demo.md`'s
-  "Why this defaults off" section above warns about: `compose.prod.yaml`
-  never sets `ADG_ENABLE_DEMO_TRANSPARENCY` or
-  `ADG_ENABLE_DEMO_VAULT_EXPLORER` to `1`, and this deployment does not
-  enable them either.
+- **Inspection on; export/restore and the Vault Explorer off (T32.3 /
+  Issue #103).** This URL is public and unauthenticated, so its posture is
+  fixed in `compose.prod.yaml` itself, not left to the host's `.env`:
+  `ADG_ENABLE_DEMO_INSPECTION: "1"` on both services (the request-scoped
+  before/after), while `ADG_ENABLE_DEMO_TRANSPARENCY`,
+  `ADG_ENABLE_DEMO_VAULT_EXPLORER` and the restore-handle secret are not
+  declared on either service at all -- compose passes only declared
+  variables, so no `.env` can switch them on without editing that reviewed
+  file. The web export/restore/vault routes therefore answer a fixed 404
+  without calling the api, and the api itself answers 503 on export/restore
+  and 404 on the vault explorer. See "Demonstration surfaces" below for why.
+  Pinned by `tests/test_prod_deployment_config.py` and
+  `tests/test_demo_capability_matrix.py`.
 
 **Continuous deployment.** The rollout from a merged commit to this URL is
 fully automatic, with no manual panel step: a push to `master` runs
@@ -749,20 +777,51 @@ routes themselves refuse.
 
 ## Demonstration surfaces (T27 / Issue #69, T28 / Issue #70, T29 / Issue #72)
 
-Two additive, opt-in surfaces for advisor evaluation, both gated by the same
-`ADG_ENABLE_DEMO_TRANSPARENCY` flag (see `.env.example`) and both **off by
-default**. They are demonstration/pedagogical features, not part of the
-core gateway mechanism, and a final product would remove or significantly
-restrict them (see "Demo vs final product" below).
+Three additive, opt-in demo capabilities, each gated server-side by **its own**
+flag and each **off by default** (T32.3 / Issue #103 split the first one out;
+until then inspection and export/restore shared `ADG_ENABLE_DEMO_TRANSPARENCY`):
+
+| Capability | Flag | What it is |
+| --- | --- | --- |
+| Inspection (T27) | `ADG_ENABLE_DEMO_INSPECTION` (api + web) | A request-scoped explanation of content the user submitted themselves: the preview response's `inspection` segments, shown as the Review before/after. |
+| Transparency (T28) | `ADG_ENABLE_DEMO_TRANSPARENCY` (web only) | Export/restore -- a separate **re-identification** capability: any text plus a handle is turned back into originals. |
+| Vault Explorer (T29) | `ADG_ENABLE_DEMO_VAULT_EXPLORER` (api + web) | A separate **vault inspection** capability: stored originals behind one preview's pseudonyms. |
+
+None implies another, in either direction; all three use the same exact
+parsing rule (enabled iff the value, stripped, is exactly `"1"`; `true`,
+`yes`, `0`, blank and unset are all disabled). Every server-side gate is
+enforced where the capability is served -- hiding a button in the UI never
+replaces a route gate. The UI renders each surface only when
+`GET /api/demo/features` reports it; a failed or invalid features response
+turns every optional surface off.
+
+**Security reason for the separation.** Inspection returns, in the caller's
+own preview response, only the original/disclosed segments of the content
+that same caller just submitted in that same request -- it discloses nothing
+the caller did not already send, so it is safe on the public advisor URL.
+Restore and the Vault Explorer reach beyond the request: a reachable restore
+endpoint turns a guessed or observed pseudonym back into its original, and
+the Vault Explorer reveals stored originals -- both are re-identification
+oracles for whoever can reach the web origin. Coupling them to inspection
+meant the public demo could not explain a transformation without also
+opening re-identification; separate flags let `compose.prod.yaml` enable
+the first and keep the other two closed.
+
+They are demonstration/pedagogical features, not part of the core gateway
+mechanism, and a final product would remove or significantly restrict them
+(see "Demo vs final product" below).
 
 ### T27 — Transformation inspector
 
-When enabled, `POST /documents/preview`'s response carries a populated
-`inspection` field (`null` when the flag is off, on every response, always)
-and the web Review screen renders a collapsed-by-default panel showing the
-original text and the disclosed `external_payload` side by side, segment by
-segment, each segment labeled with its action (`preserve`, `remove`,
-`generalize`, `pseudonymize`) and category where available.
+When `ADG_ENABLE_DEMO_INSPECTION` is enabled, `POST /disclosure/preview`'s and
+`POST /documents/preview`'s responses carry a populated `inspection` field
+(`null` when the flag is off, on every response, always). The web Review
+screen shows it first as the primary before/after (`O que o gateway fez`,
+see "3. Revisão antes do envio" above) and, one level deeper, as the
+collapsed-by-default detailed inspector showing the original text and the
+disclosed `external_payload` side by side, segment by segment, each segment
+labeled with its action (`preserve`, `remove`, `generalize`,
+`pseudonymize`) and category where available.
 
 This is built from the pipeline's own structured output, never a string
 diff: `application/inspection.py::build_inspection` walks
@@ -821,14 +880,24 @@ render the panel at all without exposing any other configuration.
 
 ### How to enable it locally
 
+The before/after only (the public advisor posture):
+
 ```
+ADG_ENABLE_DEMO_INSPECTION=1 \
+ADG_PROVIDER=fake docker compose -f compose.demo.yaml up --build
+```
+
+Export/restore as well, in a controlled environment only:
+
+```
+ADG_ENABLE_DEMO_INSPECTION=1 \
 ADG_ENABLE_DEMO_TRANSPARENCY=1 \
 ADG_RESTORE_HANDLE_SECRET=$(python -c "import secrets; print(secrets.token_urlsafe(32))") \
 ADG_PROVIDER=fake docker compose -f compose.demo.yaml up --build
 ```
 
 (`ADG_RESTORE_HANDLE_SECRET` is needed only for the T28 export/restore half;
-the T27 inspector works with `ADG_ENABLE_DEMO_TRANSPARENCY=1` alone.)
+`ADG_ENABLE_DEMO_TRANSPARENCY=1` alone does **not** turn on the before/after.)
 
 To obtain a synthetic document to upload, generate one with the same
 fixture builder the test suite uses (values invented at generation time,
@@ -847,10 +916,13 @@ open('demo.pdf', 'wb').write(minimal_pdf_bytes(['Contact John Smith at john.smit
 The hosted demo has no authentication (see "Security stance" below). A
 reachable restore endpoint is a re-identification oracle: anyone who can
 reach it can submit text containing a guessed or observed pseudonym and get
-the original back. Gating both the inspector and the export/restore UI
-behind one explicit, server-side, non-secret flag means the hosted URL keeps
-its default no-authentication posture safely, while a controlled
+the original back. Gating export/restore (and, separately, the Vault
+Explorer) behind explicit, server-side, non-secret flags means the hosted
+URL keeps its default no-authentication posture safely, while a controlled
 advisor-evaluation environment can turn the same mechanism on deliberately.
+Request-scoped inspection is different in kind -- it only explains the
+caller's own just-submitted content back to that caller -- which is why it
+has its own flag and is the one capability the public URL enables.
 
 ### Demo vs final product
 
@@ -879,7 +951,7 @@ in place, and sees the original → pseudonym → local scope → reconstruction
 chain concretely, without exporting anything or invoking a restore handle.
 
 **How to enable it.** Same non-secret, byte-identical parsing rule as
-`ADG_ENABLE_DEMO_TRANSPARENCY` (see `.env.example`): enabled iff the
+`ADG_ENABLE_DEMO_INSPECTION` and `ADG_ENABLE_DEMO_TRANSPARENCY` (see `.env.example`): enabled iff the
 variable is set and, after stripping whitespace, exactly `"1"`. It is a
 fully independent flag -- `ADG_ENABLE_DEMO_VAULT_EXPLORER` does not require
 `ADG_ENABLE_DEMO_TRANSPARENCY`, and enabling one never enables or requires
@@ -895,7 +967,7 @@ ADG_PROVIDER=fake docker compose -f compose.demo.yaml up --build
 1. Load a contract or prepared example as usual.
 2. Preview under B2 — Reversible Pseudonymization or B4 — Policy-governed;
    the response now also carries an opaque `vault_explorer_token` alongside
-   `inspection` (when T27 is also enabled).
+   `inspection` (when inspection is also enabled).
 3. Open the inspector (T27), if enabled, for the segment-level original vs.
    disclosed view.
 4. Open the Vault Explorer panel on Revisão or Resultado. It is collapsed by
