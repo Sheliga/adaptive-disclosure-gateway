@@ -371,16 +371,17 @@ class DisclosurePreview:
     happen, plus the exact payload that would cross the trust boundary --
     without ever calling a provider.
 
-    ``inspection`` is ``None`` whenever the demo transparency surface (T27 /
-    issue #69, gated by ``ADG_ENABLE_DEMO_TRANSPARENCY`` -- see
-    ``application/settings.py``) is disabled for this service; it is
+    ``inspection`` is ``None`` whenever the request-scoped inspection surface
+    (T27 / issue #69, gated since T32.3 / issue #103 by its own
+    ``ADG_ENABLE_DEMO_INSPECTION`` -- see ``application/settings.py``) is
+    disabled for this service; it is
     populated only by ``preview``/``preview_document`` when that flag is on,
     never by ``export``/``execute``/``execute_document``/
     ``compare_strategies`` -- see ``service.py``'s own docstring.
 
     ``vault_explorer_token`` (T29 / issue #72) is ``None`` unless the demo
     vault explorer surface (gated by ``ADG_ENABLE_DEMO_VAULT_EXPLORER`` --
-    independent of the transparency flag above) is enabled AND this
+    independent of the inspection flag above) is enabled AND this
     decision is ``"allowed"``. It is an opaque, sealed reference (see
     ``application/vault_explorer.py``) a caller sends back unchanged to
     ``DisclosureApplicationService.explore_vault`` -- never a mapping, a

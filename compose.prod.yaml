@@ -82,21 +82,31 @@ services:
       # practice once ADG_PROVIDER=anthropic -- the app itself refuses to
       # start without it (application/settings.build_preview_confirmation_signer).
       ADG_PREVIEW_CONFIRMATION_SECRET: ${ADG_PREVIEW_CONFIRMATION_SECRET:-}
-      # Server-side only; never forwarded to the web service. Deliberately
-      # OPTIONAL: export/restore are an opt-in feature layered on top of the
-      # deployment, not a precondition for it.
-      ADG_RESTORE_HANDLE_SECRET: ${ADG_RESTORE_HANDLE_SECRET:-}
-      ADG_RESTORE_HANDLE_TTL_SECONDS: ${ADG_RESTORE_HANDLE_TTL_SECONDS:-}
-      # T27/T28/T29 demo transparency surfaces. This URL is PUBLIC and
-      # UNAUTHENTICATED -- docs/advisor-demo.md is explicit that these must
-      # stay off on a public hosted URL ("Why this defaults off": a
-      # reachable restore/vault-explorer endpoint is a re-identification
-      # oracle for anyone who can reach it). Deliberately OPTIONAL (`:-`),
-      # defaulting to empty/off, and this file never sets it to "1" -- only
-      # a deployer's own `.env` could turn it on, against this stack's
-      # documented recommendation.
-      ADG_ENABLE_DEMO_TRANSPARENCY: ${ADG_ENABLE_DEMO_TRANSPARENCY:-}
-      ADG_ENABLE_DEMO_VAULT_EXPLORER: ${ADG_ENABLE_DEMO_VAULT_EXPLORER:-}
+      # Public demo capability posture (T32.3 / issue #103). This URL is
+      # PUBLIC and UNAUTHENTICATED, so the posture is fixed HERE, in this
+      # reviewed file -- never left to the host's .env:
+      #
+      #   - INSPECTION on (literal "1", not an interpolation): each preview
+      #     response carries `inspection`, the ordered before/after of the
+      #     content that same caller just submitted. It is request-scoped: it
+      #     shows nothing the caller did not send in this very request.
+      #   - TRANSPARENCY (T28 export/restore) and VAULT_EXPLORER (T29) off:
+      #     ADG_ENABLE_DEMO_TRANSPARENCY / ADG_ENABLE_DEMO_VAULT_EXPLORER are
+      #     deliberately NOT declared on either service. Compose only passes
+      #     declared variables into a container, so no .env can switch them
+      #     on without editing this file. Restore turns any text plus a handle
+      #     back into originals, and the vault explorer reveals stored
+      #     originals -- re-identification oracles for anyone who can reach a
+      #     public URL (docs/advisor-demo.md, "Why this defaults off").
+      #   - ADG_RESTORE_HANDLE_SECRET / _TTL_SECONDS are not declared either:
+      #     without a secret the API itself answers 503 on export/restore
+      #     (RestoreUnavailableError), a second wall behind the web proxy's
+      #     own 404.
+      #
+      # Pinned by tests/test_prod_deployment_config.py
+      # (TestPublicDemoCapabilityPosture) and, behaviorally,
+      # tests/test_demo_capability_matrix.py.
+      ADG_ENABLE_DEMO_INSPECTION: "1"
       # Engineering limits/CORS. Safe repository defaults apply when unset.
       ADG_MAX_UPLOAD_BYTES: ${ADG_MAX_UPLOAD_BYTES:-}
       ADG_ALLOWED_ORIGINS: ${ADG_ALLOWED_ORIGINS:-}
@@ -134,10 +144,12 @@ services:
       # own HEALTHCHECK, which reads it back at runtime to build its probe
       # path (web/Dockerfile).
       ADG_WEB_BASE_PATH: ${ADG_WEB_BASE_PATH:-/disclosure-gateway}
-      # Mirrors the api service's own posture above: optional, off by
-      # default, never turned on by this file.
-      ADG_ENABLE_DEMO_TRANSPARENCY: ${ADG_ENABLE_DEMO_TRANSPARENCY:-}
-      ADG_ENABLE_DEMO_VAULT_EXPLORER: ${ADG_ENABLE_DEMO_VAULT_EXPLORER:-}
+      # Same public posture as the api service above (T32.3 / issue #103):
+      # inspection on, reported to the browser by /api/demo/features; the
+      # export/restore and vault explorer proxy gates read their variables
+      # as unset (they are deliberately not declared) and answer a fixed 404
+      # without ever calling the api service.
+      ADG_ENABLE_DEMO_INSPECTION: "1"
     # Loopback-only: bound to 127.0.0.1 specifically, never every host
     # interface. The host's nginx is the only public listener (80/443,
     # already configured outside this file) -- without an explicit host IP,

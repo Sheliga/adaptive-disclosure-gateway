@@ -29,7 +29,8 @@ changes incompatibly. Its value, ``"t20-application-api-v1"``, is a
 published contract identifier and must not be renamed or bumped as part of
 this move. ``PreviewResponse.inspection`` (T27 / issue #69) is one such
 non-incompatible change: an additive, nullable field -- ``null`` whenever
-the demo transparency flag is off (the historical, unmodified behavior for
+the demo inspection flag (``ADG_ENABLE_DEMO_INSPECTION``, T32.3 / #103) is
+off (the historical, unmodified behavior for
 every existing caller) and populated only when a deployer opts in -- so it
 does not bump ``CONTRACT_VERSION`` either, for the same reason
 ``ExportResponse``/``RestoreResponse`` below did not.
