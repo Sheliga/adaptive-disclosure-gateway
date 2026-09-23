@@ -444,7 +444,21 @@ function GuidedFlowShell() {
     const currentId = currentNavigationIdRef.current;
     const nextUrl = replaceStepInUrl(step);
     if (currentId !== null && currentStep === step) {
-      if (isComposeEdit(historySnapshotsRef.current.get(currentId), state)) {
+      const recorded = historySnapshotsRef.current.get(currentId);
+      if (recorded === state) {
+        // This exact state is already registered on this very entry, so
+        // there is nothing to write. This happens when the effect re-runs
+        // for another dependency after already syncing: e.g. React defers
+        // the passive effect of the commit that rendered Result past the
+        // corrective popstate (#101/#105), so that deferred run pushes
+        // Result, and the historySyncEpoch bump from the same popstate
+        // re-runs the effect over the SAME state. Without this check, that
+        // second run wrote a redundant replaceState of the entry it had
+        // just pushed (a pre-existing, load-dependent flake in the race
+        // tests, which pin the exact history writes).
+        return;
+      }
+      if (isComposeEdit(recorded, state)) {
         // Stale-Review policy (#102): the request changed after it may have
         // been reviewed, so every forward entry (an old Review with its
         // token, or an Approved Review/Result further on) is invalidated on
