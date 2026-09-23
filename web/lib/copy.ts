@@ -212,7 +212,35 @@ const ptBR = {
      * mechanical action -- the primary decision this screen exists for.
      */
     confirmSend: "Confirmar e enviar ao provedor externo",
-    backToCompose: "Voltar e editar",
+    /**
+     * T32.2 / #102: the irreversible boundary, stated in plain language right
+     * next to the CTA -- confirming is what starts the external call, and
+     * once it has started, navigating away does not cancel or undo it.
+     */
+    confirmConsequence: "Ao confirmar, a solicitação é enviada ao provedor externo.",
+    afterSendNotice:
+      "Depois que o envio começar, voltar ou sair desta tela não cancela nem desfaz o envio.",
+    /** Shown under an execute error: a new attempt is only ever the user's explicit choice. */
+    executeErrorNoAutoRetry:
+      "Nada é reenviado automaticamente. Para tentar novamente, confirme outra vez.",
+    /**
+     * T32.2 / #102: "What you asked for" -- re-presents the retained compose
+     * context before any disclosure detail, so the reviewer does not have to
+     * remember what they chose on the previous screen.
+     */
+    contextHeading: "O que você pediu",
+    sourceLabel: "Origem",
+    sourceExample: "Exemplo preparado",
+    sourceUpload: "Arquivo enviado",
+    sourcePaste: "Texto colado",
+    exampleLabel: "Exemplo",
+    taskLabel: "Tarefa",
+    exampleSuggestedTask: "(tarefa sugerida pelo exemplo)",
+    noTaskProvided: "Nenhuma tarefa informada",
+    /** Fail-closed label for any value this UI has no human copy for. */
+    unknownValue: "Não identificado",
+    /** Returns to the existing Compose snapshot (browser history), every field preserved. */
+    changeRequest: "Alterar dados da solicitação",
     /**
      * T30 / issue #82: Level-2 disclosure wrapping the T27 transformation
      * inspector -- "understand what changed and why" sits one level below
@@ -228,6 +256,23 @@ const ptBR = {
     technicalToolsToggle: "Detalhes técnicos e ferramentas de pesquisa",
     technicalToolsIntro:
       "Estas ferramentas existem para avaliação e pesquisa. Um produto final restringiria ou removeria esta camada.",
+  },
+
+  /**
+   * T32.2 / #102: the read-only Review a confirmed send came from, reachable
+   * only through history (Result -> Back). It never offers Confirm, resend or
+   * Change, and says plainly that looking at it does not undo the send.
+   * "Envio já confirmado" rather than "enviado": a send can still end up
+   * blocked or failed at execute time, but it was confirmed either way.
+   */
+  approvedReview: {
+    heading: "Revisão aprovada",
+    sentBadge: "Envio já confirmado",
+    readOnlyNotice:
+      "Esta é a revisão que você aprovou antes do envio. Ela é somente leitura: visualizá-la não desfaz nem repete o envio.",
+    sentHeading: "O que foi aprovado para envio ao LLM externo",
+    payloadToggle: "Ver o payload exato aprovado para envio",
+    goToResult: "Ir para o resultado",
   },
 
   /** Screen 4 -- "Resultado". */
@@ -292,13 +337,16 @@ const ptBR = {
     modeUnverifiedLabel: "Modo do provedor não pôde ser verificado.",
   },
 
+  /**
+   * T32.2 / #102: honest async states. The frontend has no backend progress
+   * telemetry, so each wait is ONE general message -- never a sequence of
+   * sub-stages that would imply observed progress it does not have.
+   */
   processingStages: {
-    readingFile: "Lendo o arquivo",
-    analyzingDocument: "Analisando o documento",
-    detectingSensitiveData: "Detectando dados sensíveis",
-    applyingDisclosurePolicy: "Aplicando política de divulgação",
-    consultingModel: "Consultando o modelo",
-    reconstructingAnswer: "Reconstruindo a resposta",
+    preparingReview: "Preparando a revisão…",
+    preparingDocumentReview: "Processando o documento e preparando a revisão…",
+    sendConfirmed: "Envio confirmado. A solicitação está sendo processada.",
+    leavingDoesNotCancel: "Sair desta etapa não cancela uma chamada externa já iniciada.",
     /**
      * Deliberately does NOT say "consultando cinco modelos" or anything
      * implying five provider calls happen -- the comparison never calls a

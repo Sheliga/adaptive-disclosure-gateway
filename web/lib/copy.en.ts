@@ -161,11 +161,34 @@ export const en: AppCopy = {
     blockedExplanation:
       "The disclosure policy blocked this request. Nothing will be sent to the external provider.",
     confirmSend: "Confirm and send to the external provider",
-    backToCompose: "Back and edit",
+    confirmConsequence: "Confirming sends the request to the external provider.",
+    afterSendNotice: "Once sending has started, going back or leaving this screen does not cancel or undo it.",
+    executeErrorNoAutoRetry: "Nothing is resent automatically. To try again, confirm once more.",
+    contextHeading: "What you asked for",
+    sourceLabel: "Source",
+    sourceExample: "Prepared example",
+    sourceUpload: "Uploaded file",
+    sourcePaste: "Pasted text",
+    exampleLabel: "Example",
+    taskLabel: "Task",
+    exampleSuggestedTask: "(task suggested by the example)",
+    noTaskProvided: "No task provided",
+    unknownValue: "Not identified",
+    changeRequest: "Change request details",
     understandChangesToggle: "Understand what the gateway changed and why",
     technicalToolsToggle: "Technical details and research tools",
     technicalToolsIntro:
       "These tools exist for evaluation and research purposes. A final product would restrict or remove this layer.",
+  },
+
+  approvedReview: {
+    heading: "Approved review",
+    sentBadge: "Send already confirmed",
+    readOnlyNotice:
+      "This is the review you approved before sending. It is read-only: viewing it does not undo or repeat the send.",
+    sentHeading: "What was approved for sending to the external LLM",
+    payloadToggle: "View the exact payload approved for sending",
+    goToResult: "Go to the result",
   },
 
   result: {
@@ -197,12 +220,10 @@ export const en: AppCopy = {
   },
 
   processingStages: {
-    readingFile: "Reading the file",
-    analyzingDocument: "Analyzing the document",
-    detectingSensitiveData: "Detecting sensitive data",
-    applyingDisclosurePolicy: "Applying disclosure policy",
-    consultingModel: "Consulting the model",
-    reconstructingAnswer: "Reconstructing the answer",
+    preparingReview: "Preparing the review…",
+    preparingDocumentReview: "Processing the document and preparing the review…",
+    sendConfirmed: "Send confirmed. The request is being processed.",
+    leavingDoesNotCancel: "Leaving this step does not cancel an external call that has already started.",
     comparingStrategies: "Comparing how each strategy would treat the same document…",
   },
 

@@ -49,33 +49,47 @@
  *    surface. This wrapper itself is only rendered when at least one of the
  *    two panels would actually show something, so a deployment with both
  *    demo flags off renders no empty "technical tools" toggle at all.
+ *
+ * T32.2 / issue #102 made this a true check-before-send, in this order:
+ * heading -> "What you asked for" (`ReviewContextSummary`, re-presenting the
+ * retained compose context, with the single "Change" action) -> the Level-1
+ * `DisclosureOverview` -> Levels 2/3 -> the plain-language consequence of
+ * confirming -> the CTA. "Change" calls `onEdit`, which GuidedFlow wires to
+ * `window.history.back()` -- the same history traversal as the shell's Back
+ * button, back to the retained Compose snapshot -- never a parallel reducer
+ * transition. The post-send, read-only counterpart is `ApprovedReviewScreen`,
+ * a different component over a different (token-free) flow state.
  */
 
 import { useState } from "react";
 
 import { useCopy } from "@/i18n/useLocale";
 import type { DisplayError } from "@/lib/api";
-import type { PreviewResponse } from "@/lib/contracts";
+import type { ExampleSummary, PreviewResponse } from "@/lib/contracts";
 import { initialComposeState, type ComposeState } from "@/lib/flow";
 
-import { CategoryOutcomeRow } from "../CategoryOutcomeRow/CategoryOutcomeRow";
 import { DisclosureInspector } from "../DisclosureInspector/DisclosureInspector";
 import { ExportRestorePanel } from "../ExportRestorePanel/ExportRestorePanel";
 import { VaultExplorerPanel } from "../VaultExplorerPanel/VaultExplorerPanel";
+import { DisclosureOverview } from "./DisclosureOverview";
+import { ReviewContextSummary } from "./ReviewContextSummary";
 import styles from "./ReviewScreen.module.css";
 
 export interface ReviewScreenProps {
   preview: PreviewResponse;
   executeError: DisplayError | null;
   onConfirm: () => void;
-  onCancel: () => void;
+  /** T32.2 / #102: the "Change" action -- GuidedFlow wires it to browser history Back. */
+  onEdit: () => void;
   /**
-   * The compose state this preview was built from -- threaded through only
-   * for `ExportRestorePanel`. Optional, defaulting to the initial (example
-   * mode) compose state, so existing callers/tests that never render the
-   * panel (`demoTransparencyEnabled` false, the default) are unaffected.
+   * The compose state this preview was built from -- rendered as the "What
+   * you asked for" context (T32.2 / #102) and threaded through to
+   * `ExportRestorePanel`. Optional, defaulting to the initial (example mode)
+   * compose state, so existing callers/tests keep working.
    */
   compose?: ComposeState;
+  /** The examples catalog, used only to give an example its human label. */
+  examples?: readonly ExampleSummary[] | null;
   /** T28 / issue #70. See this module's docstring. Defaults to `false` (disabled) so existing callers/tests are unaffected. */
   demoTransparencyEnabled?: boolean;
   /**
@@ -97,20 +111,17 @@ export function ReviewScreen({
   preview,
   executeError,
   onConfirm,
-  onCancel,
+  onEdit,
   compose = initialComposeState,
+  examples = null,
   demoTransparencyEnabled = false,
   demoVaultExplorerEnabled = false,
 }: ReviewScreenProps) {
   const copy = useCopy();
-  const [payloadOpen, setPayloadOpen] = useState(false);
   const [changesOpen, setChangesOpen] = useState(false);
   const [technicalToolsOpen, setTechnicalToolsOpen] = useState(false);
 
   const isBlocked = preview.summary.status === "blocked";
-  const categories = preview.summary.categories;
-  const localCategories = categories.filter((category) => !category.crosses_trust_boundary);
-  const sentCategories = categories.filter((category) => category.crosses_trust_boundary);
 
   const showExportRestore = demoTransparencyEnabled && !isBlocked;
   const showVaultExplorer = demoVaultExplorerEnabled;
@@ -122,61 +133,21 @@ export function ReviewScreen({
         {copy.review.heading}
       </h1>
 
-      <div>
-        <h2 className={styles.subheading}>{copy.sectionHeadings.whatWasDetected}</h2>
-        {categories.length === 0 ? (
-          <p>{copy.review.noneDetected}</p>
-        ) : (
-          <p>
-            {preview.summary.detected_span_count} {copy.review.detectedCountLabel}
-          </p>
-        )}
-      </div>
+      <ReviewContextSummary
+        compose={compose}
+        examples={examples}
+        action={
+          <button type="button" className={styles.cancelButton} onClick={onEdit}>
+            {copy.review.changeRequest}
+          </button>
+        }
+      />
 
-      {isBlocked && (
-        <div role="alert" className={styles.blocked}>
-          <h2>{copy.review.blockedHeading}</h2>
-          <p>{copy.review.blockedExplanation}</p>
-        </div>
-      )}
-
-      <div>
-        <h2 className={styles.subheading}>{copy.sectionHeadings.whatStaysLocal}</h2>
-        {localCategories.length === 0 ? (
-          <p>{copy.review.nothingInSection}</p>
-        ) : (
-          <ul className={styles.list}>
-            {localCategories.map((category) => (
-              <CategoryOutcomeRow key={category.category} category={category} />
-            ))}
-          </ul>
-        )}
-      </div>
-
-      <div>
-        <h2 className={styles.subheading}>{copy.review.willBeSentHeading}</h2>
-        {sentCategories.length === 0 ? (
-          <p>{copy.review.nothingInSection}</p>
-        ) : (
-          <ul className={styles.list}>
-            {sentCategories.map((category) => (
-              <CategoryOutcomeRow key={category.category} category={category} />
-            ))}
-          </ul>
-        )}
-
-        <details open={payloadOpen} onToggle={(event) => setPayloadOpen(event.currentTarget.open)}>
-          <summary>{copy.review.showPayloadToggle}</summary>
-          {payloadOpen && (
-            <>
-              <pre className={styles.payload}>{preview.external_payload}</pre>
-              <p>
-                {preview.payload_byte_count} {copy.review.payloadByteCountLabel}
-              </p>
-            </>
-          )}
-        </details>
-      </div>
+      <DisclosureOverview
+        preview={preview}
+        sentHeading={copy.review.willBeSentHeading}
+        payloadToggleLabel={copy.review.showPayloadToggle}
+      />
 
       {preview.inspection !== null && (
         <details
@@ -214,21 +185,25 @@ export function ReviewScreen({
       )}
 
       {executeError && (
-        <p role="alert" className={styles.error}>
-          {executeError.message}
-        </p>
+        <div>
+          <p role="alert" className={styles.error}>
+            {executeError.message}
+          </p>
+          <p className={styles.explanation}>{copy.review.executeErrorNoAutoRetry}</p>
+        </div>
       )}
 
-      <div className={styles.actions}>
-        <button type="button" className={styles.cancelButton} onClick={onCancel}>
-          {copy.review.backToCompose}
-        </button>
-        {!isBlocked && (
-          <button type="button" className={styles.confirmButton} onClick={onConfirm}>
-            {copy.review.confirmSend}
-          </button>
-        )}
-      </div>
+      {!isBlocked && (
+        <div className={styles.decision}>
+          <p>{copy.review.confirmConsequence}</p>
+          <p className={styles.explanation}>{copy.review.afterSendNotice}</p>
+          <div className={styles.actions}>
+            <button type="button" className={styles.confirmButton} onClick={onConfirm}>
+              {copy.review.confirmSend}
+            </button>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

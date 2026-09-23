@@ -48,8 +48,9 @@ import {
   previewDocument,
   type DisplayError,
 } from "@/lib/api";
-import type { DocumentType, ExampleSummary } from "@/lib/contracts";
+import type { DocumentType, ExampleSummary, ExecuteResponse } from "@/lib/contracts";
 import {
+  approveReview,
   buildDocumentFormData,
   buildRequestBody,
   flowReducer,
@@ -62,6 +63,7 @@ import type { ProviderModeState } from "@/lib/providerMode";
 import { LocaleProvider } from "@/i18n/LocaleProvider";
 import { useLocale } from "@/i18n/useLocale";
 
+import { ApprovedReviewScreen } from "../ApprovedReviewScreen/ApprovedReviewScreen";
 import { ComparisonScreen } from "../ComparisonScreen/ComparisonScreen";
 import { ComposeScreen } from "../ComposeScreen/ComposeScreen";
 import { LocaleSwitcher } from "../LocaleSwitcher/LocaleSwitcher";
@@ -123,6 +125,7 @@ function primaryStepForState(state: FlowState): PrimaryStep {
     case "previewing":
       return "prepare";
     case "review":
+    case "approvedReview":
       return "review";
     case "executing":
       return "send";
@@ -176,11 +179,50 @@ function reduceGuidedFlow(state: FlowState, event: GuidedFlowEvent): FlowState {
   return flowReducer(state, event);
 }
 
+/**
+ * Marks history entries as never restorable again and drops their snapshots
+ * immediately (nothing sensitive is retained for an entry that can only
+ * ever fail closed). The ids stay in the tracked entry list on purpose: the
+ * browser still physically has those entries, so a popstate onto one must
+ * still update the tracked position (see handlePopState) before it fails
+ * closed, and a later push still prunes them as a discarded branch.
+ */
+function invalidateHistoryEntries(
+  ids: readonly string[],
+  snapshots: Map<string, FlowState>,
+  nonRestorable: Set<string>,
+) {
+  for (const id of ids) {
+    snapshots.delete(id);
+    nonRestorable.add(id);
+  }
+}
+
+/**
+ * Whether a same-entry history write is a Compose input edit. Every compose
+ * setter (SET_MODE, SELECT_EXAMPLE, SET_PASTED_TEXT, SET_FILE,
+ * SET_FILE_ERROR, CLEAR_FILE, SET_TASK, SET_DOCUMENT_TYPE,
+ * SET_ANALYSIS_MODE) goes through `composeReducer`, which returns a NEW
+ * `compose` object, and nothing else on the Compose screen does (a preview
+ * failure carries the same object through "previewing"). So comparing the
+ * `compose` identity against the entry's recorded snapshot catches every
+ * edit -- including setters added later -- without listing them here.
+ */
+function isComposeEdit(previous: FlowState | undefined, next: FlowState) {
+  return (
+    previous !== undefined &&
+    previous.screen === "compose" &&
+    next.screen === "compose" &&
+    previous.compose !== next.compose
+  );
+}
+
 function isStableNavigationState(state: FlowState) {
   return (
     state.screen === "welcome" ||
     state.screen === "compose" ||
     state.screen === "review" ||
+    state.screen === "approvedReview" ||
     state.screen === "result" ||
     state.screen === "technicalDetails" ||
     state.screen === "comparison"
@@ -208,8 +250,19 @@ function GuidedFlowShell() {
   // push is a new branch: every entry after the current index is deleted
   // (snapshot + non-restorable mark) before the new one is recorded -- see
   // the push effect below. A non-restorable entry's own snapshot is deleted
-  // the moment it is marked (in handleConfirmReview), rather than waiting
-  // for a future push, since it can never be restored anyway.
+  // the moment it is marked (see invalidateHistoryEntry), rather than
+  // waiting for a future push, since it can never be restored anyway.
+  //
+  // T32.2 / #102 adds two in-place rewrites of that Map, both in memory only:
+  //  - a successful send REPLACES the sending Review's snapshot with its
+  //    token-free "approvedReview" form (recordApprovedReview), instead of
+  //    deleting it; Result -> Back then shows the read-only Approved Review;
+  //  - the first compose edit on an entry that has forward entries
+  //    invalidates every one of them (invalidateForwardEntries, called from
+  //    the history-sync effect): an old Review -- and its confirmation
+  //    token -- can never be reached again by Forward once the request it
+  //    reviewed has changed. Any input edit after Review therefore requires
+  //    a new preview before a send action exists again.
   const historySnapshotsRef = useRef(new Map<string, FlowState>());
   const historyEntryIdsRef = useRef<string[]>([]);
   const historyIndexRef = useRef(0);
@@ -356,6 +409,21 @@ function GuidedFlowShell() {
       historyIndexRef.current = targetIndex;
       currentNavigationIdRef.current = id;
       setUnrecoverableStep(null);
+      if (snapshot === stateRef.current) {
+        // The browser has landed back on the entry the flow is ALREADY
+        // showing (e.g. a same-id popstate, or one that raced an earlier
+        // correction): the tracked position above still needed updating,
+        // but dispatching RESTORE_NAVIGATION_STATE here would hand the
+        // reducer the very same FlowState object it already holds. React
+        // bails out of a setState that returns the previous state -- no
+        // re-render, so the history-sync effect (the only place that reads
+        // and clears suppressHistorySyncRef) would never run. Arming the
+        // flag here would then leave it stuck `true` for the NEXT, real
+        // transition, which would silently skip its own history write.
+        // Suppress may only be armed when a state change is guaranteed to
+        // follow and run that effect, so this case skips both.
+        return;
+      }
       suppressHistorySyncRef.current = true;
       dispatch({ type: "RESTORE_NAVIGATION_STATE", state: snapshot });
     }
@@ -391,6 +459,32 @@ function GuidedFlowShell() {
     const currentId = currentNavigationIdRef.current;
     const nextUrl = replaceStepInUrl(step);
     if (currentId !== null && currentStep === step) {
+      const recorded = historySnapshotsRef.current.get(currentId);
+      if (recorded === state) {
+        // This exact state is already registered on this very entry, so
+        // there is nothing to write. This happens when the effect re-runs
+        // for another dependency after already syncing: e.g. React defers
+        // the passive effect of the commit that rendered Result past the
+        // corrective popstate (#101/#105), so that deferred run pushes
+        // Result, and the historySyncEpoch bump from the same popstate
+        // re-runs the effect over the SAME state. Without this check, that
+        // second run wrote a redundant replaceState of the entry it had
+        // just pushed (a pre-existing, load-dependent flake in the race
+        // tests, which pin the exact history writes).
+        return;
+      }
+      if (isComposeEdit(recorded, state)) {
+        // Stale-Review policy (#102): the request changed after it may have
+        // been reviewed, so every forward entry (an old Review with its
+        // token, or an Approved Review/Result further on) is invalidated on
+        // this first edit. Forward then fails closed; the only way on is a
+        // new preview, whose push prunes these entries for good.
+        invalidateHistoryEntries(
+          historyEntryIdsRef.current.slice(historyIndexRef.current + 1),
+          historySnapshotsRef.current,
+          nonRestorableNavigationIdsRef.current,
+        );
+      }
       historySnapshotsRef.current.set(currentId, state);
       window.history.replaceState({ flowNavigationId: currentId }, "", nextUrl);
       return;
@@ -534,13 +628,72 @@ function GuidedFlowShell() {
     }
   }
 
+  /**
+   * Converts the sending Review's history snapshot, in place, into its
+   * token-free Approved Review form (#102) -- the same policy for the upload
+   * and paste/example paths, called only once execute has SUCCEEDED. Only
+   * an entry that is still tracked and restorable is converted: if it was
+   * pruned or invalidated meanwhile, it stays gone rather than being
+   * resurrected. The approved snapshot lives in the same in-memory Map as
+   * every other snapshot, so the same pruning removes it with its branch.
+   */
+  function recordApprovedReview(
+    reviewNavigationId: string | null,
+    review: Extract<FlowState, { screen: "review" }>,
+  ) {
+    if (
+      reviewNavigationId === null ||
+      !historySnapshotsRef.current.has(reviewNavigationId) ||
+      nonRestorableNavigationIdsRef.current.has(reviewNavigationId)
+    ) {
+      return;
+    }
+    historySnapshotsRef.current.set(reviewNavigationId, approveReview(review));
+  }
+
+  /**
+   * Execute's outcome, shared by both request paths so they cannot diverge:
+   *  - success: the Review becomes the Approved Review, then Result;
+   *  - a confirmation the backend rejects as expired/invalid: the Review
+   *    entry (and the token its snapshot holds) is invalidated, so browser
+   *    Back cannot offer it again -- Compose, with its fields, is the only
+   *    way on, through a new preview;
+   *  - any other failure: stays a live Review with the error; nothing is
+   *    retried automatically, and a new attempt is an explicit Confirm.
+   */
+  function settleExecute(
+    reviewNavigationId: string | null,
+    review: Extract<FlowState, { screen: "review" }>,
+    outcome:
+      | { ok: true; execute: ExecuteResponse }
+      | { ok: false; error: DisplayError; requiresNewPreview: boolean },
+  ) {
+    if (outcome.ok) {
+      recordApprovedReview(reviewNavigationId, review);
+      dispatch({ type: "EXECUTE_SUCCEEDED", execute: outcome.execute });
+      return;
+    }
+    if (outcome.requiresNewPreview && reviewNavigationId !== null) {
+      invalidateHistoryEntries(
+        [reviewNavigationId],
+        historySnapshotsRef.current,
+        nonRestorableNavigationIdsRef.current,
+      );
+    }
+    dispatch({
+      type: "EXECUTE_FAILED",
+      error: outcome.error,
+      requiresNewPreview: outcome.requiresNewPreview,
+    });
+  }
+
   async function handleConfirmReview(review: Extract<FlowState, { screen: "review" }>) {
     const reviewNavigationId = currentNavigationIdRef.current;
     dispatch({ type: "CONFIRM_REVIEW" });
     if (review.compose.mode === "upload") {
       if (review.confirmationToken === null) {
-        dispatch({
-          type: "EXECUTE_FAILED",
+        settleExecute(reviewNavigationId, review, {
+          ok: false,
           error: { message: copy.errors.previewExpired, kind: "PreviewConfirmationError", fields: null },
           requiresNewPreview: true,
         });
@@ -550,39 +703,27 @@ function GuidedFlowShell() {
         buildDocumentFormData(review.compose, review.confirmationToken),
         copy,
       );
-      if (result.ok) {
-        if (reviewNavigationId !== null) {
-          // Marked non-restorable AND its snapshot dropped in the same
-          // step: a popstate back to this id will never use the snapshot
-          // again (see handlePopState's nonRestorable check), so keeping it
-          // around until a later push prunes it would retain a sent
-          // Review's data for longer than necessary.
-          nonRestorableNavigationIdsRef.current.add(reviewNavigationId);
-          historySnapshotsRef.current.delete(reviewNavigationId);
-        }
-        dispatch({ type: "EXECUTE_SUCCEEDED", execute: result.data });
-      } else {
-        dispatch({
-          type: "EXECUTE_FAILED",
-          error: result.error,
-          requiresNewPreview: result.error.kind === "PreviewConfirmationError",
-        });
-      }
+      settleExecute(
+        reviewNavigationId,
+        review,
+        result.ok
+          ? { ok: true, execute: result.data }
+          : {
+              ok: false,
+              error: result.error,
+              requiresNewPreview: result.error.kind === "PreviewConfirmationError",
+            },
+      );
       return;
     }
-    const compose = review.compose;
-    const body = buildRequestBody(compose);
-    const result = await executeDisclosure(body, copy);
-    if (result.ok) {
-      if (reviewNavigationId !== null) {
-        // See the comment on the upload-mode branch above -- same policy.
-        nonRestorableNavigationIdsRef.current.add(reviewNavigationId);
-        historySnapshotsRef.current.delete(reviewNavigationId);
-      }
-      dispatch({ type: "EXECUTE_SUCCEEDED", execute: result.data });
-    } else {
-      dispatch({ type: "EXECUTE_FAILED", error: result.error });
-    }
+    const result = await executeDisclosure(buildRequestBody(review.compose), copy);
+    settleExecute(
+      reviewNavigationId,
+      review,
+      result.ok
+        ? { ok: true, execute: result.data }
+        : { ok: false, error: result.error, requiresNewPreview: false },
+    );
   }
 
   /**
@@ -633,6 +774,10 @@ function GuidedFlowShell() {
     window.history.back();
   }
 
+  function handleForward() {
+    window.history.forward();
+  }
+
   /**
    * Result-action lock during a pending correction (#101 follow-up): execute
    * can settle to "result" BEFORE the corrective popstate that
@@ -668,6 +813,7 @@ function GuidedFlowShell() {
   const showBackButton =
     state.screen === "compose" ||
     state.screen === "review" ||
+    state.screen === "approvedReview" ||
     state.screen === "technicalDetails" ||
     state.screen === "comparison";
 
@@ -736,18 +882,10 @@ function GuidedFlowShell() {
 
         {unrecoverableStep === null && state.screen === "previewing" && (
           <ProcessingStatus
-            stages={
+            message={
               state.compose.mode === "upload"
-                ? [
-                    copy.processingStages.readingFile,
-                    copy.processingStages.analyzingDocument,
-                    copy.processingStages.detectingSensitiveData,
-                    copy.processingStages.applyingDisclosurePolicy,
-                  ]
-                : [
-                    copy.processingStages.detectingSensitiveData,
-                    copy.processingStages.applyingDisclosurePolicy,
-                  ]
+                ? copy.processingStages.preparingDocumentReview
+                : copy.processingStages.preparingReview
             }
           />
         )}
@@ -757,16 +895,27 @@ function GuidedFlowShell() {
             preview={state.preview}
             executeError={state.executeError}
             onConfirm={() => handleConfirmReview(state)}
-            onCancel={() => dispatch({ type: "CANCEL_REVIEW" })}
+            onEdit={handleBack}
+            examples={examples}
             compose={state.compose}
             demoTransparencyEnabled={demoTransparencyEnabled}
             demoVaultExplorerEnabled={demoVaultExplorerEnabled}
           />
         )}
 
+        {unrecoverableStep === null && state.screen === "approvedReview" && (
+          <ApprovedReviewScreen
+            compose={state.compose}
+            preview={state.preview}
+            examples={examples}
+            onGoToResult={handleForward}
+          />
+        )}
+
         {unrecoverableStep === null && state.screen === "executing" && (
           <ProcessingStatus
-            stages={[copy.processingStages.consultingModel, copy.processingStages.reconstructingAnswer]}
+            message={copy.processingStages.sendConfirmed}
+            detail={copy.processingStages.leavingDoesNotCancel}
           />
         )}
 
@@ -791,7 +940,7 @@ function GuidedFlowShell() {
         )}
 
         {unrecoverableStep === null && state.screen === "comparing" && (
-          <ProcessingStatus stages={[copy.processingStages.comparingStrategies]} />
+          <ProcessingStatus message={copy.processingStages.comparingStrategies} />
         )}
 
         {unrecoverableStep === null && state.screen === "comparison" && (

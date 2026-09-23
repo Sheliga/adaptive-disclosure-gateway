@@ -311,7 +311,7 @@ describe("GuidedFlow -- confirmed structured contract flow", () => {
     await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
     await screen.findByRole("heading", { name: copy.review.heading });
 
-    await userEvent.click(screen.getByRole("button", { name: copy.review.backToCompose }));
+    await userEvent.click(screen.getByRole("button", { name: copy.review.changeRequest }));
     await userEvent.clear(screen.getByLabelText(copy.newTest.taskLabel));
     await userEvent.type(screen.getByLabelText(copy.newTest.taskLabel), "Liste os prazos");
     await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
