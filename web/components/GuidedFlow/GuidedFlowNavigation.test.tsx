@@ -459,16 +459,19 @@ describe("GuidedFlow navigation foundation", () => {
     await userEvent.selectOptions(await screen.findByLabelText(copy.newTest.exampleFieldLabel), "ex-1");
     await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
     await screen.findByRole("heading", { name: copy.review.heading });
+    const sendingReviewId = window.history.state.flowNavigationId as string;
     await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
     await waitFor(() => expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1));
 
     pendingExecute.resolve({ ok: true, data: executeResponse() });
     await screen.findByRole("heading", { name: copy.result.heading });
-    window.history.back();
+    dispatchPopState(sendingReviewId);
 
     expect(await screen.findByRole("heading", { name: "Esta etapa não pode ser restaurada" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: copy.review.confirmSend })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: copy.newTest.heading })).not.toBeInTheDocument();
     expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+    expect(mockedCompareStrategies).not.toHaveBeenCalled();
   });
 
   it("keeps the Result snapshot across a pending compare and returns from Comparison without replay", async () => {
