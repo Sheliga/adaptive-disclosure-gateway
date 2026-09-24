@@ -94,8 +94,8 @@ Agentic variants may be studied later as separately versioned extensions.
 T30 / Issue #82 reorganized this experience into three progressive-disclosure levels, kept
 consistent across every screen:
 
-- **Level 1 (user)**: problem, document, question, review, what will be sent, confirmation,
-  answer -- no B0–B4/vault/hash/policy vocabulary required.
+- **Level 1 (user)**: problem, document, question, review, what was prepared for disclosure,
+  confirmation, answer -- no B0–B4/vault/hash/policy vocabulary required.
 - **Level 2 (explanation/research)**: transformations, diff/inspector, detected categories,
   strategy comparison, explanation of decisions, B0–B4 when relevant.
 - **Level 3 (technical)**: payloads, IDs, policy versions, hashes, metadata, provider info,
@@ -165,13 +165,16 @@ This is the screen the whole product exists for. Level-1 content reads, in this 
 1. what was detected (`O que foi detectado`);
 2. what stays local (`O que permanece local`), each item's outcome label already stating what
    happened to it (removed / pseudonymized / generalized / preserved) and why;
-3. what the gateway computed for sending to the external LLM (`O que será enviado ao LLM
-   externo`), including the byte-exact payload behind its own explicit disclosure (`Ver o
-   payload exato que seria enviado`) -- kept out of the DOM, not just visually hidden, until
-   opened.
+3. the representation the gateway prepared for the external LLM (`Representação preparada para
+   o modelo externo`), including the payload behind its own explicit disclosure (`Ver o
+   payload preparado nesta revisão`) -- kept out of the DOM, not just visually hidden, until
+   opened. This heading/toggle copy was reworded in the #103 review round 2 (PR #108): the
+   previous "será enviado"/"exato" wording promised a future-send byte-identity the preview
+   only structurally guarantees for upload, not for paste/example (see "Preview vs. execute"
+   below).
 
-**Preview vs. execute (fix for #103 review, PR #108).** The before/after and the "what will be
-sent" section are both built from the `preview` response, and the join checks in
+**Preview vs. execute (fix for #103 review, PR #108).** The before/after and the "prepared for
+disclosure" section are both built from the `preview` response, and the join checks in
 `lib/responseGuards.ts` only prove that the rendered view matches THAT preview's own
 `external_payload` exactly -- they say nothing about a later, separate execute call. Whether the
 reviewed representation is what actually crosses the boundary depends on entry mode:
@@ -205,8 +208,11 @@ outcome code -- see `lib/outcomes.ts`.
 
 ### 4. Resultado
 
-The primary output is the **final locally reconstructed answer** -- the single most visually
-prominent element on this screen.
+The primary output is the **final answer the gateway presents** (`execute.final_answer`) -- the
+single most visually prominent element on this screen. It is not unconditionally "the
+reconstructed answer": `final_answer` may be the provider's response completely unchanged. A
+reconstruction is claimed only when `reconstruction.attempted &&
+changed_from_provider_response === true` (round-2 #103 review fix, PR #108).
 
 Directly under it (T32.3 / Issue #103, when inspection is enabled), a short recap --
 `O que aconteceu antes do envio` -- says which transformation the answer came after: how many
@@ -216,9 +222,11 @@ request), with the full before/after one click away. Its wording follows
 sent; when the call failed it says the gateway tried and no answer was produced. The read-only
 Approved Review (Result → Back) shows the same before/after under "approved for sending" wording.
 
-Then a short, data-derived protections summary (e.g. "N itens protegidos; M
-pseudônimos reconstruídos localmente") is computed only from fields already on `ExecuteResponse`
-(`occurrence_count`, `reconstruction.attempted`), never invented.
+Then a short, data-derived protections summary (e.g. "Removido: 2 · Pseudonimizado: 3"),
+computed only from `occurrence_count` grouped by outcome -- never a reconstruction COUNT, since
+the API does not report how many pseudonyms were reconstructed. When `reconstruction.attempted
+&& changed_from_provider_response === true`, one additional, count-free sentence states that
+pseudonyms present in the response were replaced locally; it never renders otherwise.
 
 Below that:
 

@@ -281,6 +281,72 @@ describe.each([
   });
 });
 
+/**
+ * Round-2 #103 review fix (PR #108): three remaining overclaims survived the
+ * first round. All three are checked here at the copy level (see the
+ * matching component-level tests in `DisclosureTransformationSummary.test.tsx`
+ * and `ResultScreen.test.tsx` for the rendered-DOM side of the same fixes).
+ */
+describe.each([
+  ["pt-BR", ptBR],
+  ["en", en],
+] as const)("copy.%s -- round-2 #103 review fixes (PR #108)", (_locale, table) => {
+  /**
+   * Fix 1: the Review "what crosses the boundary" heading and its
+   * payload-disclosure toggle once read "O que será enviado ao LLM externo"
+   * / "Ver o payload exato que seria enviado" ("What will be sent" / "View
+   * the exact payload that would be sent") -- both promise a future-send
+   * identity the preview does not structurally guarantee for paste/example
+   * (only upload's `execute_document` is confirmation-token-bound to the
+   * previewed decision; paste/example independently recompute it). Neither
+   * string may reassert that promise, in either its "será enviado"/"will be
+   * sent" phrasing or an "exato"/"exact" claim about the payload.
+   */
+  it("review.willBeSentHeading and review.showPayloadToggle carry no exact/future-send claim", () => {
+    for (const value of [table.review.willBeSentHeading, table.review.showPayloadToggle]) {
+      expect(value).not.toMatch(/exat|exact|ser[áa]\s+enviado|will be sent/i);
+    }
+  });
+
+  /**
+   * Fix 2: `resultRecap.sent` once unconditionally called `final_answer`
+   * "a resposta reconstruída localmente" / "the answer reconstructed
+   * locally". `final_answer` may be the provider's response completely
+   * unchanged (see `ReconstructionStage`); only `buildReconstructionNote` in
+   * `ResultScreen.tsx` may make a reconstruction claim, and only when
+   * `reconstruction.attempted && changed_from_provider_response === true`.
+   * No string in `resultRecap` (any of the three provider-state variants)
+   * may claim a reconstruction happened.
+   */
+  it("resultRecap never claims a reconstruction -- that claim belongs only to result.reconstructionApplied", () => {
+    for (const value of Object.values(table.resultRecap)) {
+      if (typeof value === "string") {
+        expect(value).not.toMatch(/reconstru|restaur|restored/i);
+      }
+    }
+  });
+
+  /**
+   * Fix 3: `beforeAfter.originalCaption` once said "Ele não sai daqui." /
+   * "It does not leave." -- an absolute claim that does not hold for a
+   * PRESERVE segment (kept, sent unchanged) or a no-change request (nothing
+   * transformed, the same content crosses the boundary). No string in
+   * `beforeAfter` may assert the original never leaves, and the caption
+   * must still positively identify which side is the original.
+   */
+  it("no beforeAfter string claims the original never leaves the gateway", () => {
+    for (const value of Object.values(table.beforeAfter)) {
+      if (typeof value === "string") {
+        expect(value).not.toMatch(/n[ãa]o sai|does not leave|never leaves|nunca sai/i);
+      }
+    }
+  });
+
+  it("originalCaption still positively identifies the original side", () => {
+    expect(table.beforeAfter.originalCaption.toLowerCase()).toContain("original");
+  });
+});
+
 /** Type-level parity check: this line only compiles if AppCopy structurally
  * matches both tables -- see `Widen<T>` in `copy.ts`. Kept as a value (not
  * just a type assertion) so it participates in the module the way any other

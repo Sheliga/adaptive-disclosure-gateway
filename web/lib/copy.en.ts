@@ -154,8 +154,16 @@ export const en: AppCopy = {
     detectedCountLabel: "sensitive items detected",
     noneDetected: "No sensitive data was detected in this content.",
     nothingInSection: "No items in this category.",
-    willBeSentHeading: "What will be sent to the external LLM",
-    showPayloadToggle: "View the exact payload that would be sent",
+    /**
+     * #103 round-2 review fix (PR #108): used to read "What will be sent to
+     * the external LLM" / "View the exact payload that would be sent" --
+     * both promise a future-send byte-identity the preview only
+     * structurally guarantees for upload; paste/example recompute the
+     * decision at execute time with no binding to this preview. See
+     * `copy.ts`'s matching comment for the full rationale.
+     */
+    willBeSentHeading: "Representation prepared for the external model",
+    showPayloadToggle: "View the payload prepared in this review",
     payloadByteCountLabel: "bytes",
     blockedHeading: "Request blocked",
     blockedExplanation:
@@ -414,7 +422,14 @@ export const en: AppCopy = {
     intro:
       "Before anything is sent, the gateway transformed the highlighted passages locally. First, what you submitted; then, the representation prepared for the external model.",
     originalHeading: "Original",
-    originalCaption: "The content you submitted to the gateway. It does not leave.",
+    /**
+     * #103 round-2 review fix (PR #108): used to say "It does not leave." --
+     * an absolute claim that does not hold for a PRESERVE segment (kept,
+     * sent unchanged) or a no-change request. See `copy.ts`'s matching
+     * comment.
+     */
+    originalCaption:
+      "The original content received by the gateway. The representation prepared for disclosure appears alongside it.",
     transformationStep: "Local transformation in the gateway",
     disclosedHeadingReview: "Representation prepared for the external model",
     disclosedCaptionReview:
@@ -440,8 +455,17 @@ export const en: AppCopy = {
    */
   resultRecap: {
     heading: "What happened before sending",
+    /**
+     * #103 round-2 review fix (PR #108): used to unconditionally say "...
+     * this is the answer reconstructed locally." -- `final_answer` may be
+     * the provider's response completely unchanged. Only
+     * `result.reconstructionApplied` (via `buildReconstructionNote`) may
+     * make a reconstruction claim, and only when `reconstruction.attempted
+     * && changed_from_provider_response === true`. See `copy.ts`'s matching
+     * comment.
+     */
     sent:
-      "Before the external call, you reviewed this transformation performed by the gateway. The external model was then consulted, and this is the answer reconstructed locally.",
+      "Before the external call, you reviewed this transformation performed by the gateway. The external model was consulted, and this is the final answer presented by the gateway.",
     providerFailed:
       "The gateway transformed your content locally and tried to consult the external model, but the call failed: no answer was produced.",
     notSent:

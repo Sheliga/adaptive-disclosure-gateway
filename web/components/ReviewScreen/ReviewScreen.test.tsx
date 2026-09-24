@@ -69,13 +69,13 @@ function preview(
 
 /**
  * T30 / issue #82: the review hierarchy must read, in DOM order, "what was
- * detected" -> "what stays local" -> "exactly what will be sent" -> confirm
+ * detected" -> "what stays local" -> "what crosses the boundary" -> confirm
  * -- the decision the reviewer is being asked to make. This can fail from a
- * real defect: reordering sections, or losing the prominent "will be sent"
- * heading, breaks it.
+ * real defect: reordering sections, or losing the prominent boundary-crossing
+ * heading (`copy.review.willBeSentHeading`), breaks it.
  */
 describe("ReviewScreen -- hierarchy order (T30)", () => {
-  it("orders detected -> stays local -> will be sent -> confirm in the DOM", () => {
+  it("orders detected -> stays local -> what crosses the boundary -> confirm in the DOM", () => {
     render(
       <ReviewScreen
         preview={preview([category({ category: "cpf", crosses_trust_boundary: false })])}
@@ -98,7 +98,7 @@ describe("ReviewScreen -- hierarchy order (T30)", () => {
     }
   });
 
-  it("renders the prominent, unambiguously labelled 'will be sent' heading", () => {
+  it("renders the prominent, unambiguously labelled boundary-crossing heading", () => {
     render(
       <ReviewScreen preview={preview([category({})])} executeError={null} onConfirm={vi.fn()} onEdit={vi.fn()} />,
     );

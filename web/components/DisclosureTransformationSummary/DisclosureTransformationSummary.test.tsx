@@ -127,6 +127,26 @@ describe("DisclosureTransformationSummary -- available inspection (T32.3 / #103)
     expect(document.body.textContent).not.toMatch(/cruza a fronteira.*confirmar/);
   });
 
+  /**
+   * #103 round-2 review fix (PR #108): `beforeAfter.originalCaption` once
+   * read "Ele não sai daqui." / "It does not leave." -- an absolute claim
+   * that does not hold for a PRESERVE segment (kept, sent unchanged) or a
+   * no-change request. The caption must still render next to the "Original"
+   * heading (positively identifying that side) without asserting the
+   * original never leaves the gateway.
+   */
+  it("renders the original caption next to the Original heading, with no 'does not leave' claim", () => {
+    render(<DisclosureTransformationSummary inspection={available(SEGMENTS)} variant="review" />);
+
+    const originalHeading = screen.getByRole("heading", { name: copy.beforeAfter.originalHeading });
+    const caption = screen.getByText(copy.beforeAfter.originalCaption);
+    expect(caption).toBeInTheDocument();
+    expect(
+      originalHeading.compareDocumentPosition(caption) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(copy.beforeAfter.originalCaption).not.toMatch(/n[ãa]o sai|nunca sai/i);
+  });
+
   it("reads Original -> local transformation -> sent, in DOM order", () => {
     render(<DisclosureTransformationSummary inspection={available(SEGMENTS)} variant="review" />);
 

@@ -1,8 +1,11 @@
 /**
  * Screen 4 -- "Resultado" (`docs/advisor-demo.md`, reorganized by T30 /
- * issue #82). The primary output is the final reconstructed answer,
- * followed immediately by a short, data-derived protections summary.
- * Everything else is progressively disclosed below that:
+ * issue #82). The primary output is the final answer the gateway presents
+ * (`execute.final_answer`) -- NOT unconditionally "the reconstructed
+ * answer": `final_answer` may be the provider's response completely
+ * unchanged (round-2 #103 review fix, PR #108; see `buildReconstructionNote`
+ * below) -- followed immediately by a short, data-derived protections
+ * summary. Everything else is progressively disclosed below that:
  *
  *  - Level 2: an "Entender o que aconteceu" disclosure (collapsed by
  *    default) holding the `Local -> Provedor externo -> Local` recap, and

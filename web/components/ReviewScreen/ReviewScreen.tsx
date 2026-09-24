@@ -39,12 +39,13 @@
  *    -- prominently, under `copy.review.willBeSentHeading` -- what the
  *    gateway computed for this preview as the boundary-crossing categories,
  *    including the payload disclosure (still kept OUT of the DOM until its
- *    own toggle is opened, unchanged). This heading is forward-looking
- *    ("será enviado") and, for upload, is confirmation-bound to what
- *    `execute_document` actually sends; for paste/example, `executeDisclosure`
- *    recomputes the decision independently at confirm time (#103 review, PR
- *    #108), so this section shows what THIS preview computed, not a
- *    byte-identity guarantee with the later call.
+ *    own toggle is opened, unchanged). For upload, this is confirmation-bound
+ *    to what `execute_document` actually sends; for paste/example,
+ *    `executeDisclosure` recomputes the decision independently at confirm
+ *    time (#103 review, PR #108). The heading/toggle copy (round 2, PR #108)
+ *    therefore states what the gateway PREPARED for this preview, never a
+ *    "será enviado"/"exato" future-send byte-identity guarantee -- that
+ *    guarantee only holds for upload, not for every entry mode.
  *  - Level 2: the T27 transformation inspector, now itself behind an outer
  *    `copy.review.understandChangesToggle` disclosure -- so understanding
  *    *why* something changed is one click deeper than seeing *what* will be
@@ -73,9 +74,9 @@
  * GuidedFlow; any fetch failure is already `false`) AND
  * `preview.inspection !== null` agree -- neither the transparency nor the
  * vault flag ever implies it. Final order: heading -> "What you asked for"
- * -> "What the gateway did" -> detected / stays local / will be sent ->
- * Level 2 (detailed explanation) -> Level 3 (technical tools) -> consequence
- * -> Confirm.
+ * -> "What the gateway did" -> detected / stays local / prepared for
+ * disclosure -> Level 2 (detailed explanation) -> Level 3 (technical tools)
+ * -> consequence -> Confirm.
  */
 
 import { useState } from "react";

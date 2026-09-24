@@ -719,6 +719,72 @@ describe("ResultScreen -- before-sending recap (T32.3 / #103)", () => {
     expect(document.body.textContent).not.toMatch(/exatamente o que foi enviado/i);
   });
 
+  /**
+   * #103 round-2 review fix (PR #108): `resultRecap.sent` once unconditionally
+   * said the answer was "reconstruída localmente" / "reconstructed locally".
+   * `final_answer` may be the provider's response completely unchanged (see
+   * `ReconstructionStage`); only `buildReconstructionNote` may state a
+   * reconstruction happened, and only when `reconstruction.attempted &&
+   * changed_from_provider_response === true`. The recap itself must never
+   * make that claim, regardless of the reconstruction state -- so the whole
+   * rendered page (recap included) carries no reconstruction wording when
+   * that condition does not hold, even though the recap is shown.
+   *
+   * `final_answer` is overridden to plain, reconstruction-free text here:
+   * the shared `execute()` fixture's default answer text itself contains
+   * "reconstruída", which would otherwise make a body-text search for that
+   * word meaningless.
+   */
+  it.each([
+    ["not attempted", { attempted: false, reconstructed_hash: null, changed_from_provider_response: null }],
+    ["attempted but unchanged", { attempted: true, reconstructed_hash: "x", changed_from_provider_response: false }],
+  ] as const)(
+    "reconstruction %s: the recap is shown, and no reconstruction claim appears anywhere on the page",
+    (_label, reconstruction) => {
+      const e = execute({ final_answer: "Esta é a resposta do provedor.", reconstruction });
+      renderResult(e, AVAILABLE);
+
+      expect(within(recap()).getByText(copy.resultRecap.sent)).toBeInTheDocument();
+      expect(document.body.textContent).not.toMatch(/reconstru|restaur|restored/i);
+      expect(screen.queryByText(copy.result.reconstructionApplied)).not.toBeInTheDocument();
+    },
+  );
+
+  it("reconstruction attempted AND changed: the reconstruction claim comes only from result.reconstructionApplied, never from the recap itself", () => {
+    const e = execute({
+      final_answer: "Esta é a resposta do provedor.",
+      // `reconstructionNote` only renders when `summary.categories` is
+      // non-empty (see `buildProtectionsBreakdown`'s early return), so a
+      // category is required here for `result.reconstructionApplied` to
+      // have any chance of appearing at all.
+      summary: {
+        status: "allowed",
+        categories: [
+          {
+            category: "employee_name",
+            outcome: "pseudonymized",
+            action: "pseudonymize",
+            crosses_trust_boundary: true,
+            occurrence_count: 1,
+            required_for_task: null,
+            technical_reason: "r",
+            policy_version: null,
+            policy_restricted: null,
+            impossible_under_policy: null,
+          },
+        ],
+        detected_span_count: 1,
+        detected_categories: ["employee_name"],
+      },
+      reconstruction: { attempted: true, reconstructed_hash: "x", changed_from_provider_response: true },
+    });
+    renderResult(e, AVAILABLE);
+
+    expect(within(recap()).getByText(copy.resultRecap.sent)).toBeInTheDocument();
+    expect(within(recap()).queryByText(/reconstru|restaur|restored/i)).not.toBeInTheDocument();
+    expect(screen.getByText(copy.result.reconstructionApplied)).toBeInTheDocument();
+  });
+
   it("counts transformations by segment.action, not by category occurrence counts", () => {
     const e = execute({
       summary: {
