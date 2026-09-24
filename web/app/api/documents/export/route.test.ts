@@ -94,4 +94,22 @@ describe("POST /api/documents/export -- gated behind ADG_ENABLE_DEMO_TRANSPARENC
     expect(response.status).toBe(503);
     expect(await response.text()).toBe(upstreamBody);
   });
+
+  it("public posture: inspection on, transparency/vault unset -> 404 and zero upstream calls", async () => {
+    // The three demo capabilities are independent env-var gates; none may
+    // ever be derived from another. This pins that a deployment which
+    // enables ADG_ENABLE_DEMO_INSPECTION alone does not also, as a side
+    // effect, open the export proxy.
+    process.env.ADG_ENABLE_DEMO_INSPECTION = "1";
+    delete process.env[DEMO_TRANSPARENCY_ENV_VAR];
+    delete process.env.ADG_ENABLE_DEMO_VAULT_EXPLORER;
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await POST(multipartRequest());
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ detail: "not found", kind: "DemoTransparencyDisabled" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

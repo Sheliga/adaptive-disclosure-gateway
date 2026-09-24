@@ -67,26 +67,29 @@ services:
       # falls back to the sealer's own default); only a non-blank,
       # out-of-range or non-integer value fails closed at startup.
       ADG_RESTORE_HANDLE_TTL_SECONDS: ${ADG_RESTORE_HANDLE_TTL_SECONDS:-}
-      # T27/T28 / issues #69-#70. Server-side opt-in for the demo
-      # transparency surfaces (the T27 preview inspector's data now; a later
-      # web export/restore proxy reads this at request time to gate itself,
-      # per T28). Not a secret -- it carries no key material and reveals no
-      # credential -- but it widens what a preview response exposes, so it
-      # defaults OFF (deliberately OPTIONAL, `:-`, not `:?`: leaving it unset
-      # blocks nothing else and simply keeps every response's `inspection`
-      # field `null`, exactly today's behavior). Enable only in a controlled
-      # environment for advisor evaluation -- never on a public,
-      # unauthenticated hosted URL.
-      ADG_ENABLE_DEMO_TRANSPARENCY: ${ADG_ENABLE_DEMO_TRANSPARENCY:-}
+      # T27 / issue #69, decoupled by T32.3 / issue #103. Server-side opt-in
+      # for the request-scoped inspection projection: each preview response
+      # carries `inspection`, the ordered before/after of the content that
+      # same caller just submitted -- nothing beyond that request. Not a
+      # secret. Deliberately OPTIONAL (`:-`, not `:?`) and off by default:
+      # unset keeps every response's `inspection` field `null`. Independent
+      # of the web service's ADG_ENABLE_DEMO_TRANSPARENCY (export/restore)
+      # and of ADG_ENABLE_DEMO_VAULT_EXPLORER below -- none implies another.
+      # The api no longer reads ADG_ENABLE_DEMO_TRANSPARENCY at all, so it is
+      # not passed to this service: export/restore are gated by the web
+      # proxy and, here, by ADG_RESTORE_HANDLE_SECRET. (compose.prod.yaml,
+      # the public URL, fixes inspection ON and the other two OFF.)
+      ADG_ENABLE_DEMO_INSPECTION: ${ADG_ENABLE_DEMO_INSPECTION:-}
       # T29 / issue #72. Server-side opt-in for the local demo vault
       # explorer -- a demo/debug-only surface that reveals ORIGINAL values
       # (not just that pseudonymization happened) to whoever can reach the
       # web origin, for one decision's own reversible entries. Independent
-      # of ADG_ENABLE_DEMO_TRANSPARENCY above: enabling one must never
-      # enable or require the other. Deliberately OPTIONAL (`:-`, not
-      # `:?`): unset keeps every preview's `vault_explorer_token` null and
-      # POST /demo/vault-explorer answering a fixed 404, exactly like the
-      # transparency flag's own off-by-default posture. Enable only in a
+      # of ADG_ENABLE_DEMO_INSPECTION above and of the web service's
+      # ADG_ENABLE_DEMO_TRANSPARENCY: enabling one must never enable or
+      # require another. Deliberately OPTIONAL (`:-`, not `:?`): unset keeps
+      # every preview's `vault_explorer_token` null and POST
+      # /demo/vault-explorer answering a fixed 404, exactly like the
+      # inspection flag's own off-by-default posture. Enable only in a
       # controlled environment for advisor evaluation -- never on a public,
       # unauthenticated hosted URL.
       ADG_ENABLE_DEMO_VAULT_EXPLORER: ${ADG_ENABLE_DEMO_VAULT_EXPLORER:-}
@@ -137,12 +140,19 @@ services:
       # localhost/127.0.0.1 (those would resolve to the web container
       # itself).
       ADG_API_BASE_URL: http://api:8000
-      # T27/T28 / issues #69-#70. Mirrors the api service's own variable
-      # above -- read at request time (not baked in at build time, exactly
+      # T32.3 / issue #103. Mirrors the api service's own
+      # ADG_ENABLE_DEMO_INSPECTION -- read at request time by
+      # /api/demo/features, so the UI renders the before/after only when this
+      # flag and a non-null `preview.inspection` agree. Optional, off by
+      # default, independent of the two flags below.
+      ADG_ENABLE_DEMO_INSPECTION: ${ADG_ENABLE_DEMO_INSPECTION:-}
+      # T28 / issue #70. The export/restore (re-identification) gate, now
+      # carried by this service only (the api no longer reads it) -- read at
+      # request time (not baked in at build time, exactly
       # like ADG_API_BASE_URL) by the web app's own export/restore proxy
       # routes (web/lib/demoTransparency.ts) to decide whether to forward to
-      # the upstream api service at all. Same optional, off-by-default
-      # posture as on api: unset here (the default) keeps both proxy routes
+      # the upstream api service at all. Optional and off by default:
+      # unset here (the default) keeps both proxy routes
       # returning a fixed 404 without ever calling the api service -- see
       # TestWebExportRestoreIsGated in tests/test_demo_deployment_config.py,
       # which pins that the gate is checked before any proxy call.

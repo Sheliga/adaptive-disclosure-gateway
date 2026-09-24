@@ -8,12 +8,15 @@
  * pins those two literal path strings to appearing only in the route
  * handlers themselves and in `lib/api.ts`.
  *
- * `isDemoTransparencyEnabled` mirrors the Python API's own flag-parsing rule
- * BYTE-IDENTICALLY (`application/settings.py`'s `DEMO_TRANSPARENCY_ENV_VAR`
- * / `demo_transparency_enabled`): enabled iff the variable is set AND its
+ * `isDemoTransparencyEnabled`'s parsing rule is identical to the other two
+ * demo gates (`demoInspection.ts` / `demoVaultExplorer.ts`, and the Python
+ * API's own `application/settings.py::demo_inspection_enabled` /
+ * `demo_vault_explorer_enabled`): enabled iff the variable is set AND its
  * stripped value is exactly `"1"` -- unset, blank, `"0"`, `"true"`, `"yes"`
  * or anything else is disabled. Disabled is the safe direction, so there is
- * no startup refusal for an unrecognized value.
+ * no startup refusal for an unrecognized value. The Python API no longer
+ * reads `ADG_ENABLE_DEMO_TRANSPARENCY` at all (issue #103); this gate is now
+ * enforced only here, at the web proxy.
  *
  * This module is server-only. It must never be imported by client
  * ("use client") code, and the flag must never be exposed as a

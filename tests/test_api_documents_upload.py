@@ -525,7 +525,14 @@ def test_a_tampered_confirmation_token_never_reaches_the_provider():
 
     preview = upload(client).json()
     token = preview["confirmation_token"]
-    tampered = token[:-1] + ("A" if token[-1] != "A" else "B")
+    # Tamper an INTERIOR character: the final base64url character carries
+    # unused padding bits, so swapping it (e.g. "B" -> "A") can decode to the
+    # very same bytes and leave the token valid -- which made this test fail
+    # on roughly 3 in 64 runs, depending on the random signature.
+    index = len(token) // 2
+    while not token[index].isalnum():
+        index += 1
+    tampered = token[:index] + ("A" if token[index] != "A" else "B") + token[index + 1 :]
 
     response = upload(client, path="/documents/execute", confirmation_token=tampered)
 

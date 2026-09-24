@@ -226,30 +226,38 @@ class TestApiServiceSecurity:
                 f"the whole stack for an optional feature); got {value!r}"
             )
 
-    def test_api_service_carries_the_optional_demo_transparency_variable(self) -> None:
-        """T27/T28 / issues #69-#70. Like the restore-handle variables above,
-        this must be OPTIONAL (``:-``): the demo transparency surfaces are an
-        opt-in layered on top of the demo, not a precondition for it -- an
-        unconfigured value must not block startup of the whole stack, it
-        must simply keep every response's ``inspection`` field ``null``
-        (the historical, pre-T27 behavior).
+    def test_api_service_carries_the_optional_demo_inspection_variable(self) -> None:
+        """T32.3 / issue #103. ``ADG_ENABLE_DEMO_INSPECTION`` gates the
+        request-scoped ``preview.inspection`` projection on the api. Like the
+        restore-handle variables above it is OPTIONAL (``:-``) and off by
+        default in this self-hosted stack: unset simply keeps every
+        response's ``inspection`` field ``null``.
         """
         api = _service(_load_compose(), "api")
         env = _environment_mapping(api)
-        name = "ADG_ENABLE_DEMO_TRANSPARENCY"
+        name = "ADG_ENABLE_DEMO_INSPECTION"
         assert name in env, f"api service must carry {name}"
         value = env[name]
         assert value.startswith("${") and value.endswith("}"), (
             f"{name} on the api service must be a compose interpolation; got {value!r}"
         )
-        assert ":-" in value, (
-            f"{name} must use the OPTIONAL interpolation form ('${{{name}:-}}'), "
-            f"not a required ('${{{name}:?...}}') one; got {value!r}"
+        assert ":-" in value and ":?" not in value, (
+            f"{name} must use the OPTIONAL interpolation form; got {value!r}"
         )
-        assert ":?" not in value, (
-            f"{name} must not be a required interpolation (that would block startup of "
-            f"the whole stack for an optional feature); got {value!r}"
+        assert not re.search(rf"\{{{name}:-1\}}", value), (
+            f"{name} must default to off in the demo stack; got {value!r}"
         )
+
+    def test_api_service_does_not_carry_the_transparency_variable(self) -> None:
+        """T32.3 / issue #103. The Python API no longer reads
+        ``ADG_ENABLE_DEMO_TRANSPARENCY`` (it used to gate inspection there).
+        Passing it to api anyway would suggest it still does something on
+        that side -- or invite someone to make it gate inspection again.
+        Export/restore stay gated by the web proxy (which does carry it) and,
+        on api, by ``ADG_RESTORE_HANDLE_SECRET``.
+        """
+        api = _service(_load_compose(), "api")
+        assert "ADG_ENABLE_DEMO_TRANSPARENCY" not in _environment_mapping(api)
 
     def test_api_service_carries_the_optional_demo_vault_explorer_variable(self) -> None:
         """T29 / issue #72. Independent of ``ADG_ENABLE_DEMO_TRANSPARENCY``
@@ -331,6 +339,24 @@ class TestWebServiceSecurity:
             f"{name} must use the OPTIONAL interpolation form; got {value!r}"
         )
         assert not name.startswith("NEXT_PUBLIC_")
+
+    def test_web_service_carries_the_optional_demo_inspection_variable(self) -> None:
+        """T32.3 / issue #103. The web service reports inspection through
+        ``/api/demo/features`` (the UI only renders the before/after when
+        both that flag and a non-null ``preview.inspection`` agree). Same
+        OPTIONAL, off-by-default posture as on api, never NEXT_PUBLIC_*.
+        """
+        web = _service(_load_compose(), "web")
+        env = _environment_mapping(web)
+        name = "ADG_ENABLE_DEMO_INSPECTION"
+        assert name in env, f"web service must carry {name}"
+        value = env[name]
+        assert value.startswith("${") and value.endswith("}"), (
+            f"{name} on the web service must be a compose interpolation; got {value!r}"
+        )
+        assert ":-" in value and ":?" not in value, (
+            f"{name} must use the OPTIONAL interpolation form; got {value!r}"
+        )
 
     def test_web_service_carries_the_optional_demo_vault_explorer_variable(self) -> None:
         """T29 / issue #72. Mirrors the api service's own pin above; not yet
@@ -719,6 +745,7 @@ class TestWebExportRestoreIsGated:
     def test_no_file_references_next_public_demo_transparency_or_other_secrets(self) -> None:
         forbidden = (
             "NEXT_PUBLIC_ADG_ENABLE_DEMO_TRANSPARENCY",
+            "NEXT_PUBLIC_ADG_ENABLE_DEMO_INSPECTION",
             "ADG_RESTORE_HANDLE_SECRET",
             "ADG_PREVIEW_CONFIRMATION_SECRET",
         )
@@ -731,6 +758,43 @@ class TestWebExportRestoreIsGated:
             if any(name in text for name in forbidden):
                 offenders.append(path)
         assert not offenders, f"no file under web/ may reference {forbidden!r}: {offenders!r}"
+
+    def test_demo_inspection_gate_module_exists_and_is_read_in_exactly_one_place(self) -> None:
+        """T32.3 (issue #103): `lib/demoInspection.ts` is the sole web-tier
+        reader of `ADG_ENABLE_DEMO_INSPECTION`. Unlike the export/restore and
+        vault explorer gates, no route handler is itself gated by this flag
+        -- the inspection payload arrives inside the preview response, gated
+        by the Python API's own `demo_inspection_enabled`. So the only two
+        legitimate web-source references are the module that defines the
+        constant, and `app/api/demo/features/route.ts`, which reports the
+        flag's state as a UX signal. Any other file referencing the literal
+        string would mean the flag is being read (or re-declared) somewhere
+        else, which is exactly the kind of drift this static pin exists to
+        catch before it also reaches code that has not been written yet.
+        """
+        gate_module = _WEB_ROOT / "lib" / "demoInspection.ts"
+        assert gate_module.is_file(), f"expected {gate_module} to exist"
+
+        allowed = {
+            gate_module.resolve(),
+            (_WEB_ROOT / "app" / "api" / "demo" / "features" / "route.ts").resolve(),
+        }
+        offenders = []
+        for path in _web_source_files():
+            if path.name.endswith((".test.ts", ".test.tsx")):
+                continue
+            if path.resolve() in allowed:
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            if "ADG_ENABLE_DEMO_INSPECTION" in text:
+                offenders.append(path)
+        assert not offenders, (
+            "only lib/demoInspection.ts and app/api/demo/features/route.ts may reference "
+            f"ADG_ENABLE_DEMO_INSPECTION outside tests: {offenders!r}"
+        )
 
     def test_demo_features_route_declares_force_dynamic(self) -> None:
         features_route = _WEB_ROOT / "app" / "api" / "demo" / "features" / "route.ts"

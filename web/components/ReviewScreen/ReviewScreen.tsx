@@ -36,9 +36,16 @@
  * mounted in the JSX tree changed:
  *
  *  - Level 1 (always visible): what was detected, what stays local, and
- *    -- prominently, under `copy.review.willBeSentHeading` -- exactly what
- *    will cross the trust boundary, including the payload disclosure
- *    (still kept OUT of the DOM until its own toggle is opened, unchanged).
+ *    -- prominently, under `copy.review.willBeSentHeading` -- what the
+ *    gateway computed for this preview as the boundary-crossing categories,
+ *    including the payload disclosure (still kept OUT of the DOM until its
+ *    own toggle is opened, unchanged). For upload, this is confirmation-bound
+ *    to what `execute_document` actually sends; for paste/example,
+ *    `executeDisclosure` recomputes the decision independently at confirm
+ *    time (#103 review, PR #108). The heading/toggle copy (round 2, PR #108)
+ *    therefore states what the gateway PREPARED for this preview, never a
+ *    "será enviado"/"exato" future-send byte-identity guarantee -- that
+ *    guarantee only holds for upload, not for every entry mode.
  *  - Level 2: the T27 transformation inspector, now itself behind an outer
  *    `copy.review.understandChangesToggle` disclosure -- so understanding
  *    *why* something changed is one click deeper than seeing *what* will be
@@ -49,33 +56,66 @@
  *    surface. This wrapper itself is only rendered when at least one of the
  *    two panels would actually show something, so a deployment with both
  *    demo flags off renders no empty "technical tools" toggle at all.
+ *
+ * T32.2 / issue #102 made this a true check-before-send, in this order:
+ * heading -> "What you asked for" (`ReviewContextSummary`, re-presenting the
+ * retained compose context, with the single "Change" action) -> the Level-1
+ * `DisclosureOverview` -> Levels 2/3 -> the plain-language consequence of
+ * confirming -> the CTA. "Change" calls `onEdit`, which GuidedFlow wires to
+ * `window.history.back()` -- the same history traversal as the shell's Back
+ * button, back to the retained Compose snapshot -- never a parallel reducer
+ * transition. The post-send, read-only counterpart is `ApprovedReviewScreen`,
+ * a different component over a different (token-free) flow state.
+ *
+ * T32.3 / issue #103 adds the PRIMARY before/after right after "What you
+ * asked for": `DisclosureTransformationSummary`, visible by default, built
+ * only from `preview.inspection`. Both it and the Level-2 inspector render
+ * only when `demoInspectionEnabled` (the INSPECTION capability, fetched by
+ * GuidedFlow; any fetch failure is already `false`) AND
+ * `preview.inspection !== null` agree -- neither the transparency nor the
+ * vault flag ever implies it. Final order: heading -> "What you asked for"
+ * -> "What the gateway did" -> detected / stays local / prepared for
+ * disclosure -> Level 2 (detailed explanation) -> Level 3 (technical tools)
+ * -> consequence -> Confirm.
  */
 
 import { useState } from "react";
 
 import { useCopy } from "@/i18n/useLocale";
 import type { DisplayError } from "@/lib/api";
-import type { PreviewResponse } from "@/lib/contracts";
+import type { ExampleSummary, PreviewResponse } from "@/lib/contracts";
 import { initialComposeState, type ComposeState } from "@/lib/flow";
 
-import { CategoryOutcomeRow } from "../CategoryOutcomeRow/CategoryOutcomeRow";
 import { DisclosureInspector } from "../DisclosureInspector/DisclosureInspector";
+import { DisclosureTransformationSummary } from "../DisclosureTransformationSummary/DisclosureTransformationSummary";
 import { ExportRestorePanel } from "../ExportRestorePanel/ExportRestorePanel";
 import { VaultExplorerPanel } from "../VaultExplorerPanel/VaultExplorerPanel";
+import { DisclosureOverview } from "./DisclosureOverview";
+import { ReviewContextSummary } from "./ReviewContextSummary";
 import styles from "./ReviewScreen.module.css";
 
 export interface ReviewScreenProps {
   preview: PreviewResponse;
   executeError: DisplayError | null;
   onConfirm: () => void;
-  onCancel: () => void;
+  /** T32.2 / #102: the "Change" action -- GuidedFlow wires it to browser history Back. */
+  onEdit: () => void;
   /**
-   * The compose state this preview was built from -- threaded through only
-   * for `ExportRestorePanel`. Optional, defaulting to the initial (example
-   * mode) compose state, so existing callers/tests that never render the
-   * panel (`demoTransparencyEnabled` false, the default) are unaffected.
+   * The compose state this preview was built from -- rendered as the "What
+   * you asked for" context (T32.2 / #102) and threaded through to
+   * `ExportRestorePanel`. Optional, defaulting to the initial (example mode)
+   * compose state, so existing callers/tests keep working.
    */
   compose?: ComposeState;
+  /** The examples catalog, used only to give an example its human label. */
+  examples?: readonly ExampleSummary[] | null;
+  /**
+   * T32.3 / issue #103. The INSPECTION capability (`demo_inspection_enabled`
+   * from `getDemoFeatures`). Defaults to `false`: with it off, neither the
+   * before/after nor the detailed inspector renders, even if the body
+   * carries an inspection.
+   */
+  demoInspectionEnabled?: boolean;
   /** T28 / issue #70. See this module's docstring. Defaults to `false` (disabled) so existing callers/tests are unaffected. */
   demoTransparencyEnabled?: boolean;
   /**
@@ -97,20 +137,19 @@ export function ReviewScreen({
   preview,
   executeError,
   onConfirm,
-  onCancel,
+  onEdit,
   compose = initialComposeState,
+  examples = null,
+  demoInspectionEnabled = false,
   demoTransparencyEnabled = false,
   demoVaultExplorerEnabled = false,
 }: ReviewScreenProps) {
   const copy = useCopy();
-  const [payloadOpen, setPayloadOpen] = useState(false);
   const [changesOpen, setChangesOpen] = useState(false);
   const [technicalToolsOpen, setTechnicalToolsOpen] = useState(false);
 
   const isBlocked = preview.summary.status === "blocked";
-  const categories = preview.summary.categories;
-  const localCategories = categories.filter((category) => !category.crosses_trust_boundary);
-  const sentCategories = categories.filter((category) => category.crosses_trust_boundary);
+  const inspection = demoInspectionEnabled ? preview.inspection : null;
 
   const showExportRestore = demoTransparencyEnabled && !isBlocked;
   const showVaultExplorer = demoVaultExplorerEnabled;
@@ -122,63 +161,25 @@ export function ReviewScreen({
         {copy.review.heading}
       </h1>
 
-      <div>
-        <h2 className={styles.subheading}>{copy.sectionHeadings.whatWasDetected}</h2>
-        {categories.length === 0 ? (
-          <p>{copy.review.noneDetected}</p>
-        ) : (
-          <p>
-            {preview.summary.detected_span_count} {copy.review.detectedCountLabel}
-          </p>
-        )}
-      </div>
+      <ReviewContextSummary
+        compose={compose}
+        examples={examples}
+        action={
+          <button type="button" className={styles.cancelButton} onClick={onEdit}>
+            {copy.review.changeRequest}
+          </button>
+        }
+      />
 
-      {isBlocked && (
-        <div role="alert" className={styles.blocked}>
-          <h2>{copy.review.blockedHeading}</h2>
-          <p>{copy.review.blockedExplanation}</p>
-        </div>
-      )}
+      {inspection !== null && <DisclosureTransformationSummary inspection={inspection} variant="review" />}
 
-      <div>
-        <h2 className={styles.subheading}>{copy.sectionHeadings.whatStaysLocal}</h2>
-        {localCategories.length === 0 ? (
-          <p>{copy.review.nothingInSection}</p>
-        ) : (
-          <ul className={styles.list}>
-            {localCategories.map((category) => (
-              <CategoryOutcomeRow key={category.category} category={category} />
-            ))}
-          </ul>
-        )}
-      </div>
+      <DisclosureOverview
+        preview={preview}
+        sentHeading={copy.review.willBeSentHeading}
+        payloadToggleLabel={copy.review.showPayloadToggle}
+      />
 
-      <div>
-        <h2 className={styles.subheading}>{copy.review.willBeSentHeading}</h2>
-        {sentCategories.length === 0 ? (
-          <p>{copy.review.nothingInSection}</p>
-        ) : (
-          <ul className={styles.list}>
-            {sentCategories.map((category) => (
-              <CategoryOutcomeRow key={category.category} category={category} />
-            ))}
-          </ul>
-        )}
-
-        <details open={payloadOpen} onToggle={(event) => setPayloadOpen(event.currentTarget.open)}>
-          <summary>{copy.review.showPayloadToggle}</summary>
-          {payloadOpen && (
-            <>
-              <pre className={styles.payload}>{preview.external_payload}</pre>
-              <p>
-                {preview.payload_byte_count} {copy.review.payloadByteCountLabel}
-              </p>
-            </>
-          )}
-        </details>
-      </div>
-
-      {preview.inspection !== null && (
+      {inspection !== null && (
         <details
           className={styles.levelDisclosure}
           open={changesOpen}
@@ -187,7 +188,7 @@ export function ReviewScreen({
           <summary>{copy.review.understandChangesToggle}</summary>
           {changesOpen && (
             <DisclosureInspector
-              inspection={preview.inspection}
+              inspection={inspection}
               categories={preview.summary.categories}
               treatment={preview.treatment}
               strategy={preview.strategy}
@@ -214,21 +215,25 @@ export function ReviewScreen({
       )}
 
       {executeError && (
-        <p role="alert" className={styles.error}>
-          {executeError.message}
-        </p>
+        <div>
+          <p role="alert" className={styles.error}>
+            {executeError.message}
+          </p>
+          <p className={styles.explanation}>{copy.review.executeErrorNoAutoRetry}</p>
+        </div>
       )}
 
-      <div className={styles.actions}>
-        <button type="button" className={styles.cancelButton} onClick={onCancel}>
-          {copy.review.backToCompose}
-        </button>
-        {!isBlocked && (
-          <button type="button" className={styles.confirmButton} onClick={onConfirm}>
-            {copy.review.confirmSend}
-          </button>
-        )}
-      </div>
+      {!isBlocked && (
+        <div className={styles.decision}>
+          <p>{copy.review.confirmConsequence}</p>
+          <p className={styles.explanation}>{copy.review.afterSendNotice}</p>
+          <div className={styles.actions}>
+            <button type="button" className={styles.confirmButton} onClick={onConfirm}>
+              {copy.review.confirmSend}
+            </button>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

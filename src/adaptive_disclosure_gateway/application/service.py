@@ -69,9 +69,10 @@ deterministic. See that method's own docstring and
 
 ``preview``'s ``DisclosurePreview.inspection`` (T27 / issue #69): the visual
 diff/inspector projection for the advisor demo, populated only when this
-service was constructed with ``demo_transparency_enabled=True`` (see
-``application/settings.demo_transparency_enabled``, gated by
-``ADG_ENABLE_DEMO_TRANSPARENCY``). Built by ``application/inspection.build_inspection``
+service was constructed with ``demo_inspection_enabled=True`` (see
+``application/settings.demo_inspection_enabled``, gated by
+``ADG_ENABLE_DEMO_INSPECTION`` since T32.3 / issue #103 -- independent of
+export/restore and of the vault explorer). Built by ``application/inspection.build_inspection``
 from the exact same ``DisclosureDecision`` ``preview`` already computed --
 no second decision phase. ``preview_document`` inherits it for free by
 wrapping ``preview``; ``export``, ``execute``, ``execute_document`` and
@@ -332,7 +333,7 @@ class DisclosureApplicationService:
         document_parser: DocumentParser | None = None,
         preview_confirmation_signer: PreviewConfirmationSigner | None = None,
         restore_handle_sealer: RestoreHandleSealer | None = None,
-        demo_transparency_enabled: bool = False,
+        demo_inspection_enabled: bool = False,
         demo_vault_explorer_enabled: bool = False,
     ) -> None:
         self._policy_repository = policy_repository
@@ -378,15 +379,16 @@ class DisclosureApplicationService:
             if restore_handle_sealer is not None
             else RestoreHandleSealer(secret=None)
         )
-        # T27 / issue #69. Gates the demo transparency (visual diff/
-        # inspector) projection -- see ``application/inspection.py`` and
-        # ``application/settings.demo_transparency_enabled``. Default
+        # T27 / issue #69, T32.3 / issue #103. Gates the request-scoped
+        # inspection (before/after) projection -- see
+        # ``application/inspection.py`` and
+        # ``application/settings.demo_inspection_enabled``. Default
         # disabled: only ``preview``/``preview_document`` ever populate
         # ``DisclosurePreview.inspection`` when this is ``True``; it never
         # changes ``export``/``execute``/``execute_document``/
         # ``compare_strategies`` behavior.
-        self._demo_transparency_enabled = demo_transparency_enabled
-        # T29 / issue #72. Independent of ``_demo_transparency_enabled``
+        self._demo_inspection_enabled = demo_inspection_enabled
+        # T29 / issue #72. Independent of ``_demo_inspection_enabled``
         # above -- enabling one must never enable or require the other. The
         # sealer is constructed unconditionally (its per-process random key
         # costs nothing to generate and is never used unless the flag is on
@@ -432,7 +434,7 @@ class DisclosureApplicationService:
                 treatment_code=treatment_code,
                 context=context,
                 decision=decision,
-                include_inspection=self._demo_transparency_enabled,
+                include_inspection=self._demo_inspection_enabled,
                 include_vault_explorer_token=self._demo_vault_explorer_enabled,
             )
 
@@ -472,7 +474,7 @@ class DisclosureApplicationService:
         to build the confirmation state, never returned to a caller) never
         pay for or expose the T27 / issue #69 inspection projection -- only
         ``preview`` opts in, and only when
-        ``self._demo_transparency_enabled`` is set. No second decision phase
+        ``self._demo_inspection_enabled`` is set. No second decision phase
         is run either way: ``build_inspection`` re-derives the projection
         from the SAME ``decision`` this method was handed.
 

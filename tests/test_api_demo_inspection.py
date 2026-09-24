@@ -1,6 +1,6 @@
-"""T27 / issue #69: the HTTP surface of the demo transparency flag
-(``ADG_ENABLE_DEMO_TRANSPARENCY`` / ``DisclosureApplicationService``'s
-``demo_transparency_enabled``) and its inspection projection on
+"""T27 / issue #69: the HTTP surface of the demo inspection flag
+(``ADG_ENABLE_DEMO_INSPECTION`` / ``DisclosureApplicationService``'s
+``demo_inspection_enabled``) and its inspection projection on
 ``POST /disclosure/preview`` / ``POST /documents/preview``.
 
 Adversarial sections mirror ``tests/test_telemetry_privacy.py`` (span
@@ -46,8 +46,8 @@ def _upload_document_preview(client, *, document_parser_calls=None):
 # --- default (flag off) vs. enabled ------------------------------------------
 
 
-def test_preview_inspection_is_null_when_demo_transparency_is_disabled():
-    client = build_client(build_service(RecordingProvider(), demo_transparency_enabled=False))
+def test_preview_inspection_is_null_when_demo_inspection_is_disabled():
+    client = build_client(build_service(RecordingProvider(), demo_inspection_enabled=False))
 
     response = client.post(
         "/disclosure/preview", json={"text": HR_TEXT, "task": "summarize personnel record"}
@@ -59,8 +59,8 @@ def test_preview_inspection_is_null_when_demo_transparency_is_disabled():
     assert body["inspection"] is None
 
 
-def test_preview_inspection_is_populated_when_demo_transparency_is_enabled():
-    client = build_client(build_service(RecordingProvider(), demo_transparency_enabled=True))
+def test_preview_inspection_is_populated_when_demo_inspection_is_enabled():
+    client = build_client(build_service(RecordingProvider(), demo_inspection_enabled=True))
 
     response = client.post(
         "/disclosure/preview", json={"text": HR_TEXT, "task": "summarize personnel record"}
@@ -81,14 +81,14 @@ def test_documents_preview_inspection_is_null_when_disabled_and_populated_when_e
         provider=RecordingProvider(),
         default_context=default_context(),
         document_parser=StubContractParser(),
-        demo_transparency_enabled=False,
+        demo_inspection_enabled=False,
     )
     enabled_service = DisclosureApplicationService(
         policy_repository=policy_repository(),
         provider=RecordingProvider(),
         default_context=default_context(),
         document_parser=StubContractParser(),
-        demo_transparency_enabled=True,
+        demo_inspection_enabled=True,
     )
 
     disabled_body = _upload_document_preview(_document_client(disabled_service)).json()
@@ -102,14 +102,14 @@ def test_documents_preview_inspection_is_null_when_disabled_and_populated_when_e
     assert "confirmation_token" in enabled_body
 
 
-def test_health_and_ready_are_unaffected_by_the_demo_transparency_flag():
+def test_health_and_ready_are_unaffected_by_the_demo_inspection_flag():
     # FakeProvider specifically (not RecordingProvider, an unrecognized
     # provider class that /ready already reports as not-ready for reasons
     # unrelated to this flag) -- isolates this pin to the flag's own effect.
     from adaptive_disclosure_gateway.providers import FakeProvider
 
-    disabled_client = build_client(build_service(FakeProvider(), demo_transparency_enabled=False))
-    enabled_client = build_client(build_service(FakeProvider(), demo_transparency_enabled=True))
+    disabled_client = build_client(build_service(FakeProvider(), demo_inspection_enabled=False))
+    enabled_client = build_client(build_service(FakeProvider(), demo_inspection_enabled=True))
 
     assert disabled_client.get("/health").json() == enabled_client.get("/health").json()
     disabled_ready = disabled_client.get("/ready")
@@ -126,14 +126,14 @@ OTHER_TEXT = "Employee: Carlos Lima\nCPF: 987.654.321-00\nDepartment: Finance\n"
 
 
 def test_no_mapping_travels_between_two_previews_on_a_shared_service_instance():
-    """One service instance (shared in-process vault), transparency on:
+    """One service instance (shared in-process vault), inspection on:
     preview a text containing a sensitive value (pseudonymized under B2),
     then preview a DIFFERENT text without that value. The second response's
     raw JSON must contain neither the first value nor its pseudonym --
     proving the inspection surface exposes only THIS request's own decision,
     never anything derived from the shared vault's other entries.
     """
-    service = build_service(RecordingProvider(), demo_transparency_enabled=True)
+    service = build_service(RecordingProvider(), demo_inspection_enabled=True)
     client = build_client(service)
 
     first = client.post(
@@ -168,8 +168,8 @@ def test_no_mapping_travels_between_two_previews_on_a_shared_service_instance():
 # --- adversarial: side channels (span attributes, raw response) ------------
 
 
-def test_demo_transparency_span_attributes_never_leak_sensitive_values(recorded_spans):
-    service = build_service(RecordingProvider(), demo_transparency_enabled=True)
+def test_demo_inspection_span_attributes_never_leak_sensitive_values(recorded_spans):
+    service = build_service(RecordingProvider(), demo_inspection_enabled=True)
     client = build_client(service)
 
     response = client.post(
@@ -189,7 +189,7 @@ def test_demo_transparency_span_attributes_never_leak_sensitive_values(recorded_
     )
 
 
-def test_demo_transparency_inspection_shows_the_authorized_value_for_this_request_only():
+def test_demo_inspection_inspection_shows_the_authorized_value_for_this_request_only():
     """The inspection surface is DELIBERATELY authorized to show the
     original value next to what was disclosed for THIS request's own
     decision (that is the entire pedagogical point of T27 / issue #69 --
@@ -200,7 +200,7 @@ def test_demo_transparency_inspection_shows_the_authorized_value_for_this_reques
     change does not confuse "shows the original for this request" with a
     leak and silently strip it.
     """
-    service = build_service(RecordingProvider(), demo_transparency_enabled=True)
+    service = build_service(RecordingProvider(), demo_inspection_enabled=True)
     client = build_client(service)
 
     response = client.post(

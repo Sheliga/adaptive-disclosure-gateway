@@ -1132,8 +1132,16 @@ describe("200 response validation — examples and health", () => {
  * T28 / issue #70: getDemoFeatures, exportDocument, restoreText.
  */
 
-function demoFeaturesBody(enabled: boolean, vaultExplorerEnabled = false): DemoFeaturesResponse {
-  return { demo_transparency_enabled: enabled, demo_vault_explorer_enabled: vaultExplorerEnabled };
+function demoFeaturesBody(
+  enabled: boolean,
+  vaultExplorerEnabled = false,
+  inspectionEnabled = false,
+): DemoFeaturesResponse {
+  return {
+    demo_inspection_enabled: inspectionEnabled,
+    demo_transparency_enabled: enabled,
+    demo_vault_explorer_enabled: vaultExplorerEnabled,
+  };
 }
 
 function exportBody(): ExportResponse {
@@ -1196,6 +1204,23 @@ describe("getDemoFeatures — calls the local proxy route and validates the body
 
     expect((await getDemoFeatures()).ok).toBe(false);
   });
+
+  it("rejects a 200 body missing demo_inspection_enabled entirely", async () => {
+    const payload = demoFeaturesBody(true, true, true) as unknown as Record<string, unknown>;
+    delete payload.demo_inspection_enabled;
+    stub200(payload);
+
+    expect((await getDemoFeatures()).ok).toBe(false);
+  });
+
+  it.each(["1", "true", 1, null])(
+    "rejects a 200 whose demo_inspection_enabled is %j rather than a real boolean",
+    async (badValue) => {
+      stub200({ ...demoFeaturesBody(true, true, true), demo_inspection_enabled: badValue });
+
+      expect((await getDemoFeatures()).ok).toBe(false);
+    },
+  );
 
   it("treats a 404 (disabled) the same fail-closed way as any other error", async () => {
     vi.stubGlobal(

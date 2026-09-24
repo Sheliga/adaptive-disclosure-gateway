@@ -18,3 +18,78 @@
   display: flex;
   flex-direction: column;
 }
+
+.progress {
+  width: min(100%, 56rem);
+  margin: 0 auto;
+  padding: 0 1.5rem 1rem;
+}
+
+.progressList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.progressItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid color-mix(in srgb, CanvasText 18%, transparent);
+  border-radius: 999px;
+  padding: 0.35rem 0.65rem;
+  color: color-mix(in srgb, CanvasText 62%, transparent);
+  font-size: 0.9rem;
+}
+
+.progressItemCurrent {
+  border-color: CanvasText;
+  color: CanvasText;
+  font-weight: 700;
+}
+
+.progressMarker {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.progressLabel {
+  white-space: nowrap;
+}
+
+.backBar {
+  width: min(100%, 56rem);
+  margin: 0 auto;
+  padding: 0 1.5rem 0.75rem;
+}
+
+.backButton {
+  border: 1px solid color-mix(in srgb, CanvasText 24%, transparent);
+  border-radius: 0.45rem;
+  background: Canvas;
+  color: CanvasText;
+  padding: 0.55rem 0.8rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.backButton:hover {
+  border-color: CanvasText;
+}
+
+.recovery {
+  width: min(100%, 48rem);
+  margin: 2rem auto;
+  padding: 0 1.5rem;
+}
+
+.recoveryStep {
+  margin: 0 0 0.5rem;
+  color: color-mix(in srgb, CanvasText 70%, transparent);
+  font-size: 0.95rem;
+}

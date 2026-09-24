@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { DisplayError } from "./api";
 import type { CompareResponse, ExecuteResponse, PreviewResponse } from "./contracts";
 import {
+  approveReview,
   buildRequestBody,
   flowReducer,
   initialComposeState,
@@ -10,6 +11,7 @@ import {
   isComposeReady,
   isSupportedUploadFilename,
   type ComposeState,
+  type FlowEvent,
   type FlowState,
 } from "./flow";
 
@@ -250,6 +252,66 @@ describe("flowReducer -- executing screen", () => {
       compose: initialComposeState,
       submitError: confirmationError,
     });
+  });
+});
+
+/**
+ * T32.2 / #102: the Approved Review is the post-send, read-only historical
+ * view of the Review a successful execute came from. It is a DISTINCT state
+ * kind, not a flag on "review": the reducer must make it structurally
+ * impossible to leave it for "executing", and the state must not carry a
+ * confirmation token at all. Each assertion here fails from a real defect --
+ * e.g. routing "approvedReview" through reviewReducer, or spreading the
+ * review (token included) into the approved snapshot.
+ */
+describe("flowReducer -- approvedReview (post-send, read-only)", () => {
+  const p = preview();
+  const compose: ComposeState = { ...initialComposeState, mode: "paste", pastedText: "texto", task: "resuma" };
+  const review: Extract<FlowState, { screen: "review" }> = {
+    screen: "review",
+    compose,
+    preview: p,
+    confirmationToken: "opaque.token",
+    executeError: genericError,
+  };
+
+  it("approveReview keeps the reviewed context and preview but drops the token and any error", () => {
+    const approved = approveReview(review);
+    expect(approved).toEqual({ screen: "approvedReview", compose, preview: p });
+    expect("confirmationToken" in approved).toBe(false);
+    expect(JSON.stringify(approved)).not.toContain("opaque.token");
+  });
+
+  it("CONFIRM_REVIEW from approvedReview is a no-op -- it can never reach executing", () => {
+    const approved = approveReview(review);
+    expect(flowReducer(approved, { type: "CONFIRM_REVIEW" })).toBe(approved);
+  });
+
+  it("no screen-specific event leads from approvedReview anywhere (no resend, no edit, no compare)", () => {
+    const approved = approveReview(review);
+    const events: FlowEvent[] = [
+      { type: "CONFIRM_REVIEW" },
+      { type: "CANCEL_REVIEW" },
+      { type: "EXECUTE_SUCCEEDED", execute: execute() },
+      { type: "EXECUTE_FAILED", error: genericError },
+      { type: "EXECUTE_FAILED", error: genericError, requiresNewPreview: true },
+      { type: "SUBMIT_COMPOSE" },
+      { type: "PREVIEW_SUCCEEDED", preview: p, confirmationToken: "new.token" },
+      { type: "PREVIEW_FAILED", error: genericError },
+      { type: "REQUEST_COMPARISON" },
+      { type: "OPEN_TECHNICAL_DETAILS" },
+      { type: "RETURN_TO_RESULT" },
+      { type: "SET_TASK", task: "outra" },
+      { type: "SET_PASTED_TEXT", text: "outro" },
+    ];
+    for (const event of events) {
+      expect(flowReducer(approved, event)).toBe(approved);
+    }
+  });
+
+  it("RESTART from approvedReview starts a fresh compose with no token carried over", () => {
+    const next = flowReducer(approveReview(review), { type: "RESTART" });
+    expect(next).toEqual({ screen: "compose", compose: initialComposeState, submitError: null });
   });
 });
 
