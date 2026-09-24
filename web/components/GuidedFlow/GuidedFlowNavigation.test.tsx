@@ -1869,3 +1869,180 @@ describe("GuidedFlow check-before-send (#102)", () => {
     }
   });
 });
+
+/**
+ * Direct load / refresh of a non-intro step (#101): nothing is restorable
+ * from the URL alone, so the flow must fail closed -- without fabricating a
+ * state, creating a snapshot, pushing a history entry or calling anything
+ * that sends content.
+ */
+describe("GuidedFlow direct load of a non-restorable step", () => {
+  it.each([
+    ["review", "Revisar"],
+    ["result", "Resultado"],
+    ["technical", "Detalhes técnicos"],
+  ])(
+    "fails closed on ?step=%s with no snapshot: no state, no snapshot, no new entry, no send",
+    async (step, label) => {
+      window.history.replaceState(null, "", `/?step=${step}`);
+      const lengthBefore = window.history.length;
+      const tracker = trackRetainedFlowSnapshots();
+      const writes = trackHistoryWrites();
+      try {
+        render(<GuidedFlow />);
+
+        const heading = await screen.findByRole("heading", { name: UNRECOVERABLE });
+        expect(screen.getByText(`Etapa atual: ${label}`)).toBeInTheDocument();
+        expect(document.activeElement).toBe(heading);
+        expect(screen.queryByRole("heading", { name: copy.howItWorks.title })).not.toBeInTheDocument();
+        expect(screen.queryByRole("heading", { name: copy.newTest.heading })).not.toBeInTheDocument();
+        expect(screen.queryByRole("heading", { name: copy.review.heading })).not.toBeInTheDocument();
+        expect(screen.queryByRole("heading", { name: copy.result.heading })).not.toBeInTheDocument();
+
+        // The URL stays coherent with what is shown, and the entry carries
+        // no navigation id that a later popstate could resolve.
+        expect(window.location.search).toBe(`?step=${step}`);
+        expect(window.history.state).toEqual({ flowNavigationId: null });
+        expect(writes.log.some((entry) => entry.startsWith("push:"))).toBe(false);
+        expect(window.history.length).toBe(lengthBefore);
+        expect(tracker.retained.size).toBe(0);
+
+        expect(mockedPreviewDisclosure).not.toHaveBeenCalled();
+        expect(mockedExecuteDisclosure).not.toHaveBeenCalled();
+        expect(mockedPreviewDocument).not.toHaveBeenCalled();
+        expect(mockedExecuteDocument).not.toHaveBeenCalled();
+        expect(mockedCompareStrategies).not.toHaveBeenCalled();
+      } finally {
+        writes.restore();
+        tracker.restore();
+      }
+    },
+  );
+});
+
+/**
+ * Default document type for the upload path: `contract` when offered, else
+ * the first type. It must hold on EVERY fresh Compose -- the first entry,
+ * a Restart from Result, and a historical Compose restored after the types
+ * arrived late -- from the single `getDocumentTypes()` fetch, never a refetch.
+ */
+function mockDocumentTypes(types: string[]) {
+  mockedGetDocumentTypes.mockResolvedValue({
+    ok: true,
+    data: {
+      contract_version: "t20-application-api-v1",
+      document_types: types.map((documentType) => ({
+        document_type: documentType,
+        analysis_modes: [`${documentType}_mode_a`, `${documentType}_mode_b`],
+        default_analysis_mode: `${documentType}_mode_b`,
+      })),
+    },
+  });
+}
+
+async function expectUploadDefaults(documentType: string) {
+  await userEvent.click(screen.getByRole("radio", { name: copy.entryModes.uploadFile }));
+  expect(await screen.findByLabelText(copy.newTest.documentTypeLabel)).toHaveValue(documentType);
+  expect(screen.getByLabelText(copy.newTest.analysisModeLabel)).toHaveValue(`${documentType}_mode_b`);
+}
+
+describe("GuidedFlow default document type", () => {
+  it.each([
+    [["notice", "contract"], "contract"],
+    [["notice", "invoice"], "notice"],
+  ])("with document types %j, a fresh Compose defaults to %s", async (types, expected) => {
+    mockDocumentTypes(types);
+    render(<GuidedFlow />);
+    await waitFor(() => expect(mockedGetDocumentTypes).toHaveBeenCalledTimes(1));
+
+    await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
+    await screen.findByRole("heading", { name: copy.newTest.heading });
+    await expectUploadDefaults(expected);
+    expect(mockedGetDocumentTypes).toHaveBeenCalledTimes(1);
+  });
+
+  it("Restart from Result opens a Compose with the default type again, from the already-loaded types", async () => {
+    mockDocumentTypes(["notice", "contract"]);
+    mockedPreviewDisclosure.mockResolvedValue({ ok: true, data: previewResponse() });
+    mockedExecuteDisclosure.mockResolvedValue({ ok: true, data: executeResponse() });
+    mockedPreviewDocument.mockResolvedValue({
+      ok: true,
+      data: { ...previewResponse(), confirmation_token: "token" },
+    });
+    render(<GuidedFlow />);
+
+    await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
+    // Move off the default before the first run, so a Restart that merely
+    // kept the previous Compose would be caught.
+    await userEvent.click(screen.getByRole("radio", { name: copy.entryModes.uploadFile }));
+    await userEvent.selectOptions(await screen.findByLabelText(copy.newTest.documentTypeLabel), "notice");
+    await userEvent.click(screen.getByRole("radio", { name: copy.entryModes.useExample }));
+    await userEvent.selectOptions(await screen.findByLabelText(copy.newTest.exampleFieldLabel), "ex-1");
+    await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+    await screen.findByRole("heading", { name: copy.review.heading });
+    await userEvent.click(screen.getByRole("button", { name: copy.review.confirmSend }));
+    await screen.findByRole("heading", { name: copy.result.heading });
+
+    await userEvent.click(screen.getByRole("button", { name: copy.result.restart }));
+    await screen.findByRole("heading", { name: copy.newTest.heading });
+    await expectUploadDefaults("contract");
+
+    // The default is what an upload from this Compose actually sends.
+    await userEvent.upload(screen.getByLabelText(copy.newTest.uploadFieldLabel), syntheticPdf());
+    await userEvent.type(screen.getByLabelText(copy.newTest.taskLabel), "Resuma");
+    await userEvent.click(screen.getByRole("button", { name: copy.newTest.continueToReview }));
+    await screen.findByRole("heading", { name: copy.review.heading });
+    const form = mockedPreviewDocument.mock.calls[0][0];
+    expect(form.get("document_type")).toBe("contract");
+    expect(form.get("analysis_mode")).toBe("contract_mode_b");
+
+    expect(mockedGetDocumentTypes).toHaveBeenCalledTimes(1);
+    expect(mockedPreviewDisclosure).toHaveBeenCalledTimes(1);
+    expect(mockedExecuteDisclosure).toHaveBeenCalledTimes(1);
+    expect(mockedExecuteDocument).not.toHaveBeenCalled();
+  });
+
+  it("a historical upload Compose recorded before the types arrived shows the default as soon as it is restored", async () => {
+    const pendingTypes = deferred<Awaited<ReturnType<typeof getDocumentTypes>>>();
+    mockedGetDocumentTypes.mockReturnValue(pendingTypes.promise);
+    render(<GuidedFlow />);
+
+    await userEvent.click(screen.getByRole("button", { name: copy.howItWorks.ctaPrimary }));
+    await userEvent.click(screen.getByRole("radio", { name: copy.entryModes.uploadFile }));
+    expect(screen.getByText(copy.newTest.documentTypesLoading)).toBeInTheDocument();
+    const composeId = window.history.state.flowNavigationId as string;
+
+    window.history.back();
+    await screen.findByRole("heading", { name: copy.howItWorks.title });
+
+    // The types only arrive once the flow has left Compose.
+    await act(async () => {
+      pendingTypes.resolve({
+        ok: true,
+        data: {
+          contract_version: "t20-application-api-v1",
+          document_types: [
+            { document_type: "notice", analysis_modes: ["notice_mode_b"], default_analysis_mode: "notice_mode_b" },
+            {
+              document_type: "contract",
+              analysis_modes: ["contract_mode_a", "contract_mode_b"],
+              default_analysis_mode: "contract_mode_b",
+            },
+          ],
+        },
+      });
+      await pendingTypes.promise;
+    });
+
+    // Forward restores that Compose (still in upload mode) with no further
+    // input from the user: the default must already be there.
+    window.history.forward();
+    await screen.findByRole("heading", { name: copy.newTest.heading });
+    expect(window.history.state.flowNavigationId).toBe(composeId);
+    expect(screen.getByRole("radio", { name: copy.entryModes.uploadFile })).toBeChecked();
+    expect(await screen.findByLabelText(copy.newTest.documentTypeLabel)).toHaveValue("contract");
+    expect(screen.getByLabelText(copy.newTest.analysisModeLabel)).toHaveValue("contract_mode_b");
+    expect(mockedGetDocumentTypes).toHaveBeenCalledTimes(1);
+    expect(mockedPreviewDocument).not.toHaveBeenCalled();
+  });
+});

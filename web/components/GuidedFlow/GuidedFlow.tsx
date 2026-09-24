@@ -34,7 +34,7 @@
  * or `/compare`.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import {
   compareStrategies,
@@ -179,6 +179,35 @@ function reduceGuidedFlow(state: FlowState, event: GuidedFlowEvent): FlowState {
   return flowReducer(state, event);
 }
 
+/** The upload path's default document type: `contract` when offered, else the first. */
+function primaryDocumentType(documentTypes: readonly DocumentType[]): DocumentType | undefined {
+  return documentTypes.find((item) => item.document_type === "contract") ?? documentTypes[0];
+}
+
+/**
+ * Applies the default document type (primaryDocumentType) to a Compose that
+ * has none yet, once the types are known. Every other state is returned as
+ * the SAME object, so a transition that changes nothing still lets React
+ * bail out (see the same-entry case in handlePopState).
+ */
+function withDefaultDocumentType(
+  state: FlowState,
+  documentTypes: readonly DocumentType[] | null,
+): FlowState {
+  if (state.screen !== "compose" || state.compose.documentType !== null || documentTypes === null) {
+    return state;
+  }
+  const primary = primaryDocumentType(documentTypes);
+  if (!primary) {
+    return state;
+  }
+  return flowReducer(state, {
+    type: "SET_DOCUMENT_TYPE",
+    documentType: primary.document_type,
+    analysisMode: primary.default_analysis_mode,
+  });
+}
+
 /**
  * Marks history entries as never restorable again and drops their snapshots
  * immediately (nothing sensitive is retained for an entry that can only
@@ -242,8 +271,17 @@ function GuidedFlowShell() {
   const labels = STEP_LABELS[locale];
   const [state, setState] = useState<FlowState>(initialFlowState);
   const [unrecoverableStep, setUnrecoverableStep] = useState<UrlStep | null>(null);
+  // The latest COMMITTED state, for the popstate listener that is installed
+  // once (see the mount effect below). Synced in a layout effect rather than
+  // assigned during render: layout effects run synchronously inside the
+  // commit, before the browser can dispatch any event, so every popstate
+  // still observes the state that is actually on screen -- exactly what the
+  // old render-time assignment gave for every committed render, without
+  // writing a ref while rendering.
   const stateRef = useRef(state);
-  stateRef.current = state;
+  useLayoutEffect(() => {
+    stateRef.current = state;
+  }, [state]);
   const mainRef = useRef<HTMLElement>(null);
   // Invariant: this Map holds exactly the snapshots of entries at or before
   // historyIndexRef.current, plus any still-reachable forward entries. A
@@ -308,11 +346,23 @@ function GuidedFlowShell() {
   // is on; the before/after renders only when both agree.
   const [demoInspectionEnabled, setDemoInspectionEnabled] = useState(false);
 
+  // The types from the single getDocumentTypes() fetch, for `dispatch` (a
+  // stable callback also used by the once-installed popstate listener).
+  // Written only in that fetch's callback, never during render.
+  const documentTypesRef = useRef<DocumentType[] | null>(null);
+
   const dispatch = useCallback((event: GuidedFlowEvent) => {
     if (event.type !== "SET_DOCUMENT_TYPE") {
       setUnrecoverableStep(null);
     }
-    setState((current) => reduceGuidedFlow(current, event));
+    // Every transition that lands on a Compose without a document type
+    // (START_TEST, RESTART, or restoring a Compose recorded before the types
+    // arrived) gets the default in the SAME update, so no Compose without it
+    // is ever committed while the types are known.
+    const documentTypesNow = documentTypesRef.current;
+    setState((current) =>
+      withDefaultDocumentType(reduceGuidedFlow(current, event), documentTypesNow),
+    );
   }, []);
 
   useEffect(() => {
@@ -329,6 +379,14 @@ function GuidedFlowShell() {
   useEffect(() => {
     const currentStep = urlStepFromSearch(window.location.search);
     if (currentStep !== null && currentStep !== "intro") {
+      // Deliberate one-time sync FROM an external system (the browser's
+      // location/history) on mount, coupled to the replaceState and the
+      // suppress flag right below. It cannot be a lazy useState initializer:
+      // this component is prerendered on the server, where there is no
+      // window, so reading the URL during render would make the first client
+      // render disagree with the server HTML (a hydration mismatch). Nothing
+      // is fabricated here -- only the fail-closed screen is shown.
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time mount sync with window.location; see above
       setUnrecoverableStep(currentStep);
       suppressHistorySyncRef.current = true;
       window.history.replaceState({ flowNavigationId: null }, "", replaceStepInUrl(currentStep));
@@ -547,25 +605,6 @@ function GuidedFlowShell() {
   }, []);
 
   useEffect(() => {
-    if (
-      state.screen !== "compose" ||
-      state.compose.documentType !== null ||
-      documentTypes === null
-    ) {
-      return;
-    }
-    const primary =
-      documentTypes.find((item) => item.document_type === "contract") ?? documentTypes[0];
-    if (primary) {
-      dispatch({
-        type: "SET_DOCUMENT_TYPE",
-        documentType: primary.document_type,
-        analysisMode: primary.default_analysis_mode,
-      });
-    }
-  }, [state, documentTypes, dispatch]);
-
-  useEffect(() => {
     let cancelled = false;
     getDocumentTypes().then((result) => {
       if (cancelled) return;
@@ -573,10 +612,9 @@ function GuidedFlowShell() {
         setDocumentTypesError(result.error);
         return;
       }
+      documentTypesRef.current = result.data.document_types;
       setDocumentTypes(result.data.document_types);
-      const primary =
-        result.data.document_types.find((item) => item.document_type === "contract") ??
-        result.data.document_types[0];
+      const primary = primaryDocumentType(result.data.document_types);
       if (primary) {
         dispatch({
           type: "SET_DOCUMENT_TYPE",
