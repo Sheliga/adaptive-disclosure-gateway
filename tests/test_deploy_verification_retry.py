@@ -28,6 +28,29 @@ Requires `bash` and `jq` (both preinstalled on the ubuntu-latest runner
 test.yml's `test` job already uses). Locally, if either is missing, the
 whole module is skipped -- except under CI (`CI=true`), where a missing tool
 is a real environment defect and must fail loudly, never skip silently.
+
+HARNESS HARDENING (fail-closed): during development, a bug in
+`_install_fake_curl` (an unterminated heredoc silently swallowing the
+`chmod +x` into the heredoc body -- see its docstring) once left the fake
+curl non-executable, bash's PATH search fell through to the REAL system
+curl, and a test that scripted a 401 response ended up actually calling the
+live Hostinger API with a nonsense VM id and a sentinel token -- and got a
+genuine 401 back, which the test then happily accepted as if it had come
+from the fake. Two independent measures now stand between "the fake curl
+mechanism regressed" and "a test silently talks to the real internet":
+  1. every extracted script run here is prefixed with a guard (see
+     `_GUARD_PRELUDE`) that compares `command -v curl` against the fake
+     curl's own canonical path and `exit 97`s before doing anything else if
+     they don't match; `_run_verify` asserts the result is never 97, with
+     the full stderr in the failure message.
+  2. `_run_verify` also asserts the fake curl's own call log is non-empty
+     after every run -- a second, independent signal that execution really
+     did reach the fake.
+  3. `ADG_VPS_HOSTNAME` is overridden to `adg-verify-test.invalid` (an
+     RFC 2606 reserved, permanently non-resolving name) instead of the real
+     production hostname the workflow YAML carries, so even a total
+     mechanism failure that slipped past both guards above could not reach
+     production's public URLs -- only fail on DNS.
 """
 
 from __future__ import annotations
@@ -116,6 +139,48 @@ _SLEEP_PRELUDE = textwrap.dedent(
     export -f sleep
     """
 )
+
+# Fail-closed guard, run before a single line of the extracted script: if
+# `curl` does not resolve to exactly the fake curl this run installed, abort
+# immediately (exit 97) rather than let the extracted script silently talk
+# to the real internet with the real ADG_VPS_HOSTNAME/HOSTINGER_API_TOKEN.
+# The expected path (FAKE_CURL_EXPECTED_PATH) is computed once per run via
+# `cd + pwd` -- NOT via `command -v`, and NOT hardcoded from the Python-side
+# path string -- because bash/MSYS can normalize a Windows path differently
+# than a naive backslash-to-slash rewrite would predict (e.g. a path under
+# the Windows TEMP directory is reported as /tmp/..., not /c/Users/.../Temp/
+# ...). Computing "what bash would call this path" via `command -v curl`
+# itself would be circular: if the fake curl's chmod silently failed (the
+# exact regression this guard exists to catch), that same resolution would
+# already be pointing at the real system curl, and the guard would then be
+# comparing the real curl's path to itself -- always "matching", and never
+# tripping. `cd`/`pwd` reads bash's filesystem-mount view of a directory
+# that is known to exist, entirely independent of whether anything inside
+# it is executable or even present, so it stays a trustworthy oracle even
+# when the fake curl installation is broken.
+_GUARD_PRELUDE = textwrap.dedent(
+    """\
+    if [ "$(command -v curl)" != "$FAKE_CURL_EXPECTED_PATH" ]; then
+      echo "HARNESS: curl did not resolve to the fake curl -- resolved to $(command -v curl 2>&1 || echo '<not found>'), expected $FAKE_CURL_EXPECTED_PATH" >&2
+      exit 97
+    fi
+    """
+)
+
+
+def _bash_canonical_dir(bash: str, dir_posix: str) -> str:
+    """Bash's own canonical path for `dir_posix`, via `cd` + `pwd` -- see
+    _GUARD_PRELUDE's comment for why this, and not `command -v`, is the
+    right oracle for the guard's expected value."""
+    result = subprocess.run(
+        [bash, "-c", f'cd "{dir_posix}" && pwd'],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    resolved = result.stdout.strip()
+    assert resolved, f"bash could not resolve a canonical path for {dir_posix!r}"
+    return resolved
 
 
 # ---------------------------------------------------------------------------
@@ -294,22 +359,27 @@ def _run_verify(
     call_log.write_text("", encoding="utf-8")
     sleep_log.write_text("", encoding="utf-8")
 
-    # ADG_VPS_HOSTNAME / ADG_DOCKER_PROJECT are workflow-level env, not
-    # job-level -- merge both so a future move between the two doesn't
-    # silently break this harness.
+    # ADG_DOCKER_PROJECT is workflow-level env, not job-level -- merge both
+    # so a future move between the two doesn't silently break this harness.
     job_env = dict(_workflow().get("env") or {})
     job_env.update(_deploy_job().get("env") or {})
-    script = _SLEEP_PRELUDE + _extracted_script()
+    script = _GUARD_PRELUDE + _SLEEP_PRELUDE + _extracted_script()
 
     env = os.environ.copy()
     env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
     env["HOSTINGER_API_TOKEN"] = token
     env["ADG_TARGET_SHA"] = target_sha
-    env["ADG_VPS_HOSTNAME"] = str(job_env["ADG_VPS_HOSTNAME"])
+    # RFC 2606 reserved, permanently non-resolving hostname -- deliberately
+    # NOT the real production hostname the workflow YAML carries (see the
+    # module docstring's "HARNESS HARDENING" note). If every other guard
+    # here somehow failed and the real curl got invoked anyway, this still
+    # keeps the public ready/root checks off the real production VPS.
+    env["ADG_VPS_HOSTNAME"] = "adg-verify-test.invalid"
     env["ADG_DOCKER_PROJECT"] = str(job_env["ADG_DOCKER_PROJECT"])
     env["FAKE_CURL_STATE"] = state_dir.as_posix()
     env["FAKE_CURL_LOG"] = call_log.as_posix()
     env["FAKE_SLEEP_LOG"] = sleep_log.as_posix()
+    env["FAKE_CURL_EXPECTED_PATH"] = _bash_canonical_dir(_BASH, bin_dir.as_posix()) + "/curl"
 
     result = subprocess.run(
         [_BASH, "-c", script],
@@ -319,6 +389,23 @@ def _run_verify(
         timeout=90,
         check=False,
     )
+
+    # Fail-closed harness assertions, centralized so no individual test can
+    # forget them and accidentally pass against a broken fake curl (or,
+    # worse, the real Hostinger API). Deliberately raised as plain
+    # AssertionErrors with a distinct "HARNESS FAILURE" prefix so they read
+    # unambiguously differently from an ordinary test assertion failure.
+    if result.returncode == 97:
+        raise AssertionError(
+            "HARNESS FAILURE: the fake-curl guard tripped -- curl did not resolve to the "
+            f"fake executable. stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
+    if not _calls_to(call_log, "/containers"):
+        raise AssertionError(
+            "HARNESS FAILURE: no containers call reached the fake curl (call log is "
+            f"empty) -- stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
+
     return result, call_log, sleep_log
 
 
