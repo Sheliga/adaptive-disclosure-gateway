@@ -136,10 +136,15 @@ user; merge execution is performed outside the repository Claude Code session.
 
 ## Delegation
 
-This section governs the main interactive session. It does not apply to a subagent already
-executing a briefing: that subagent does the work itself and does not dispatch further
-sub-subagents. A subagent that reads this file and starts spawning its own subagents has
-misread it.
+This section governs the main interactive session. A subagent already executing a briefing
+does the work itself and does not dispatch further sub-subagents -- with one exception: a
+subagent running on Opus keeps the reasoning-heavy work (design, invariants, reviewing
+results) and must delegate tedious or mechanical sub-tasks to cheaper Sonnet/Haiku
+sub-agents to reduce cost. Examples: running gate and test loops, lint baseline
+comparisons, flakiness reruns, PR body and Trello updates, and bulk edits under a fully
+specified contract. Two agents must never edit the same file at the same time. A
+non-Opus subagent that reads this file and starts spawning its own subagents has misread
+it.
 
 The main session orchestrates; it does not execute. It may run directly: read-only git
 operations (`git status`, `git diff`, `git log`, `git show`, `git branch`, `git rev-parse`),
