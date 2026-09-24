@@ -179,6 +179,43 @@ jobs:
       # VPS too: the containers API can say "healthy" while nginx in front
       # of it is still misrouting, so a real request through the public URL
       # is the only check that reflects what an advisor would actually see.
+      #
+      # INCIDENT (run 35673821758, deploy of 1094b5be2cef99e97a020302772fb22c25bf9dcb):
+      # the create/replace request above was accepted, but the very next
+      # containers poll got HTTP 500. The old version of this step used
+      # `curl --fail-with-body` under `set -euo pipefail`, so that single
+      # transient 5xx made curl itself exit non-zero and aborted the whole
+      # step immediately -- even though Hostinger was still recreating the
+      # project and a re-run of the exact same SHA/workflow succeeded
+      # seconds later with no code or image change. Issue #99: Hostinger's
+      # containers endpoint can transiently return 5xx while a create/
+      # replace action is still recreating the project, so this loop now
+      # classifies the HTTP status explicitly instead of letting curl's own
+      # failure decide, and treats that specific case as retryable:
+      #   - 2xx: the only "normal" response. The body is parsed with jq; if
+      #     it isn't valid JSON or isn't an array, that's a clear failure,
+      #     not a silent retry (a malformed response is not a Hostinger
+      #     recreation timing issue). The exact SHA+health predicate is
+      #     unchanged from before.
+      #   - 5xx: transient -- almost certainly Hostinger still tearing down
+      #     or recreating the project -- logged (status + a bounded count,
+      #     never the response body) and retried within the existing ~720s
+      #     deadline at the existing ~15s interval.
+      #   - 401/403: fail-fast. Retrying an authentication/authorization
+      #     failure cannot resolve itself before the deadline.
+      #   - any other status (other 4xx, unexpected 3xx, 1xx): fail-fast
+      #     rather than silently retrying something that will never change.
+      #   - a transport failure (curl exits non-zero with no HTTP response
+      #     at all: DNS, connection refused, TLS, or the --max-time 30
+      #     per-request cap below) is treated the same as "Hostinger not
+      #     answering yet" and retried within the same deadline, counted
+      #     separately from 5xx so the two are distinguishable in the
+      #     timeout diagnostics. --max-time exists so a single hung request
+      #     can't quietly consume the whole verification budget on its own.
+      # Status/body/curl-exit-status are captured explicitly (via `-w`/`-o`
+      # into a temp file) inside an `if status=$(curl ...); then ... else
+      # ...; fi`, a construct `set -e` cannot kill on a non-2xx response --
+      # unlike the plain, unguarded assignment the old version used.
       - name: Verify deployment
         env:
           HOSTINGER_API_TOKEN: ${{ secrets.HOSTINGER_API_TOKEN }}
@@ -186,28 +223,104 @@ jobs:
         run: |
           set -euo pipefail
           containers_url="https://developers.hostinger.com/api/vps/v1/virtual-machines/${{ steps.vm.outputs.id }}/docker/${ADG_DOCKER_PROJECT}/containers"
+          ready_url="https://${ADG_VPS_HOSTNAME}/disclosure-gateway/api/ready"
+          root_url="https://${ADG_VPS_HOSTNAME}/disclosure-gateway"
           deadline=$((SECONDS + 720))
-          containers="[]"
+          have_valid_containers=0
+          last_valid_containers="[]"
+          last_containers_status=""
+          last_ready_status=""
+          last_root_status=""
+          transient_5xx_count=0
+          transport_failure_count=0
           # ~15s poll interval, ~12min budget: the api image is ~2.6 GB to
           # pull and its healthcheck alone has a 120s start_period, on top
           # of whatever the old containers take to tear down first.
           while [ "$SECONDS" -lt "$deadline" ]; do
-            containers=$(curl --fail-with-body -sS \
-              -H "Authorization: Bearer ${HOSTINGER_API_TOKEN}" \
-              "$containers_url")
-            if echo "$containers" | jq -e --arg sha "$ADG_TARGET_SHA" \
-              '(length > 0) and all(.[]; (.image | endswith(":" + $sha)) and (.health == "healthy"))' \
-              >/dev/null 2>&1; then
-              ready_status=$(curl -s -o /dev/null -w '%{http_code}' "https://${ADG_VPS_HOSTNAME}/disclosure-gateway/api/ready")
-              root_status=$(curl -s -o /dev/null -w '%{http_code}' "https://${ADG_VPS_HOSTNAME}/disclosure-gateway")
-              if [ "$ready_status" = "200" ] && [ "$root_status" = "200" ]; then
-                echo "deployment verified: containers healthy at $ADG_TARGET_SHA, /disclosure-gateway/api/ready=200, /disclosure-gateway=200"
-                exit 0
-              fi
-              echo "containers healthy but public URL not yet 200 (ready=$ready_status, root=$root_status) -- retrying"
+            body_file=$(mktemp)
+            status=""
+            curl_rc=0
+            if status=$(curl -sS --max-time 30 -o "$body_file" -w '%{http_code}' \
+                -H "Authorization: Bearer ${HOSTINGER_API_TOKEN}" \
+                "$containers_url"); then
+              :
+            else
+              curl_rc=$?
             fi
+            last_containers_status="$status"
+
+            if [ "$curl_rc" -ne 0 ] || [ -z "$status" ] || [ "$status" = "000" ]; then
+              transport_failure_count=$((transport_failure_count + 1))
+              remaining=$((deadline - SECONDS))
+              echo "Hostinger containers API unreachable (transport failure, curl exit ${curl_rc}) -- retrying (transport failures so far: ${transport_failure_count}, ~${remaining}s left)"
+              rm -f "$body_file"
+              sleep 15
+              continue
+            fi
+
+            case "$status" in
+              2??)
+                if ! jq -e '.' "$body_file" >/dev/null 2>&1; then
+                  echo "::error::Hostinger containers API returned HTTP ${status} with a response body that is not valid JSON"
+                  rm -f "$body_file"
+                  exit 1
+                fi
+                if ! jq -e 'type == "array"' "$body_file" >/dev/null 2>&1; then
+                  echo "::error::Hostinger containers API returned HTTP ${status} with an unexpected JSON shape (expected an array of containers)"
+                  rm -f "$body_file"
+                  exit 1
+                fi
+                last_valid_containers=$(cat "$body_file")
+                have_valid_containers=1
+                rm -f "$body_file"
+                if echo "$last_valid_containers" | jq -e --arg sha "$ADG_TARGET_SHA" \
+                  '(length > 0) and all(.[]; (.image | endswith(":" + $sha)) and (.health == "healthy"))' \
+                  >/dev/null 2>&1; then
+                  ready_status=$(curl -sS --max-time 30 -o /dev/null -w '%{http_code}' "$ready_url" || echo 000)
+                  root_status=$(curl -sS --max-time 30 -o /dev/null -w '%{http_code}' "$root_url" || echo 000)
+                  last_ready_status="$ready_status"
+                  last_root_status="$root_status"
+                  if [ "$ready_status" = "200" ] && [ "$root_status" = "200" ]; then
+                    echo "deployment verified: containers healthy at $ADG_TARGET_SHA, /disclosure-gateway/api/ready=200, /disclosure-gateway=200"
+                    exit 0
+                  fi
+                  echo "containers healthy but public URL not yet 200 (ready=$ready_status, root=$root_status) -- retrying"
+                fi
+                ;;
+              401|403)
+                echo "::error::Hostinger containers API returned HTTP ${status}; authentication/authorization failure"
+                rm -f "$body_file"
+                exit 1
+                ;;
+              5??)
+                transient_5xx_count=$((transient_5xx_count + 1))
+                remaining=$((deadline - SECONDS))
+                echo "Hostinger containers API returned HTTP ${status} during project replacement -- retrying (transient 5xx so far: ${transient_5xx_count}, ~${remaining}s left)"
+                rm -f "$body_file"
+                sleep 15
+                continue
+                ;;
+              *)
+                echo "::error::Hostinger containers API returned unexpected HTTP ${status}"
+                rm -f "$body_file"
+                exit 1
+                ;;
+            esac
+
             sleep 15
           done
-          echo "::error::deployment did not become healthy within the timeout"
-          echo "$containers" | jq -r '.[] | "name=\(.name) state=\(.state) health=\(.health) status=\(.status) image=\(.image)"'
+
+          echo "::error::deployment verification timed out after 720s"
+          echo "last containers API HTTP status: ${last_containers_status:-none}"
+          echo "transient 5xx responses: ${transient_5xx_count}"
+          echo "transport failures: ${transport_failure_count}"
+          case "$last_containers_status" in
+            5??) echo "timed out after repeated Hostinger API 5xx responses" ;;
+          esac
+          if [ "$have_valid_containers" -eq 1 ]; then
+            echo "$last_valid_containers" | jq -r '.[] | "name=\(.name) state=\(.state) health=\(.health) status=\(.status) image=\(.image)"'
+            if [ -n "$last_ready_status" ] || [ -n "$last_root_status" ]; then
+              echo "last public check statuses: ready=${last_ready_status:-none} root=${last_root_status:-none}"
+            fi
+          fi
           exit 1
