@@ -289,14 +289,18 @@ function isInspectionSegment(value: unknown): value is InspectionSegment {
  * `unavailable_reason` is a string exactly when `available` is `false` and
  * `null` exactly when it is `true`; and -- the single most important line in
  * this function -- when available, the segments' `disclosed` values
- * concatenate back to EXACTLY `external_payload`. That last check is what
- * makes the inspector trustworthy: without it, a body could claim
- * `available: true` while `segments` describes a different disclosed text
- * than the one the rest of this same response says was actually sent, and
- * every downstream reader (the review screen, this app's own rendering)
- * would have no way to tell. Rejecting the WHOLE response on any of these
- * failing is the same fail-closed posture this module documents at its top:
- * a partially-trustworthy inspection is not rendered as a trustworthy one.
+ * concatenate back to EXACTLY this SAME response's `external_payload`. That
+ * last check is what makes the inspector trustworthy: without it, a body
+ * could claim `available: true` while `segments` describes a different
+ * disclosed text than this same response's own `external_payload` field,
+ * and every downstream reader (the review screen, this app's own rendering)
+ * would have no way to tell. This proves internal consistency of THIS
+ * response only -- it says nothing about whether a later, separate
+ * execute call will disclose the same representation (see
+ * `DisclosureTransformationSummary`'s docstring for that distinction).
+ * Rejecting the WHOLE response on any of these failing is the same
+ * fail-closed posture this module documents at its top: a
+ * partially-trustworthy inspection is not rendered as a trustworthy one.
  */
 function isDisclosureInspectionField(
   value: unknown,

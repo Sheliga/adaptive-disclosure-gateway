@@ -247,6 +247,40 @@ describe.each([
   });
 });
 
+/**
+ * #103 review fix (PR #108): `beforeAfter`/`resultRecap` (the primary
+ * before/after used in Review, the read-only Approved Review, and the
+ * Result recap) once claimed the disclosed side is byte-identical to what
+ * LATER crosses the boundary at execute time ("Exatamente esta
+ * representação cruza a fronteira ... quando você confirmar" / "Exactly
+ * this representation crosses the boundary ... when you confirm"). That is
+ * only structurally guaranteed for upload (confirmation-token-bound
+ * `execute_document`); for paste/example, `executeDisclosure` independently
+ * recomputes the decision at execute time with no binding to the previewed
+ * decision, so the earlier wording overclaimed for two of the three entry
+ * modes. No string in either block, in either locale, may reassert that
+ * identity.
+ */
+describe.each([
+  ["pt-BR", ptBR],
+  ["en", en],
+] as const)("copy.%s.beforeAfter/resultRecap -- no preview-execute identity claim", (_locale, table) => {
+  const allStrings = [...Object.values(table.beforeAfter), ...Object.values(table.resultRecap)].filter(
+    (value): value is string => typeof value === "string",
+  );
+
+  it("contains no 'exactly'/'exatamente' claim", () => {
+    for (const value of allStrings) {
+      expect(value).not.toMatch(/exatamente|exactly/i);
+    }
+  });
+
+  it("the Review disclosed caption reads as prepared-for-review, not as a send guarantee", () => {
+    const caption = table.beforeAfter.disclosedCaptionReview;
+    expect(caption).toMatch(/prepar|revis/i);
+  });
+});
+
 /** Type-level parity check: this line only compiles if AppCopy structurally
  * matches both tables -- see `Widen<T>` in `copy.ts`. Kept as a value (not
  * just a type assertion) so it participates in the module the way any other

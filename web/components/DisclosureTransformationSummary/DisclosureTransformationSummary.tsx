@@ -12,8 +12,19 @@
  * exactly as the API sent them, through the SAME fail-closed mappings the
  * detailed inspector uses (`describeInspectionAction`, `describeCategory`).
  * `lib/responseGuards.ts` has already verified that the disclosed segments
- * join back to exactly `external_payload`, which is what lets the copy say
- * the transformed side is exactly what crosses the boundary.
+ * join back to exactly THIS preview's `external_payload` -- i.e. the
+ * disclosed side shown here is an exact view of what THIS preview computed.
+ *
+ * That is NOT the same guarantee as "exactly what crosses the boundary
+ * later, at execute time" (#103 review, PR #108). For upload, it is: the
+ * confirmation token binds `execute_document` to this exact preview, and
+ * execute re-verifies the decision matches what was approved before it will
+ * disclose anything. For paste/example, `executeDisclosure` independently
+ * re-runs the decision (detector, task analyzer, decision phase) with no
+ * token binding it to this preview, so the representation actually sent
+ * later can differ from the one shown here. The copy (`copy.beforeAfter`)
+ * is written to reflect only the guarantee that actually holds: "prepared"/
+ * "reviewed", never a promise of byte-identity with the later execute call.
  *
  * DELIBERATELY NOT the `DisclosureInspector`. That component stays the
  * collapsed, secondary layer with technical reason, treatment, strategy and
@@ -52,7 +63,7 @@ export type DisclosureTransformationSummaryVariant = "review" | "approved";
 
 export interface DisclosureTransformationSummaryProps {
   inspection: DisclosureInspection;
-  /** "review": what WILL cross the boundary; "approved": what WAS approved to cross it. */
+  /** "review": what the gateway prepared for this preview, pending confirmation; "approved": what was presented for approval before the external call. Neither claims byte-identity with a later execute call (see this module's docstring). */
   variant: DisclosureTransformationSummaryVariant;
   /** `false` when embedded under a caller's own heading (the Result recap). */
   showHeading?: boolean;

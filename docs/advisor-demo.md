@@ -155,17 +155,38 @@ This is the screen the whole product exists for. Level-1 content reads, in this 
    read in the order **Original → Transformação local no gateway → Enviado ao modelo externo**,
    with each transformed passage highlighted and labeled in plain language (category on the
    original side, action on the sent side; a removed passage shows `[trecho removido]`). The
-   copy states that the transformed side is exactly what crosses the external boundary. It is
-   built only from `preview.inspection.segments` (never a string diff) and shows no B0–B4 code,
-   strategy, policy version, technical reason or id. If inspection is unavailable it says so
-   plainly (blocked: nothing was released for sending; alignment failure: the view could not be
-   produced safely) and never fabricates a before/after;
+   copy states that the transformed side is the representation the gateway prepared for external
+   disclosure in this review -- see the "Preview vs. execute" note below for what that guarantee
+   does and does not cover across entry modes. It is built only from `preview.inspection.segments`
+   (never a string diff) and shows no B0–B4 code, strategy, policy version, technical reason or
+   id. If inspection is unavailable it says so plainly (blocked: nothing was released for
+   sending; alignment failure: the view could not be produced safely) and never fabricates a
+   before/after;
 1. what was detected (`O que foi detectado`);
 2. what stays local (`O que permanece local`), each item's outcome label already stating what
    happened to it (removed / pseudonymized / generalized / preserved) and why;
-3. exactly what will be sent to the external LLM (`O que será enviado ao LLM externo`), including
-   the byte-exact payload behind its own explicit disclosure (`Ver o payload exato que seria
-   enviado`) -- kept out of the DOM, not just visually hidden, until opened.
+3. what the gateway computed for sending to the external LLM (`O que será enviado ao LLM
+   externo`), including the byte-exact payload behind its own explicit disclosure (`Ver o
+   payload exato que seria enviado`) -- kept out of the DOM, not just visually hidden, until
+   opened.
+
+**Preview vs. execute (fix for #103 review, PR #108).** The before/after and the "what will be
+sent" section are both built from the `preview` response, and the join checks in
+`lib/responseGuards.ts` only prove that the rendered view matches THAT preview's own
+`external_payload` exactly -- they say nothing about a later, separate execute call. Whether the
+reviewed representation is what actually crosses the boundary depends on entry mode:
+
+- **Enviar meu arquivo (upload)**: structurally guaranteed. `POST /documents/preview` returns a
+  confirmation token; `POST /documents/execute` is bound to it and re-verifies the decision
+  matches the approved preview before disclosing anything -- "what was approved is what is sent".
+- **Colar texto / Usar um exemplo (paste/example)**: not bound. `POST /disclosure/execute`
+  independently re-runs the full decision (detector, task analyzer, decision phase) with no token
+  linking it back to this preview. The reviewed representation is an exact view of what THIS
+  preview computed, but the representation actually sent can differ if anything about the
+  decision's inputs changed between preview and confirm.
+
+The UI copy is written to reflect only the guarantee that holds for all modes: "prepared for
+disclosure" / "reviewed", never "exactly what is sent" or "exactly what crosses the boundary".
 
 The confirm action states its consequence explicitly (`Confirmar e enviar ao provedor externo`);
 a blocked decision renders no confirm action at all.

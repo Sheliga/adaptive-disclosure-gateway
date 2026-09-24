@@ -632,24 +632,34 @@ const ptBR = {
    * T32.3 / #103: the primary before/after ("O que o gateway fez"), built
    * only from `preview.inspection.segments` -- visible by default in Review
    * and in the Approved Review, and as a recap in Result. Answers only what
-   * was there, what changed and what goes out; technical reasons, treatment,
-   * strategy and ids stay in the detailed inspector. `{n}` is a plain count.
+   * was there, what changed and what was prepared for disclosure; technical
+   * reasons, treatment, strategy and ids stay in the detailed inspector.
+   * `{n}` is a plain count.
+   *
+   * IDENTITY CAVEAT (fix for #103 review, see PR #108): this block never
+   * claims the disclosed side is byte-identical to what LATER crosses the
+   * boundary at execute time. That is only structurally guaranteed for
+   * upload, where `execute_document` is confirmation-token-bound to this
+   * exact preview. For paste/example, `executeDisclosure` re-runs the
+   * decision (detector, task analyzer, decision phase) independently of the
+   * preview shown here, so the copy says "prepared"/"reviewed", never
+   * "exactly what is sent" or "exactly what crosses the boundary".
    */
   beforeAfter: {
     heading: "O que o gateway fez",
     intro:
-      "Antes de qualquer envio, o gateway transformou localmente os trechos destacados. Primeiro, o que você enviou; depois, o que sai para o modelo externo.",
+      "Antes de qualquer envio, o gateway transformou localmente os trechos destacados. Primeiro, o que você enviou; depois, a representação preparada para o modelo externo.",
     originalHeading: "Original",
     originalCaption: "O conteúdo que você enviou ao gateway. Ele não sai daqui.",
     transformationStep: "Transformação local no gateway",
-    disclosedHeadingReview: "Enviado ao modelo externo",
+    disclosedHeadingReview: "Representação preparada para envio ao modelo externo",
     disclosedCaptionReview:
-      "Exatamente esta representação cruza a fronteira para o modelo externo quando você confirmar.",
-    disclosedHeadingApproved: "Aprovado para envio ao modelo externo",
+      "Esta é a representação que o gateway preparou para divulgação externa nesta revisão, antes da sua confirmação.",
+    disclosedHeadingApproved: "Representação aprovada antes do envio",
     disclosedCaptionApproved:
-      "Exatamente esta representação foi aprovada para cruzar a fronteira para o modelo externo.",
+      "Esta foi a representação apresentada para sua aprovação antes da chamada externa.",
     handledCount: "Trechos tratados pelo gateway: {n}",
-    noChanges: "O gateway não precisou alterar nenhum trecho: o texto cruza a fronteira como está.",
+    noChanges: "O gateway não precisou alterar nenhum trecho: o texto foi preparado para envio sem alterações.",
     unavailableBlocked:
       "Nenhuma representação foi liberada para envio: a solicitação foi bloqueada no gateway e nada sai para o modelo externo.",
     unavailableAlignmentFailed:
@@ -662,11 +672,17 @@ const ptBR = {
    * came after. Wording is chosen from `ExecuteResponse.provider`: never
    * "sent"/"consulted" when `provider.called` is false, and a failed call
    * is described as an attempt, not a consultation that produced an answer.
+   *
+   * IDENTITY CAVEAT (fix for #103 review, see PR #108): `sent` describes the
+   * transformation the reviewer approved and the fact that the external
+   * model was then consulted -- it does not assert that the previewed
+   * representation is byte-identical to what `execute` actually sent (true
+   * only for upload; paste/example recompute the decision at execute time).
    */
   resultRecap: {
     heading: "O que aconteceu antes do envio",
     sent:
-      "Antes de consultar o modelo externo, o gateway transformou localmente o seu conteúdo, como você revisou. Esta resposta veio depois dessa transformação.",
+      "Antes da chamada externa, você revisou esta transformação feita pelo gateway. O modelo externo foi consultado e esta é a resposta reconstruída localmente.",
     providerFailed:
       "O gateway transformou localmente o seu conteúdo e tentou consultar o modelo externo, mas a consulta falhou: nenhuma resposta foi produzida.",
     notSent:

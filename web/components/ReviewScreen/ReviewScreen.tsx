@@ -36,9 +36,15 @@
  * mounted in the JSX tree changed:
  *
  *  - Level 1 (always visible): what was detected, what stays local, and
- *    -- prominently, under `copy.review.willBeSentHeading` -- exactly what
- *    will cross the trust boundary, including the payload disclosure
- *    (still kept OUT of the DOM until its own toggle is opened, unchanged).
+ *    -- prominently, under `copy.review.willBeSentHeading` -- what the
+ *    gateway computed for this preview as the boundary-crossing categories,
+ *    including the payload disclosure (still kept OUT of the DOM until its
+ *    own toggle is opened, unchanged). This heading is forward-looking
+ *    ("será enviado") and, for upload, is confirmation-bound to what
+ *    `execute_document` actually sends; for paste/example, `executeDisclosure`
+ *    recomputes the decision independently at confirm time (#103 review, PR
+ *    #108), so this section shows what THIS preview computed, not a
+ *    byte-identity guarantee with the later call.
  *  - Level 2: the T27 transformation inspector, now itself behind an outer
  *    `copy.review.understandChangesToggle` disclosure -- so understanding
  *    *why* something changed is one click deeper than seeing *what* will be

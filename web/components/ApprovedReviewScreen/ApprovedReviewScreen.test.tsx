@@ -78,6 +78,15 @@ describe("ApprovedReviewScreen -- approved before/after (T32.3 / #103)", () => {
     expect(screen.queryByText(copy.beforeAfter.disclosedHeadingReview)).not.toBeInTheDocument();
   });
 
+  it("says reviewed/approved and historical/read-only, with no executed-payload identity claim (#103 review, PR #108)", () => {
+    renderApproved(AVAILABLE, true);
+
+    expect(screen.getByText(copy.approvedReview.readOnlyNotice)).toBeInTheDocument();
+    expect(screen.getByText(copy.beforeAfter.disclosedCaptionApproved)).toBeInTheDocument();
+    expect(copy.beforeAfter.disclosedCaptionApproved).toMatch(/aprovação/);
+    expect(document.body.textContent).not.toMatch(/Exatamente esta representação/);
+  });
+
   it("places it after the request context and before the detected/sent overview", () => {
     renderApproved(AVAILABLE, true);
 

@@ -400,21 +400,30 @@ export const en: AppCopy = {
     tryAgain: "Try again",
   },
 
+  /**
+   * T32.3 / #103. IDENTITY CAVEAT (fix for #103 review, see PR #108): never
+   * claims the disclosed side is byte-identical to what LATER crosses the
+   * boundary at execute time -- only true for upload (confirmation-token
+   * bound to this exact preview). Paste/example recompute the decision at
+   * execute time, so this says "prepared"/"reviewed", never "exactly what
+   * is sent" or "exactly what crosses the boundary". See `copy.ts`'s
+   * matching comment for the full rationale.
+   */
   beforeAfter: {
     heading: "What the gateway did",
     intro:
-      "Before anything is sent, the gateway transformed the highlighted passages locally. First, what you submitted; then, what goes out to the external model.",
+      "Before anything is sent, the gateway transformed the highlighted passages locally. First, what you submitted; then, the representation prepared for the external model.",
     originalHeading: "Original",
     originalCaption: "The content you submitted to the gateway. It does not leave.",
     transformationStep: "Local transformation in the gateway",
-    disclosedHeadingReview: "Sent to the external model",
+    disclosedHeadingReview: "Representation prepared for the external model",
     disclosedCaptionReview:
-      "Exactly this representation crosses the boundary to the external model when you confirm.",
-    disclosedHeadingApproved: "Approved for sending to the external model",
+      "This is the representation the gateway prepared for external disclosure in this review, before your confirmation.",
+    disclosedHeadingApproved: "Representation approved before sending",
     disclosedCaptionApproved:
-      "Exactly this representation was approved to cross the boundary to the external model.",
+      "This was the representation presented for your approval before the external call.",
     handledCount: "Passages handled by the gateway: {n}",
-    noChanges: "The gateway did not need to change any passage: the text crosses the boundary as it is.",
+    noChanges: "The gateway did not need to change any passage: the text was prepared for sending unchanged.",
     unavailableBlocked:
       "No representation was released for sending: the request was blocked in the gateway and nothing goes out to the external model.",
     unavailableAlignmentFailed:
@@ -422,10 +431,17 @@ export const en: AppCopy = {
     unavailableUnknown: "The before/after view is not available for this request.",
   },
 
+  /**
+   * T32.3 / #103. IDENTITY CAVEAT (fix for #103 review, see PR #108): `sent`
+   * describes the transformation the reviewer approved and that the
+   * external model was then consulted -- it does not assert the previewed
+   * representation is byte-identical to what `execute` actually sent (true
+   * only for upload; paste/example recompute the decision at execute time).
+   */
   resultRecap: {
     heading: "What happened before sending",
     sent:
-      "Before consulting the external model, the gateway transformed your content locally, as you reviewed. This answer came after that transformation.",
+      "Before the external call, you reviewed this transformation performed by the gateway. The external model was then consulted, and this is the answer reconstructed locally.",
     providerFailed:
       "The gateway transformed your content locally and tried to consult the external model, but the call failed: no answer was produced.",
     notSent:

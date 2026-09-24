@@ -704,6 +704,21 @@ describe("ResultScreen -- before-sending recap (T32.3 / #103)", () => {
     expect(text).not.toContain("employee_name");
   });
 
+  it("describes the transformation reviewed before sending using real provider state, distinct across called/failed/not-called, with no preview-was-exact-payload claim (#103 review, PR #108)", () => {
+    renderResult(execute(), AVAILABLE);
+
+    // Distinct copy per real `execute.provider` state (called success vs. the
+    // failed/not-called messages verified below by the other tests in this
+    // describe block) -- these three strings must never collapse to the same
+    // wording.
+    expect(copy.resultRecap.sent).not.toBe(copy.resultRecap.providerFailed);
+    expect(copy.resultRecap.sent).not.toBe(copy.resultRecap.notSent);
+    expect(copy.resultRecap.providerFailed).not.toBe(copy.resultRecap.notSent);
+
+    expect(document.body.textContent).not.toMatch(/Exatamente esta representação/);
+    expect(document.body.textContent).not.toMatch(/exatamente o que foi enviado/i);
+  });
+
   it("counts transformations by segment.action, not by category occurrence counts", () => {
     const e = execute({
       summary: {
@@ -834,5 +849,8 @@ describe("ResultScreen -- before-sending recap (T32.3 / #103)", () => {
     expect(screen.getByRole("heading", { name: en.resultRecap.heading })).toBeInTheDocument();
     expect(screen.getByText(en.resultRecap.sent)).toBeInTheDocument();
     expect(screen.getByText(en.resultRecap.handledCount.replace("{n}", "3"))).toBeInTheDocument();
+
+    // #103 review fix (PR #108): no byte-identity claim with the preview.
+    expect(document.body.textContent).not.toMatch(/Exactly this representation/);
   });
 });

@@ -896,6 +896,17 @@ describe("ReviewScreen -- primary before/after (T32.3 / #103)", () => {
     expect(screen.getByText(copy.beforeAfter.disclosedCaptionReview)).toBeInTheDocument();
   });
 
+  it("shows Original, the local transformation step, and the representation prepared for egress -- without an identity promise with the later execute call (#103 review, PR #108)", () => {
+    renderReview({ demoInspectionEnabled: true });
+
+    expect(screen.getByRole("heading", { name: copy.beforeAfter.originalHeading })).toBeInTheDocument();
+    expect(screen.getByText(copy.beforeAfter.transformationStep)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: copy.beforeAfter.disclosedHeadingReview })).toBeInTheDocument();
+
+    expect(document.body.textContent).not.toMatch(/Exatamente esta representação/);
+    expect(document.body.textContent).not.toMatch(/cruza a fronteira.*confirmar/);
+  });
+
   it("sits right after 'What you asked for' and before detected/local/sent, details, and Confirm", () => {
     renderReview({ demoInspectionEnabled: true });
 
@@ -1007,5 +1018,9 @@ describe("ReviewScreen -- primary before/after (T32.3 / #103)", () => {
     expect(screen.getByRole("heading", { name: en.beforeAfter.heading })).toBeInTheDocument();
     expect(screen.getByText(en.beforeAfter.transformationStep)).toBeInTheDocument();
     expect(screen.getByText(en.review.understandChangesToggle)).toBeInTheDocument();
+
+    // #103 review fix (PR #108): no identity promise with the later execute call.
+    expect(document.body.textContent).not.toMatch(/Exactly this representation/);
+    expect(document.body.textContent).not.toMatch(/crosses the boundary.*confirm/);
   });
 });

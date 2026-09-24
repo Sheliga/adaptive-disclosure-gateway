@@ -106,7 +106,7 @@ describe("DisclosureTransformationSummary -- available inspection (T32.3 / #103)
     expect(disclosedMarks[2].textContent).toContain(copy.inspectionActions.removedMarker);
   });
 
-  it("states the boundary: the transformed side is exactly what crosses to the external model", () => {
+  it("states the disclosed side as prepared/reviewed, never a byte-identity promise with a later execute call", () => {
     render(<DisclosureTransformationSummary inspection={available(SEGMENTS)} variant="review" />);
 
     expect(screen.getByRole("heading", { name: copy.beforeAfter.heading })).toBeInTheDocument();
@@ -114,6 +114,17 @@ describe("DisclosureTransformationSummary -- available inspection (T32.3 / #103)
     expect(screen.getByRole("heading", { name: copy.beforeAfter.disclosedHeadingReview })).toBeInTheDocument();
     expect(screen.getByText(copy.beforeAfter.transformationStep)).toBeInTheDocument();
     expect(screen.getByText(copy.beforeAfter.disclosedCaptionReview)).toBeInTheDocument();
+
+    // #103 review fix (PR #108): the Review caption states what the gateway
+    // PREPARED for this review, not a promise that it is exactly what
+    // crosses the boundary later at execute time -- structurally true only
+    // for upload, not for paste/example (see DisclosureTransformationSummary's
+    // docstring). A regression back to the old identity-claim wording must
+    // fail this test.
+    expect(copy.beforeAfter.disclosedCaptionReview).toMatch(/preparou/);
+    expect(copy.beforeAfter.disclosedCaptionReview).toMatch(/revis(ã|a)o/);
+    expect(document.body.textContent).not.toMatch(/Exatamente esta representação/);
+    expect(document.body.textContent).not.toMatch(/cruza a fronteira.*confirmar/);
   });
 
   it("reads Original -> local transformation -> sent, in DOM order", () => {
@@ -178,6 +189,10 @@ describe("DisclosureTransformationSummary -- available inspection (T32.3 / #103)
     expect(screen.getByRole("heading", { name: copy.beforeAfter.disclosedHeadingApproved })).toBeInTheDocument();
     expect(screen.getByText(copy.beforeAfter.disclosedCaptionApproved)).toBeInTheDocument();
     expect(screen.queryByText(copy.beforeAfter.disclosedHeadingReview)).not.toBeInTheDocument();
+    // #103 review fix (PR #108): the Approved caption is historical/read-only
+    // ("apresentada para sua aprovação"), never a claim that this is exactly
+    // what was later sent.
+    expect(document.body.textContent).not.toMatch(/Exatamente esta representação/);
   });
 
   it("can omit its own heading when embedded under another one", () => {
@@ -194,6 +209,12 @@ describe("DisclosureTransformationSummary -- available inspection (T32.3 / #103)
     expect(screen.getByText(en.beforeAfter.transformationStep)).toBeInTheDocument();
     expect(within(disclosed()).getByText(en.inspectionActions.removedMarker)).toBeInTheDocument();
     expect(original().textContent).toContain(en.categories.labels.employee_name);
+
+    // #103 review fix (PR #108): same identity-claim guard, English locale.
+    expect(en.beforeAfter.disclosedCaptionReview).toMatch(/prepared/);
+    expect(en.beforeAfter.disclosedCaptionReview).toMatch(/review/);
+    expect(document.body.textContent).not.toMatch(/Exactly this representation/);
+    expect(document.body.textContent).not.toMatch(/crosses the boundary.*confirm/);
   });
 });
 
