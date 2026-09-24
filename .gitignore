@@ -39,3 +39,4 @@ venv/
 local-data/
 /vault/
 artifacts/private/
+credenciais/
