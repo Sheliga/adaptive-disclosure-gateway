@@ -1,9 +1,9 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { renderWithLocale } from "@/i18n/renderWithLocale";
-import type { ExecuteResponse, HealthResponse } from "@/lib/contracts";
+import type { DisclosureInspection, ExecuteResponse, HealthResponse } from "@/lib/contracts";
 import type { ProviderModeState } from "@/lib/providerMode";
 import { copy } from "@/lib/copy";
 import { en } from "@/lib/copy.en";
@@ -653,5 +653,270 @@ describe("ResultScreen -- Vault Explorer gating (T29 / issue #72)", () => {
 
     expect(screen.getByText(copy.vaultExplorerPanel.heading)).toBeInTheDocument();
     expect(screen.getByText(copy.vaultExplorerPanel.unavailableForDecision)).toBeInTheDocument();
+  });
+});
+
+/**
+ * T32.3 / #103: the Result recap answers "which transformation did this
+ * answer come after?" from the preview ALREADY held in flow state (the
+ * `inspection` prop) -- `ExecuteResponse` is not widened. Wording follows
+ * `execute.provider`: nothing is ever said to have been sent when the
+ * provider was not called, and a failed call is an attempt, not an answer.
+ */
+describe("ResultScreen -- before-sending recap (T32.3 / #103)", () => {
+  const SEGMENTS = [
+    { action: null, category: null, original: "Relatório de ", disclosed: "Relatório de " },
+    { action: "pseudonymize", category: "employee_name", original: "Maria Silva", disclosed: "PESSOA_7f3a" },
+    { action: null, category: null, original: ", salário ", disclosed: ", salário " },
+    { action: "generalize", category: "salary", original: "R$ 8.500,00", disclosed: "R$ 5.000-10.000" },
+    { action: "remove", category: "cpf", original: "123.456.789-00", disclosed: "" },
+  ];
+  const AVAILABLE: DisclosureInspection = { available: true, unavailable_reason: null, segments: SEGMENTS };
+  const COUNT = copy.resultRecap.handledCount.replace("{n}", "3");
+
+  function renderResult(e: ExecuteResponse, inspection?: DisclosureInspection | null) {
+    return render(
+      <ResultScreen
+        execute={e}
+        health={{ status: "loading" }}
+        onRestart={vi.fn()}
+        compareError={null}
+        onCompareStrategies={vi.fn()}
+        onViewTechnicalDetails={vi.fn()}
+        inspection={inspection}
+      />,
+    );
+  }
+
+  function recap(): HTMLElement {
+    return screen.getByTestId("result-recap");
+  }
+
+  it("success: a short visible recap with the count, and no technical detail", () => {
+    renderResult(execute(), AVAILABLE);
+
+    expect(within(recap()).getByRole("heading", { name: copy.resultRecap.heading })).toBeInTheDocument();
+    expect(within(recap()).getByText(copy.resultRecap.sent)).toBeInTheDocument();
+    expect(within(recap()).getByText(COUNT)).toBeInTheDocument();
+    const text = recap().textContent ?? "";
+    expect(text).not.toMatch(/\bb[0-4]\b/i);
+    expect(text).not.toContain("recommended");
+    expect(text).not.toContain("employee_name");
+  });
+
+  it("describes the transformation reviewed before sending using real provider state, distinct across called/failed/not-called, with no preview-was-exact-payload claim (#103 review, PR #108)", () => {
+    renderResult(execute(), AVAILABLE);
+
+    // Distinct copy per real `execute.provider` state (called success vs. the
+    // failed/not-called messages verified below by the other tests in this
+    // describe block) -- these three strings must never collapse to the same
+    // wording.
+    expect(copy.resultRecap.sent).not.toBe(copy.resultRecap.providerFailed);
+    expect(copy.resultRecap.sent).not.toBe(copy.resultRecap.notSent);
+    expect(copy.resultRecap.providerFailed).not.toBe(copy.resultRecap.notSent);
+
+    expect(document.body.textContent).not.toMatch(/Exatamente esta representação/);
+    expect(document.body.textContent).not.toMatch(/exatamente o que foi enviado/i);
+  });
+
+  /**
+   * #103 round-2 review fix (PR #108): `resultRecap.sent` once unconditionally
+   * said the answer was "reconstruída localmente" / "reconstructed locally".
+   * `final_answer` may be the provider's response completely unchanged (see
+   * `ReconstructionStage`); only `buildReconstructionNote` may state a
+   * reconstruction happened, and only when `reconstruction.attempted &&
+   * changed_from_provider_response === true`. The recap itself must never
+   * make that claim, regardless of the reconstruction state -- so the whole
+   * rendered page (recap included) carries no reconstruction wording when
+   * that condition does not hold, even though the recap is shown.
+   *
+   * `final_answer` is overridden to plain, reconstruction-free text here:
+   * the shared `execute()` fixture's default answer text itself contains
+   * "reconstruída", which would otherwise make a body-text search for that
+   * word meaningless.
+   */
+  it.each([
+    ["not attempted", { attempted: false, reconstructed_hash: null, changed_from_provider_response: null }],
+    ["attempted but unchanged", { attempted: true, reconstructed_hash: "x", changed_from_provider_response: false }],
+  ] as const)(
+    "reconstruction %s: the recap is shown, and no reconstruction claim appears anywhere on the page",
+    (_label, reconstruction) => {
+      const e = execute({ final_answer: "Esta é a resposta do provedor.", reconstruction });
+      renderResult(e, AVAILABLE);
+
+      expect(within(recap()).getByText(copy.resultRecap.sent)).toBeInTheDocument();
+      expect(document.body.textContent).not.toMatch(/reconstru|restaur|restored/i);
+      expect(screen.queryByText(copy.result.reconstructionApplied)).not.toBeInTheDocument();
+    },
+  );
+
+  it("reconstruction attempted AND changed: the reconstruction claim comes only from result.reconstructionApplied, never from the recap itself", () => {
+    const e = execute({
+      final_answer: "Esta é a resposta do provedor.",
+      // `reconstructionNote` only renders when `summary.categories` is
+      // non-empty (see `buildProtectionsBreakdown`'s early return), so a
+      // category is required here for `result.reconstructionApplied` to
+      // have any chance of appearing at all.
+      summary: {
+        status: "allowed",
+        categories: [
+          {
+            category: "employee_name",
+            outcome: "pseudonymized",
+            action: "pseudonymize",
+            crosses_trust_boundary: true,
+            occurrence_count: 1,
+            required_for_task: null,
+            technical_reason: "r",
+            policy_version: null,
+            policy_restricted: null,
+            impossible_under_policy: null,
+          },
+        ],
+        detected_span_count: 1,
+        detected_categories: ["employee_name"],
+      },
+      reconstruction: { attempted: true, reconstructed_hash: "x", changed_from_provider_response: true },
+    });
+    renderResult(e, AVAILABLE);
+
+    expect(within(recap()).getByText(copy.resultRecap.sent)).toBeInTheDocument();
+    expect(within(recap()).queryByText(/reconstru|restaur|restored/i)).not.toBeInTheDocument();
+    expect(screen.getByText(copy.result.reconstructionApplied)).toBeInTheDocument();
+  });
+
+  it("counts transformations by segment.action, not by category occurrence counts", () => {
+    const e = execute({
+      summary: {
+        status: "allowed",
+        categories: [
+          {
+            category: "employee_name",
+            outcome: "pseudonymized",
+            action: "pseudonymize",
+            crosses_trust_boundary: true,
+            occurrence_count: 9,
+            required_for_task: null,
+            technical_reason: "r",
+            policy_version: null,
+            policy_restricted: null,
+            impossible_under_policy: null,
+          },
+        ],
+        detected_span_count: 9,
+        detected_categories: ["employee_name"],
+      },
+    });
+    renderResult(e, AVAILABLE);
+
+    expect(within(recap()).getByText(COUNT)).toBeInTheDocument();
+  });
+
+  it("keeps the full before/after collapsed, out of the DOM, until asked for", async () => {
+    renderResult(execute(), AVAILABLE);
+
+    expect(screen.queryByText("PESSOA_7f3a")).not.toBeInTheDocument();
+    expect(screen.queryByText("Maria Silva")).not.toBeInTheDocument();
+
+    await userEvent.click(within(recap()).getByText(copy.resultRecap.seeBeforeAfter));
+
+    expect(within(recap()).getByText("PESSOA_7f3a")).toBeInTheDocument();
+    expect(within(recap()).getByText(copy.beforeAfter.disclosedHeadingApproved)).toBeInTheDocument();
+  });
+
+  it("sits right after the answer and before the protections summary", () => {
+    renderResult(execute(), AVAILABLE);
+
+    const answer = screen.getByText(copy.sectionHeadings.finalAnswer);
+    const protections = screen.getByText(copy.result.protectionsAppliedHeading);
+    expect(answer.compareDocumentPosition(recap()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(recap().compareDocumentPosition(protections) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("provider failure: says the call was attempted and failed, never that an answer came after it", () => {
+    const e = execute({
+      final_answer: null,
+      provider: { ...execute().provider, called: true, failed: true, failure_kind: "timeout" },
+    });
+    renderResult(e, AVAILABLE);
+
+    expect(within(recap()).getByText(copy.resultRecap.providerFailed)).toBeInTheDocument();
+    expect(within(recap()).queryByText(copy.resultRecap.sent)).not.toBeInTheDocument();
+  });
+
+  it("provider not called: says nothing was sent, even when the preview had an available before/after", () => {
+    const e = execute({
+      final_answer: null,
+      provider: { ...execute().provider, called: false, transmitted_bytes: null },
+    });
+    renderResult(e, AVAILABLE);
+
+    expect(within(recap()).getByText(copy.resultRecap.notSent)).toBeInTheDocument();
+    expect(within(recap()).queryByText(copy.resultRecap.sent)).not.toBeInTheDocument();
+    expect(within(recap()).queryByText(copy.resultRecap.providerFailed)).not.toBeInTheDocument();
+  });
+
+  it("blocked: no metrics, no before/after, and no claim that anything was sent", () => {
+    const e = execute({
+      status: "blocked",
+      final_answer: null,
+      summary: { status: "blocked", categories: [], detected_span_count: 0, detected_categories: [] },
+      provider: { ...execute().provider, called: false, transmitted_bytes: null },
+    });
+    renderResult(e, { available: false, unavailable_reason: "blocked", segments: [] });
+
+    expect(within(recap()).getByText(copy.resultRecap.notSent)).toBeInTheDocument();
+    expect(within(recap()).getByText(copy.beforeAfter.unavailableBlocked)).toBeInTheDocument();
+    expect(within(recap()).queryByText(/\d/)).not.toBeInTheDocument();
+    expect(within(recap()).queryByText(copy.resultRecap.seeBeforeAfter)).not.toBeInTheDocument();
+    expect(within(recap()).queryByText(copy.resultRecap.sent)).not.toBeInTheDocument();
+  });
+
+  it("blocked at execute even though the provider flag says called: still never claims a send", () => {
+    const e = execute({
+      status: "blocked",
+      final_answer: null,
+      summary: { status: "blocked", categories: [], detected_span_count: 0, detected_categories: [] },
+    });
+    renderResult(e, AVAILABLE);
+
+    expect(within(recap()).getByText(copy.resultRecap.notSent)).toBeInTheDocument();
+    expect(within(recap()).queryByText(copy.resultRecap.sent)).not.toBeInTheDocument();
+  });
+
+  it("alignment_failed: plain message, no count and no before/after toggle", () => {
+    renderResult(execute(), { available: false, unavailable_reason: "alignment_failed", segments: [] });
+
+    expect(within(recap()).getByText(copy.beforeAfter.unavailableAlignmentFailed)).toBeInTheDocument();
+    expect(within(recap()).queryByText(copy.resultRecap.seeBeforeAfter)).not.toBeInTheDocument();
+    expect(recap().textContent).not.toMatch(/\d/);
+  });
+
+  it.each([null, undefined])("renders no recap at all when inspection is %s", (inspection) => {
+    renderResult(execute(), inspection);
+
+    expect(screen.queryByTestId("result-recap")).not.toBeInTheDocument();
+  });
+
+  it("renders the recap in English under the en locale", async () => {
+    await renderWithLocale(
+      <ResultScreen
+        execute={execute()}
+        health={{ status: "loading" }}
+        onRestart={vi.fn()}
+        compareError={null}
+        onCompareStrategies={vi.fn()}
+        onViewTechnicalDetails={vi.fn()}
+        inspection={AVAILABLE}
+      />,
+      "en",
+    );
+
+    expect(screen.getByRole("heading", { name: en.resultRecap.heading })).toBeInTheDocument();
+    expect(screen.getByText(en.resultRecap.sent)).toBeInTheDocument();
+    expect(screen.getByText(en.resultRecap.handledCount.replace("{n}", "3"))).toBeInTheDocument();
+
+    // #103 review fix (PR #108): no byte-identity claim with the preview.
+    expect(document.body.textContent).not.toMatch(/Exactly this representation/);
   });
 });

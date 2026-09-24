@@ -289,27 +289,67 @@ class TestWebServiceSecurity:
             f"ADG_WEB_BASE_PATH must default to /disclosure-gateway; got {value!r}"
         )
 
-    def test_web_service_carries_demo_flags_off_by_default(self) -> None:
-        """This URL is public and unauthenticated (docs/advisor-demo.md's
-        "Security stance"/"Why this defaults off"): the demo transparency
-        and vault-explorer surfaces must default OFF here, exactly as they
-        do in compose.demo.yaml -- an optional interpolation, never a
-        literal "1".
+
+class TestPublicDemoCapabilityPosture:
+    """T32.3 / issue #103. This URL is public and unauthenticated
+    (docs/advisor-demo.md's "Security stance"), so its posture over the three
+    independent demo capabilities is stated in THIS reviewed file, never left
+    to whatever the host's ``.env`` happens to contain:
+
+    - INSPECTION on: ``ADG_ENABLE_DEMO_INSPECTION`` is the literal ``"1"`` on
+      BOTH services (api populates ``preview.inspection``; web reports it via
+      ``/api/demo/features``). It only ever explains, inside one caller's own
+      preview response, the content that caller just submitted.
+    - TRANSPARENCY (export/restore re-identification) and VAULT_EXPLORER off:
+      neither variable is declared on either service at all. Compose passes
+      only declared variables into a container, so an operator's ``.env``
+      cannot switch either on without editing -- and re-reviewing -- this
+      file; both gates then read "unset", i.e. disabled.
+    - the restore-handle secret/TTL are not declared on api either: with no
+      secret, ``/documents/restore`` and ``/documents/export`` fail closed at
+      the API itself (503), a second wall behind the web proxy's own 404.
+
+    The behavioral side (the app actually built from this environment serves
+    inspection and refuses the vault explorer/restore routes) is pinned in
+    ``tests/test_demo_capability_matrix.py``.
+    """
+
+    _OFF_FLAGS = ("ADG_ENABLE_DEMO_TRANSPARENCY", "ADG_ENABLE_DEMO_VAULT_EXPLORER")
+
+    @pytest.mark.parametrize("service_name", ["api", "web"])
+    def test_inspection_is_explicitly_enabled(self, service_name: str) -> None:
+        env = _environment_mapping(_service(_load_compose(), service_name))
+        assert env.get("ADG_ENABLE_DEMO_INSPECTION") == "1", (
+            f"{service_name} must set ADG_ENABLE_DEMO_INSPECTION to the literal '1' "
+            f"(not an interpolation a host .env could change); got {env.get('ADG_ENABLE_DEMO_INSPECTION')!r}"
+        )
+
+    @pytest.mark.parametrize("service_name", ["api", "web"])
+    def test_transparency_and_vault_explorer_are_not_declared(self, service_name: str) -> None:
+        env = _environment_mapping(_service(_load_compose(), service_name))
+        declared = [name for name in self._OFF_FLAGS if name in env]
+        assert not declared, (
+            f"{service_name} must not declare {declared!r} in compose.prod.yaml: export/restore "
+            "and the vault explorer stay off on the public URL, and declaring them would let a "
+            "host .env turn them on"
+        )
+
+    def test_api_declares_no_restore_handle_configuration(self) -> None:
+        env = _environment_mapping(_service(_load_compose(), "api"))
+        for name in ("ADG_RESTORE_HANDLE_SECRET", "ADG_RESTORE_HANDLE_TTL_SECONDS"):
+            assert name not in env, (
+                f"api must not declare {name} in compose.prod.yaml: export/restore is off on "
+                "the public URL, so the API itself must also refuse it (503)"
+            )
+
+    def test_no_off_flag_appears_anywhere_in_the_file(self) -> None:
+        """Belt and braces over the per-service pins: not even a comment-free
+        YAML anchor/extension field may reintroduce either variable.
         """
-        web = _service(_load_compose(), "web")
-        env = _environment_mapping(web)
-        for name in ("ADG_ENABLE_DEMO_TRANSPARENCY", "ADG_ENABLE_DEMO_VAULT_EXPLORER"):
-            assert name in env, f"web service must carry {name}"
-            value = env[name]
-            assert value.startswith("${") and value.endswith("}"), (
-                f"{name} on the web service must be a compose interpolation; got {value!r}"
-            )
-            assert ":-" in value and ":?" not in value, (
-                f"{name} must use the OPTIONAL interpolation form defaulting to off; got {value!r}"
-            )
-            assert not re.search(rf"\{{{name}:-1\}}", value), (
-                f"{name} must not default to enabled on a public URL; got {value!r}"
-            )
+        compose = _load_compose()
+        rendered = yaml.safe_dump(compose)
+        for name in self._OFF_FLAGS:
+            assert name not in rendered, f"{name} must not appear in compose.prod.yaml's data"
 
 
 class TestNoCaddyOrTlsProfile:

@@ -740,8 +740,9 @@ contracts) showing a side-by-side original/disclosed view built from the pipelin
 structured output, plus a collapsed-by-default `DisclosureInspector` panel on the web Review
 screen.
 
-- Gated by `ADG_ENABLE_DEMO_TRANSPARENCY` (`application/settings.py`; unset/blank/anything but
-  exactly `"1"` after stripping is disabled). `inspection` is `null` on every response when the
+- Gated by `ADG_ENABLE_DEMO_INSPECTION` since T32.3 / #103 (originally `ADG_ENABLE_DEMO_TRANSPARENCY`,
+  which now gates only the T28 web export/restore proxy; `application/settings.py`;
+  unset/blank/anything but exactly `"1"` after stripping is disabled). `inspection` is `null` on every response when the
   flag is off, matching today's contract exactly; `CONTRACT_VERSION` (`t20-application-api-v1`)
   is unchanged, since the field is additive and nullable.
 - `application/inspection.py::build_inspection` derives `segments` from

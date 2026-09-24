@@ -154,8 +154,16 @@ export const en: AppCopy = {
     detectedCountLabel: "sensitive items detected",
     noneDetected: "No sensitive data was detected in this content.",
     nothingInSection: "No items in this category.",
-    willBeSentHeading: "What will be sent to the external LLM",
-    showPayloadToggle: "View the exact payload that would be sent",
+    /**
+     * #103 round-2 review fix (PR #108): used to read "What will be sent to
+     * the external LLM" / "View the exact payload that would be sent" --
+     * both promise a future-send byte-identity the preview only
+     * structurally guarantees for upload; paste/example recompute the
+     * decision at execute time with no binding to this preview. See
+     * `copy.ts`'s matching comment for the full rationale.
+     */
+    willBeSentHeading: "Representation prepared for the external model",
+    showPayloadToggle: "View the payload prepared in this review",
     payloadByteCountLabel: "bytes",
     blockedHeading: "Request blocked",
     blockedExplanation:
@@ -175,7 +183,7 @@ export const en: AppCopy = {
     noTaskProvided: "No task provided",
     unknownValue: "Not identified",
     changeRequest: "Change request details",
-    understandChangesToggle: "Understand what the gateway changed and why",
+    understandChangesToggle: "See detailed explanation of the transformations",
     technicalToolsToggle: "Technical details and research tools",
     technicalToolsIntro:
       "These tools exist for evaluation and research purposes. A final product would restrict or remove this layer.",
@@ -398,6 +406,72 @@ export const en: AppCopy = {
     submit: "Submit",
     cancel: "Cancel",
     tryAgain: "Try again",
+  },
+
+  /**
+   * T32.3 / #103. IDENTITY CAVEAT (fix for #103 review, see PR #108): never
+   * claims the disclosed side is byte-identical to what LATER crosses the
+   * boundary at execute time -- only true for upload (confirmation-token
+   * bound to this exact preview). Paste/example recompute the decision at
+   * execute time, so this says "prepared"/"reviewed", never "exactly what
+   * is sent" or "exactly what crosses the boundary". See `copy.ts`'s
+   * matching comment for the full rationale.
+   */
+  beforeAfter: {
+    heading: "What the gateway did",
+    intro:
+      "Before anything is sent, the gateway transformed the highlighted passages locally. First, what you submitted; then, the representation prepared for the external model.",
+    originalHeading: "Original",
+    /**
+     * #103 round-2 review fix (PR #108): used to say "It does not leave." --
+     * an absolute claim that does not hold for a PRESERVE segment (kept,
+     * sent unchanged) or a no-change request. See `copy.ts`'s matching
+     * comment.
+     */
+    originalCaption:
+      "The original content received by the gateway. The representation prepared for disclosure appears alongside it.",
+    transformationStep: "Local transformation in the gateway",
+    disclosedHeadingReview: "Representation prepared for the external model",
+    disclosedCaptionReview:
+      "This is the representation the gateway prepared for external disclosure in this review, before your confirmation.",
+    disclosedHeadingApproved: "Representation approved before sending",
+    disclosedCaptionApproved:
+      "This was the representation presented for your approval before the external call.",
+    handledCount: "Passages handled by the gateway: {n}",
+    noChanges: "The gateway did not need to change any passage: the text was prepared for sending unchanged.",
+    unavailableBlocked:
+      "No representation was released for sending: the request was blocked in the gateway and nothing goes out to the external model.",
+    unavailableAlignmentFailed:
+      "The transformation was applied, but the detailed before/after view could not be produced safely.",
+    unavailableUnknown: "The before/after view is not available for this request.",
+  },
+
+  /**
+   * T32.3 / #103. IDENTITY CAVEAT (fix for #103 review, see PR #108): `sent`
+   * describes the transformation the reviewer approved and that the
+   * external model was then consulted -- it does not assert the previewed
+   * representation is byte-identical to what `execute` actually sent (true
+   * only for upload; paste/example recompute the decision at execute time).
+   */
+  resultRecap: {
+    heading: "What happened before sending",
+    /**
+     * #103 round-2 review fix (PR #108): used to unconditionally say "...
+     * this is the answer reconstructed locally." -- `final_answer` may be
+     * the provider's response completely unchanged. Only
+     * `result.reconstructionApplied` (via `buildReconstructionNote`) may
+     * make a reconstruction claim, and only when `reconstruction.attempted
+     * && changed_from_provider_response === true`. See `copy.ts`'s matching
+     * comment.
+     */
+    sent:
+      "Before the external call, you reviewed this transformation performed by the gateway. The external model was consulted, and this is the final answer presented by the gateway.",
+    providerFailed:
+      "The gateway transformed your content locally and tried to consult the external model, but the call failed: no answer was produced.",
+    notSent:
+      "The gateway prepared the transformed representation, but nothing was sent: the external model was not consulted.",
+    handledCount: "Passages handled by the gateway before the external boundary: {n}",
+    seeBeforeAfter: "See the before/after you approved in Review",
   },
 
   inspectionActions: {

@@ -169,24 +169,36 @@ def build_restore_handle_sealer() -> RestoreHandleSealer:
     return RestoreHandleSealer(secret=secret, ttl_seconds=_restore_handle_ttl_seconds())
 
 
-DEMO_TRANSPARENCY_ENV_VAR = "ADG_ENABLE_DEMO_TRANSPARENCY"
-"""Server-side opt-in for the demo transparency surfaces (T27 / issue #69's
-preview inspection now; a later web export/restore proxy). Deliberately not
-a general-purpose boolean parser: enabled iff the variable is set AND its
-stripped value is exactly ``"1"`` -- unset, blank, ``"0"``, ``"true"``,
-``"yes"`` or anything else is disabled. Disabled is the safe direction (no
-extra data is exposed, ``/health``/``/ready`` are unaffected either way), so
-there is no startup refusal for an unrecognized value the way
-``ADG_PROVIDER`` refuses one -- this flag only ever widens or narrows an
-opt-in surface, never changes which provider a request reaches.
+DEMO_INSPECTION_ENV_VAR = "ADG_ENABLE_DEMO_INSPECTION"
+"""Server-side opt-in for the request-scoped inspection projection
+(``DisclosurePreview.inspection``, T27 / issue #69; decoupled by T32.3 /
+issue #103): the ordered original/disclosed segments of the content the
+caller itself just submitted, returned only in that caller's own preview
+response. Deliberately not a general-purpose boolean parser: enabled iff the
+variable is set AND its stripped value is exactly ``"1"`` -- unset, blank,
+``"0"``, ``"true"``, ``"yes"`` or anything else is disabled.
+
+Independent of every other demo capability, in both directions. Until #103
+this projection was gated by ``ADG_ENABLE_DEMO_TRANSPARENCY``, the variable
+the web tier also uses to open the T28 export/restore proxy -- a
+re-identification capability that returns originals for an arbitrary text
+plus a handle, not just for the request at hand. Sharing one variable meant
+a public deployment could not explain a transformation without also opening
+restore. The Python API no longer reads ``ADG_ENABLE_DEMO_TRANSPARENCY`` at
+all; export/restore stay gated at the web proxy
+(``web/lib/demoTransparency.ts``) and, here, by ``ADG_RESTORE_HANDLE_SECRET``.
+Neither that flag nor :data:`DEMO_VAULT_EXPLORER_ENV_VAR` implies this one,
+and this one implies neither. Disabled is the safe direction (the field
+stays ``null``, ``/health``/``/ready`` are unaffected), so there is no
+startup refusal for an unrecognized value.
 """
 
 
-def demo_transparency_enabled() -> bool:
-    """Read :data:`DEMO_TRANSPARENCY_ENV_VAR` -- see its own docstring for
-    the exact parsing rule. Default disabled.
+def demo_inspection_enabled() -> bool:
+    """Read :data:`DEMO_INSPECTION_ENV_VAR` -- see its own docstring for the
+    exact parsing rule. Default disabled.
     """
-    value = os.getenv(DEMO_TRANSPARENCY_ENV_VAR)
+    value = os.getenv(DEMO_INSPECTION_ENV_VAR)
     return value is not None and value.strip() == "1"
 
 
@@ -194,10 +206,10 @@ DEMO_VAULT_EXPLORER_ENV_VAR = "ADG_ENABLE_DEMO_VAULT_EXPLORER"
 """Server-side opt-in for the demo vault explorer (T29 / issue #72): a local,
 debug-only surface that shows an operator exactly which vault entries back
 one decision's reversible pseudonymization and that reconstruction resolves
-them. Independent of :data:`DEMO_TRANSPARENCY_ENV_VAR` -- enabling one must
-never enable or require the other, even though both are demo/debug
-transparency layers. Parsing rule identical to
-``demo_transparency_enabled``: enabled iff the variable is set AND its
+them. Independent of :data:`DEMO_INSPECTION_ENV_VAR` and of the web tier's
+``ADG_ENABLE_DEMO_TRANSPARENCY`` -- enabling one must never enable or require
+another, even though all are demo/debug layers. Parsing rule identical to
+``demo_inspection_enabled``: enabled iff the variable is set AND its
 stripped value is exactly ``"1"``. Disabled is the safe direction (no
 ``PreviewResponse.vault_explorer_token`` is ever issued and the vault
 explorer route always answers 404), so there is no startup refusal for an
@@ -285,6 +297,6 @@ def build_default_service() -> DisclosureApplicationService:
         examples_directory=examples_directory(),
         preview_confirmation_signer=build_preview_confirmation_signer(provider=provider),
         restore_handle_sealer=build_restore_handle_sealer(),
-        demo_transparency_enabled=demo_transparency_enabled(),
+        demo_inspection_enabled=demo_inspection_enabled(),
         demo_vault_explorer_enabled=demo_vault_explorer_enabled(),
     )

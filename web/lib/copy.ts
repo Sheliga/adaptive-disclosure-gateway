@@ -194,15 +194,26 @@ const ptBR = {
     noneDetected: "Nenhum dado sensível foi detectado neste conteúdo.",
     nothingInSection: "Nenhum item nesta categoria.",
     /**
-     * T30 / issue #82: the heading over the "exactly what crosses the
-     * boundary" section -- deliberately forward-looking ("será enviado"),
-     * unlike `sectionHeadings.whatWasSent` (used by the Comparação screen,
-     * which describes a simulation of five already-computed strategies).
-     * This is the prominent, unambiguously-labelled disclosure the review
-     * step's confirm decision hinges on.
+     * T30 / issue #82: the heading over the "what crosses the boundary"
+     * section, unlike `sectionHeadings.whatWasSent` (used by the Comparação
+     * screen, which describes a simulation of five already-computed
+     * strategies). This is the prominent, unambiguously-labelled disclosure
+     * the review step's confirm decision hinges on.
+     *
+     * #103 round-2 review fix (PR #108): this heading and the toggle below
+     * it used to read "O que será enviado ao LLM externo" / "Ver o payload
+     * exato que seria enviado" ("será enviado"/"exato") -- both promise a
+     * future-send byte-identity the preview only structurally guarantees for
+     * upload (`execute_document` is confirmation-token-bound to it); for
+     * paste/example, `executeDisclosure` independently recomputes the
+     * decision with no binding to this preview. The wording now states what
+     * IS true for every entry mode: this is the representation the gateway
+     * prepared for the external model in this review, inspectable via the
+     * toggle -- never a promise about the later call. See
+     * `DisclosureOverview`'s and `ReviewScreen`'s docstrings.
      */
-    willBeSentHeading: "O que será enviado ao LLM externo",
-    showPayloadToggle: "Ver o payload exato que seria enviado",
+    willBeSentHeading: "Representação preparada para o modelo externo",
+    showPayloadToggle: "Ver o payload preparado nesta revisão",
     payloadByteCountLabel: "bytes",
     blockedHeading: "Solicitação bloqueada",
     blockedExplanation:
@@ -246,7 +257,7 @@ const ptBR = {
      * inspector -- "understand what changed and why" sits one level below
      * the plain-language local/sent lists.
      */
-    understandChangesToggle: "Entender o que o gateway mudou e por quê",
+    understandChangesToggle: "Ver a explicação detalhada das transformações",
     /**
      * T30 / issue #82: Level-3 disclosure wrapping the T28 export/restore
      * panel and the T29 Vault Explorer -- collapsed by default, framed
@@ -626,6 +637,88 @@ const ptBR = {
     submit: "Enviar",
     cancel: "Cancelar",
     tryAgain: "Tentar novamente",
+  },
+
+  /**
+   * T32.3 / #103: the primary before/after ("O que o gateway fez"), built
+   * only from `preview.inspection.segments` -- visible by default in Review
+   * and in the Approved Review, and as a recap in Result. Answers only what
+   * was there, what changed and what was prepared for disclosure; technical
+   * reasons, treatment, strategy and ids stay in the detailed inspector.
+   * `{n}` is a plain count.
+   *
+   * IDENTITY CAVEAT (fix for #103 review, see PR #108): this block never
+   * claims the disclosed side is byte-identical to what LATER crosses the
+   * boundary at execute time. That is only structurally guaranteed for
+   * upload, where `execute_document` is confirmation-token-bound to this
+   * exact preview. For paste/example, `executeDisclosure` re-runs the
+   * decision (detector, task analyzer, decision phase) independently of the
+   * preview shown here, so the copy says "prepared"/"reviewed", never
+   * "exactly what is sent" or "exactly what crosses the boundary".
+   */
+  beforeAfter: {
+    heading: "O que o gateway fez",
+    intro:
+      "Antes de qualquer envio, o gateway transformou localmente os trechos destacados. Primeiro, o que você enviou; depois, a representação preparada para o modelo externo.",
+    originalHeading: "Original",
+    /**
+     * #103 round-2 review fix (PR #108): used to say "Ele não sai daqui."
+     * ("It does not leave.") -- an absolute claim that does not hold for a
+     * PRESERVE segment (kept, sent unchanged) or a no-change request, where
+     * the same content DOES cross the boundary. Now states only what is
+     * always true: this is the original, and the prepared representation
+     * for disclosure sits alongside it for comparison.
+     */
+    originalCaption:
+      "O conteúdo original recebido pelo gateway. A representação preparada para divulgação aparece ao lado.",
+    transformationStep: "Transformação local no gateway",
+    disclosedHeadingReview: "Representação preparada para envio ao modelo externo",
+    disclosedCaptionReview:
+      "Esta é a representação que o gateway preparou para divulgação externa nesta revisão, antes da sua confirmação.",
+    disclosedHeadingApproved: "Representação aprovada antes do envio",
+    disclosedCaptionApproved:
+      "Esta foi a representação apresentada para sua aprovação antes da chamada externa.",
+    handledCount: "Trechos tratados pelo gateway: {n}",
+    noChanges: "O gateway não precisou alterar nenhum trecho: o texto foi preparado para envio sem alterações.",
+    unavailableBlocked:
+      "Nenhuma representação foi liberada para envio: a solicitação foi bloqueada no gateway e nada sai para o modelo externo.",
+    unavailableAlignmentFailed:
+      "A transformação foi aplicada, mas a visualização detalhada de antes/depois não pôde ser produzida com segurança.",
+    unavailableUnknown: "A visualização de antes/depois não está disponível para esta solicitação.",
+  },
+
+  /**
+   * T32.3 / #103: the short Result recap -- which transformation this answer
+   * came after. Wording is chosen from `ExecuteResponse.provider`: never
+   * "sent"/"consulted" when `provider.called` is false, and a failed call
+   * is described as an attempt, not a consultation that produced an answer.
+   *
+   * IDENTITY CAVEAT (fix for #103 review, see PR #108): `sent` describes the
+   * transformation the reviewer approved and the fact that the external
+   * model was then consulted -- it does not assert that the previewed
+   * representation is byte-identical to what `execute` actually sent (true
+   * only for upload; paste/example recompute the decision at execute time).
+   */
+  resultRecap: {
+    heading: "O que aconteceu antes do envio",
+    /**
+     * #103 round-2 review fix (PR #108): used to unconditionally say
+     * "...esta é a resposta reconstruída localmente" ("...this is the
+     * answer reconstructed locally") -- `final_answer` may be the
+     * provider's response completely unchanged (see `ReconstructionStage`).
+     * Only `ResultScreen.tsx`'s `buildReconstructionNote` may state a
+     * reconstruction happened, and only when `reconstruction.attempted &&
+     * changed_from_provider_response === true` (rendered via
+     * `result.reconstructionApplied`). This recap never makes that claim.
+     */
+    sent:
+      "Antes da chamada externa, você revisou esta transformação feita pelo gateway. O modelo externo foi consultado e esta é a resposta final apresentada pelo gateway.",
+    providerFailed:
+      "O gateway transformou localmente o seu conteúdo e tentou consultar o modelo externo, mas a consulta falhou: nenhuma resposta foi produzida.",
+    notSent:
+      "O gateway preparou a representação transformada, mas nada foi enviado: o modelo externo não foi consultado.",
+    handledCount: "Trechos tratados pelo gateway antes da fronteira externa: {n}",
+    seeBeforeAfter: "Ver o antes/depois aprovado na revisão",
   },
 
   /**

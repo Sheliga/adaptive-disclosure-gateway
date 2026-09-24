@@ -1,6 +1,3 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { DEMO_TRANSPARENCY_ENV_VAR, demoTransparencyDisabledResponse, isDemoTransparencyEnabled } from "./demoTransparency";
@@ -12,14 +9,15 @@ afterEach(() => {
 });
 
 /**
- * The flag-parsing rule must be BYTE-IDENTICAL to the Python API's own
- * `application/settings.py::demo_transparency_enabled` -- enabled iff the
- * variable is set AND its stripped value is exactly "1". Any divergence
- * here would let the web gate and the api gate disagree about whether the
- * demo transparency surfaces are on, which is exactly the kind of drift
- * that would let one side expose what the other means to keep closed.
+ * The flag-parsing rule is identical to the other two demo gates
+ * (`demoInspection.ts` / `demoVaultExplorer.ts`, and the Python API's own
+ * `application/settings.py::demo_inspection_enabled` /
+ * `demo_vault_explorer_enabled`) -- enabled iff the variable is set AND its
+ * stripped value is exactly "1". The Python API no longer reads
+ * `ADG_ENABLE_DEMO_TRANSPARENCY` itself (issue #103); this table pins that
+ * this module's own parsing stays exact regardless.
  */
-describe("isDemoTransparencyEnabled -- full flag table matches the Python parsing rule", () => {
+describe("isDemoTransparencyEnabled -- full flag table matches the shared demo-gate parsing rule", () => {
   const cases: [string | undefined, boolean][] = [
     [undefined, false],
     ["", false],
@@ -61,35 +59,9 @@ describe("demoTransparencyDisabledResponse", () => {
   });
 });
 
-/**
- * Drift test: `DEMO_TRANSPARENCY_ENV_VAR` here must equal the constant name
- * `application/settings.py` declares -- a hand-typed string on each side
- * that happened to match once but silently diverged later would make the
- * web gate check a different environment variable than the one the Python
- * API (and compose.demo.yaml) actually uses.
- */
-describe("DEMO_TRANSPARENCY_ENV_VAR stays synchronized with application/settings.py", () => {
-  it("matches the Python DEMO_TRANSPARENCY_ENV_VAR constant exactly", () => {
-    const here = path.dirname(fileURLToPath(import.meta.url));
-    const settingsPath = path.resolve(
-      here,
-      "..",
-      "..",
-      "src",
-      "adaptive_disclosure_gateway",
-      "application",
-      "settings.py",
-    );
-    const source = readFileSync(settingsPath, "utf-8");
-
-    const match = source.match(/DEMO_TRANSPARENCY_ENV_VAR\s*=\s*"([A-Z_]+)"/);
-    if (!match) {
-      throw new Error(
-        "could not locate `DEMO_TRANSPARENCY_ENV_VAR = \"...\"` in application/settings.py -- " +
-          "has it been renamed or moved?",
-      );
-    }
-
-    expect(DEMO_TRANSPARENCY_ENV_VAR).toBe(match[1]);
-  });
-});
+// No drift test against `application/settings.py` here: since issue #103,
+// the Python API no longer reads `ADG_ENABLE_DEMO_TRANSPARENCY` at all (see
+// this file's own module docstring, and `demoInspection.ts`'s), so there is
+// no Python-side `DEMO_TRANSPARENCY_ENV_VAR` constant left to stay
+// synchronized with. `demoInspection.test.ts` and `demoVaultExplorer.test.ts`
+// each still carry that drift test for the flags Python does read.

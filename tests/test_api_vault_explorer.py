@@ -3,7 +3,7 @@
 ``demo_vault_explorer_enabled``) -- ``PreviewResponse.vault_explorer_token``
 and ``POST /demo/vault-explorer``.
 
-Mirrors ``tests/test_api_demo_transparency.py``'s structure and adversarial
+Mirrors ``tests/test_api_demo_inspection.py``'s structure and adversarial
 sections (span attributes, cross-request isolation, raw HTTP response text)
 per CLAUDE.md's no-leak invariant: a change touching sensitive data needs an
 adversarial test asking whether a sensitive value can escape through an

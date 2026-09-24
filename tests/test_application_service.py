@@ -104,7 +104,7 @@ def _service(
     provider,
     *,
     examples_directory: Path | None = None,
-    demo_transparency_enabled: bool = False,
+    demo_inspection_enabled: bool = False,
     **context_overrides,
 ) -> DisclosureApplicationService:
     return DisclosureApplicationService(
@@ -112,7 +112,7 @@ def _service(
         provider=provider,
         default_context=_default_context(**context_overrides),
         examples_directory=examples_directory,
-        demo_transparency_enabled=demo_transparency_enabled,
+        demo_inspection_enabled=demo_inspection_enabled,
     )
 
 
@@ -608,19 +608,19 @@ def test_an_explicit_caller_override_of_provider_class_still_fails_closed_on_mis
     assert provider.received == []
 
 
-# --- T27 / issue #69: demo transparency inspection projection ---------------
+# --- T27 / issue #69: demo inspection inspection projection ---------------
 
 
-def test_preview_inspection_is_none_when_demo_transparency_is_disabled():
-    service = _service(FakeProvider(), demo_transparency_enabled=False)
+def test_preview_inspection_is_none_when_demo_inspection_is_disabled():
+    service = _service(FakeProvider(), demo_inspection_enabled=False)
 
     preview = service.preview(_app_request(HR_TEXT))
 
     assert preview.inspection is None
 
 
-def test_preview_inspection_is_populated_when_demo_transparency_is_enabled():
-    service = _service(FakeProvider(), demo_transparency_enabled=True)
+def test_preview_inspection_is_populated_when_demo_inspection_is_enabled():
+    service = _service(FakeProvider(), demo_inspection_enabled=True)
 
     preview = service.preview(_app_request(HR_TEXT))
 
@@ -633,7 +633,7 @@ def test_preview_document_inherits_inspection_from_preview_when_enabled():
     """``preview_document`` wraps ``preview`` -- no second decision phase, so
     it must inherit whatever ``preview`` itself produced for ``inspection``.
     """
-    service = _service(FakeProvider(), demo_transparency_enabled=True, examples_directory=None)
+    service = _service(FakeProvider(), demo_inspection_enabled=True, examples_directory=None)
     request = service.build_application_request(text=HR_TEXT, task="summarize personnel record")
 
     # preview_document() is document-surface only, but the inspection
@@ -647,10 +647,10 @@ def test_preview_document_inherits_inspection_from_preview_when_enabled():
 
 def test_execute_never_exposes_an_inspection_field():
     """``DisclosureExecution`` carries no ``inspection`` field at all --
-    demo transparency being enabled must not change ``execute``'s behavior
+    demo inspection being enabled must not change ``execute``'s behavior
     or result shape.
     """
-    service = _service(RecordingProvider(), demo_transparency_enabled=True)
+    service = _service(RecordingProvider(), demo_inspection_enabled=True)
 
     execution = service.execute(_app_request(HR_TEXT))
 
@@ -660,10 +660,10 @@ def test_execute_never_exposes_an_inspection_field():
 def test_compare_strategies_entries_never_expose_an_inspection_field():
     """``compare_strategies`` calls ``preview`` internally for every B0-B4
     strategy, but ``StrategyComparisonEntry`` carries no ``inspection``
-    field -- enabling demo transparency must not change what a comparison
+    field -- enabling demo inspection must not change what a comparison
     exposes.
     """
-    service = _service(NeverCallMeProvider(), demo_transparency_enabled=True)
+    service = _service(NeverCallMeProvider(), demo_inspection_enabled=True)
 
     comparison = service.compare_strategies(_app_request(HR_TEXT))
 
@@ -678,7 +678,7 @@ def test_export_never_exposes_an_inspection_field():
         policy_repository=_policy_repo(),
         provider=NeverCallMeProvider(),
         default_context=_default_context(),
-        demo_transparency_enabled=True,
+        demo_inspection_enabled=True,
         restore_handle_sealer=RestoreHandleSealer(secret="a" * 32),
     )
 
@@ -710,7 +710,7 @@ class _StubDocumentParser:
 
 def test_execute_document_still_succeeds_with_a_token_from_an_inspection_enabled_preview():
     """The preview-confirmation/execute_document flow must be unaffected by
-    demo transparency: a token issued by an inspection-enabled
+    demo inspection: a token issued by an inspection-enabled
     ``preview_document`` call still authenticates ``execute_document``.
     """
     from adaptive_disclosure_gateway.application.presets import CONTRACT_DOCUMENT_TYPE
@@ -720,7 +720,7 @@ def test_execute_document_still_succeeds_with_a_token_from_an_inspection_enabled
         policy_repository=_policy_repo(),
         provider=provider,
         default_context=_default_context(domain="contracts", policy_version="contracts-v1"),
-        demo_transparency_enabled=True,
+        demo_inspection_enabled=True,
         document_parser=_StubDocumentParser("This is a plain contract summary with no PII.\n"),
     )
     request = service.build_document_request(

@@ -20,8 +20,8 @@
  * A `remove`d segment's DISCLOSED side shows an explicit, visible "removed"
  * marker (`copy.inspectionActions.removedMarker`) instead of the segment's
  * real (empty) `disclosed` value -- that substitution is presentation only.
- * The byte-exact payload remains available, unmodified, through
- * `ReviewScreen`'s own "ver o payload exato" disclosure.
+ * The unmodified payload remains available through `ReviewScreen`'s own
+ * payload disclosure (`copy.review.showPayloadToggle`).
  *
  * The transformation itself (category/action/reason) is never re-derived
  * here: `action`/`category` are rendered exactly as the API sent them

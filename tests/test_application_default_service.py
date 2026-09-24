@@ -343,34 +343,34 @@ def test_the_restore_handle_secret_reaches_no_health_record_or_repr(monkeypatch)
     assert MARKER_RESTORE_HANDLE_SECRET not in rendered
 
 
-# --- demo transparency flag (T27 / issue #69) --------------------------------
+# --- demo inspection flag (T27 / issue #69) --------------------------------
 
 
-def test_the_default_service_has_demo_transparency_disabled_when_unset(monkeypatch):
+def test_the_default_service_has_demo_inspection_disabled_when_unset(monkeypatch):
     monkeypatch.delenv("ADG_PROVIDER", raising=False)
-    monkeypatch.delenv("ADG_ENABLE_DEMO_TRANSPARENCY", raising=False)
+    monkeypatch.delenv("ADG_ENABLE_DEMO_INSPECTION", raising=False)
 
     service = build_default_service()
 
-    assert service._demo_transparency_enabled is False
+    assert service._demo_inspection_enabled is False
 
 
-def test_the_default_service_has_demo_transparency_enabled_when_set_to_one(monkeypatch):
+def test_the_default_service_has_demo_inspection_enabled_when_set_to_one(monkeypatch):
     monkeypatch.delenv("ADG_PROVIDER", raising=False)
-    monkeypatch.setenv("ADG_ENABLE_DEMO_TRANSPARENCY", "1")
+    monkeypatch.setenv("ADG_ENABLE_DEMO_INSPECTION", "1")
 
     service = build_default_service()
 
-    assert service._demo_transparency_enabled is True
+    assert service._demo_inspection_enabled is True
 
 
-def test_demo_transparency_does_not_affect_health_or_readiness(monkeypatch):
+def test_demo_inspection_does_not_affect_health_or_readiness(monkeypatch):
     monkeypatch.delenv("ADG_PROVIDER", raising=False)
 
-    monkeypatch.delenv("ADG_ENABLE_DEMO_TRANSPARENCY", raising=False)
+    monkeypatch.delenv("ADG_ENABLE_DEMO_INSPECTION", raising=False)
     disabled = build_default_service()
 
-    monkeypatch.setenv("ADG_ENABLE_DEMO_TRANSPARENCY", "1")
+    monkeypatch.setenv("ADG_ENABLE_DEMO_INSPECTION", "1")
     enabled = build_default_service()
 
     assert disabled.describe_health() == enabled.describe_health()
