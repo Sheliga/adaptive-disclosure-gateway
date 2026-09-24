@@ -206,8 +206,8 @@ jobs:
       #   - any other status (other 4xx, unexpected 3xx, 1xx): fail-fast
       #     rather than silently retrying something that will never change.
       #   - a transport failure (curl exits non-zero with no HTTP response
-      #     at all: DNS, connection refused, TLS, or the --max-time 30
-      #     per-request cap below) is treated the same as "Hostinger not
+      #     at all: DNS, connection refused, TLS, or the per-request
+      #     --max-time cap below) is treated the same as "Hostinger not
       #     answering yet" and retried within the same deadline, counted
       #     separately from 5xx so the two are distinguishable in the
       #     timeout diagnostics. --max-time exists so a single hung request
@@ -216,6 +216,25 @@ jobs:
       # into a temp file) inside an `if status=$(curl ...); then ... else
       # ...; fi`, a construct `set -e` cannot kill on a non-2xx response --
       # unlike the plain, unguarded assignment the old version used.
+      #
+      # 720s IS THE BUDGET, NOT JUST A CONDITION CHECKED ONCE PER ITERATION:
+      # one iteration can contain a containers curl, a ready curl, a root
+      # curl and a sleep, each individually capped (30s/30s/30s/15s) --
+      # checking the deadline only at the top of the loop let a single
+      # iteration starting near the deadline overrun it by up to ~100s
+      # while still reporting "timed out after 720s". `remaining_seconds`
+      # recomputes what is actually left (clamped to >=0, never logged
+      # negative) immediately before every one of those four operations;
+      # `bounded_timeout`/`bounded_sleep_seconds` cap each operation at its
+      # normal ceiling (30s / 15s) or whatever is actually left, whichever
+      # is smaller, and the loop stops -- issuing no further request or
+      # sleep -- the instant nothing is left. Concretely: each curl uses
+      # `--max-time min(30, remaining)`; the ready and root curls share the
+      # same deadline (remaining is recomputed between them, so a slow
+      # ready call can leave root with little or no time, and root is then
+      # simply not called if nothing is left); each sleep uses
+      # `min(15, remaining)`. The HTTP status classification above is
+      # unchanged by any of this.
       - name: Verify deployment
         env:
           HOSTINGER_API_TOKEN: ${{ secrets.HOSTINGER_API_TOKEN }}
@@ -233,14 +252,52 @@ jobs:
           last_root_status=""
           transient_5xx_count=0
           transport_failure_count=0
+
+          # Seconds left before the shared 720s deadline, clamped to >=0 so
+          # nothing downstream ever logs or computes a negative value.
+          remaining_seconds() {
+            local r=$((deadline - SECONDS))
+            if [ "$r" -lt 0 ]; then
+              r=0
+            fi
+            printf '%s\n' "$r"
+          }
+
+          # $1: remaining seconds (caller guarantees > 0) -> the --max-time
+          # to actually use: the normal 30s ceiling, or less if the budget
+          # itself has less than that left.
+          bounded_timeout() {
+            local r="$1"
+            if [ "$r" -gt 30 ]; then
+              r=30
+            fi
+            printf '%s\n' "$r"
+          }
+
+          # $1: remaining seconds (caller guarantees > 0) -> the sleep to
+          # actually use: the normal 15s interval, or less if the budget
+          # itself has less than that left.
+          bounded_sleep_seconds() {
+            local r="$1"
+            if [ "$r" -gt 15 ]; then
+              r=15
+            fi
+            printf '%s\n' "$r"
+          }
+
           # ~15s poll interval, ~12min budget: the api image is ~2.6 GB to
           # pull and its healthcheck alone has a 120s start_period, on top
           # of whatever the old containers take to tear down first.
-          while [ "$SECONDS" -lt "$deadline" ]; do
+          while :; do
+            remaining=$(remaining_seconds)
+            if [ "$remaining" -le 0 ]; then
+              break
+            fi
+
             body_file=$(mktemp)
             status=""
             curl_rc=0
-            if status=$(curl -sS --max-time 30 -o "$body_file" -w '%{http_code}' \
+            if status=$(curl -sS --max-time "$(bounded_timeout "$remaining")" -o "$body_file" -w '%{http_code}' \
                 -H "Authorization: Bearer ${HOSTINGER_API_TOKEN}" \
                 "$containers_url"); then
               :
@@ -251,10 +308,13 @@ jobs:
 
             if [ "$curl_rc" -ne 0 ] || [ -z "$status" ] || [ "$status" = "000" ]; then
               transport_failure_count=$((transport_failure_count + 1))
-              remaining=$((deadline - SECONDS))
+              remaining=$(remaining_seconds)
               echo "Hostinger containers API unreachable (transport failure, curl exit ${curl_rc}) -- retrying (transport failures so far: ${transport_failure_count}, ~${remaining}s left)"
               rm -f "$body_file"
-              sleep 15
+              if [ "$remaining" -le 0 ]; then
+                break
+              fi
+              sleep "$(bounded_sleep_seconds "$remaining")"
               continue
             fi
 
@@ -276,10 +336,20 @@ jobs:
                 if echo "$last_valid_containers" | jq -e --arg sha "$ADG_TARGET_SHA" \
                   '(length > 0) and all(.[]; (.image | endswith(":" + $sha)) and (.health == "healthy"))' \
                   >/dev/null 2>&1; then
-                  ready_status=$(curl -sS --max-time 30 -o /dev/null -w '%{http_code}' "$ready_url" || echo 000)
-                  root_status=$(curl -sS --max-time 30 -o /dev/null -w '%{http_code}' "$root_url" || echo 000)
+                  remaining=$(remaining_seconds)
+                  if [ "$remaining" -le 0 ]; then
+                    break
+                  fi
+                  ready_status=$(curl -sS --max-time "$(bounded_timeout "$remaining")" -o /dev/null -w '%{http_code}' "$ready_url" || echo 000)
                   last_ready_status="$ready_status"
+
+                  remaining=$(remaining_seconds)
+                  if [ "$remaining" -le 0 ]; then
+                    break
+                  fi
+                  root_status=$(curl -sS --max-time "$(bounded_timeout "$remaining")" -o /dev/null -w '%{http_code}' "$root_url" || echo 000)
                   last_root_status="$root_status"
+
                   if [ "$ready_status" = "200" ] && [ "$root_status" = "200" ]; then
                     echo "deployment verified: containers healthy at $ADG_TARGET_SHA, /disclosure-gateway/api/ready=200, /disclosure-gateway=200"
                     exit 0
@@ -294,10 +364,13 @@ jobs:
                 ;;
               5??)
                 transient_5xx_count=$((transient_5xx_count + 1))
-                remaining=$((deadline - SECONDS))
+                remaining=$(remaining_seconds)
                 echo "Hostinger containers API returned HTTP ${status} during project replacement -- retrying (transient 5xx so far: ${transient_5xx_count}, ~${remaining}s left)"
                 rm -f "$body_file"
-                sleep 15
+                if [ "$remaining" -le 0 ]; then
+                  break
+                fi
+                sleep "$(bounded_sleep_seconds "$remaining")"
                 continue
                 ;;
               *)
@@ -307,7 +380,11 @@ jobs:
                 ;;
             esac
 
-            sleep 15
+            remaining=$(remaining_seconds)
+            if [ "$remaining" -le 0 ]; then
+              break
+            fi
+            sleep "$(bounded_sleep_seconds "$remaining")"
           done
 
           echo "::error::deployment verification timed out after 720s"
